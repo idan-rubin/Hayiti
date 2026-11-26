@@ -130,7 +130,13 @@ body.hosted-view header nav > :not(#languageSwitch),body.hosted-view .beta-links
   :lang(en) #dayReel .date-full {display:none}
   :lang(en) #dayReel .date-short {display:inline}
 }
-#languageSwitch {white-space:nowrap;background:#153f36;color:#fff;border-color:#688076;color-scheme:dark}
+#languageSwitch,.top select {appearance:none;cursor:pointer;background-repeat:no-repeat}
+#languageSwitch {white-space:nowrap;color:#fff;border-color:#688076;border-radius:9px;color-scheme:dark;font-size:.88rem;font-weight:560;padding:7px 30px 7px 12px;background-color:#153f36;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='m1 1 5 5 5-5' fill='none' stroke='%23fff' stroke-width='1.8'/%3E%3C/svg%3E");background-position:right 11px center}
+#languageSwitch:hover {background-color:#2f5549}
+.top select {padding-inline-end:30px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='m1 1 5 5 5-5' fill='none' stroke='%23496057' stroke-width='1.8'/%3E%3C/svg%3E");background-position:right 11px center}
+[dir=rtl] .top select {background-position:left 11px center}
+@media(max-width:500px){#languageSwitch{font-size:.78rem;padding:8px 24px 8px 8px;background-position:right 8px center}}
+@media(min-width:1600px){header{padding-inline:calc(50% - 736px)}}
 
 .pin-source{position:absolute;inset-inline-end:-8px;bottom:-5px;display:grid;place-items:center;min-width:17px;height:17px;line-height:1;border:1.5px solid white;border-radius:6px;color:white;font:700 13px/1 system-ui;box-shadow:0 1px 3px #0004}
 .popup-sources{margin-top:.45rem;font-size:.85rem}

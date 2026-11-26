@@ -726,3 +726,39 @@ await test('a terrain image that failed on the overview does not keep the note a
     await browser.close();
   }
 });
+
+await test('the header lines up with the page on a wide screen and the language menu has room for its arrow', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage({ viewport: { width: 2560, height: 900 } });
+    await page.route('https://**/*', route => route.abort());
+    for (const language of ['he', 'en']) {
+      await page.goto(new URL('../../dist/web/Hayiti.html?lang=' + language, import.meta.url).href);
+      // The sample trip stays in the browser after the first language.
+      if (language === 'he') await page.locator('#trySample').click();
+      await page.locator('.leaflet-marker-icon').first().waitFor();
+      for (const width of [2560, 1728, 1280]) {
+        await page.setViewportSize({ width, height: 900 });
+        const edges = await page.evaluate(() => {
+          const box = (selector: string) => document.querySelector(selector)!.getBoundingClientRect();
+          const header = [box('.brand'), box('header nav')],
+            content = box('.top');
+          return {
+            header: [Math.round(Math.min(...header.map(part => part.left))), Math.round(Math.max(...header.map(part => part.right)))],
+            content: [Math.round(content.left), Math.round(content.right)]
+          };
+        });
+        assert.deepEqual(edges.header, edges.content, language + ' at ' + width);
+      }
+      const menu = await page.locator('#languageSwitch').evaluate(element => {
+        const style = getComputedStyle(element);
+        return { arrow: style.backgroundImage.startsWith('url('), room: parseFloat(style.paddingRight), height: Math.round(element.getBoundingClientRect().height) };
+      });
+      assert.equal(menu.arrow, true);
+      assert.ok(menu.room >= 24, 'the arrow has room beside the language code');
+      assert.equal(menu.height, Math.round((await page.locator('#share').boundingBox())!.height));
+    }
+  } finally {
+    await browser.close();
+  }
+});
