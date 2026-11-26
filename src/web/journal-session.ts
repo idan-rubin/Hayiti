@@ -31,6 +31,11 @@ export class JournalSession {
     this.storage = storage;
   }
 
+  /** Identifies the stored journal version this tab last read or wrote. */
+  get revision() {
+    return this.rev;
+  }
+
   get trip() {
     return this.trips.find(trip => trip.id === this.selectedId) ?? null;
   }

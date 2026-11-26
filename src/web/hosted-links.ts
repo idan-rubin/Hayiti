@@ -2,6 +2,7 @@ import type { Trip } from '../domain/core.ts';
 import { element as el, errorMessage } from './dom.ts';
 import { locale } from './language.ts';
 import { displayTripTitle, t } from './journal-messages.ts';
+import { ask } from './confirm.ts';
 const errorCopy = 'לא הצלחנו להתחבר. אפשר לנסות שוב.';
 async function send(url: string, body: unknown, options: RequestInit = {}) {
   const res = await fetch(url, {
@@ -73,12 +74,16 @@ export function enableHostedLinks(getTrip: () => Trip | null, getDay: () => stri
     for (const link of links) {
       const row = document.createElement('li'),
         text = document.createElement('span');
-      text.textContent = [link.label, displayTripTitle(link.title), link.scope === 'day' ? link.day : t('כל הטיול'), link.origin === 'yes' ? t('כולל נקודת יציאה') : '', new Date(link.created).toLocaleString(locale(), {
-        dateStyle: 'short',
+      const day = link.scope === 'day' && link.day ? new Date(link.day + 'T12:00:00Z').toLocaleDateString(locale(), {
+        dateStyle: 'medium',
+        timeZone: 'UTC'
+      }) : t('כל הטיול');
+      text.textContent = [link.label, displayTripTitle(link.title), day, link.origin === 'yes' ? t('כולל נקודת יציאה') : '', t('נוצר ב־') + new Date(link.created).toLocaleString(locale(), {
+        dateStyle: 'medium',
         timeStyle: 'short'
       })].filter(Boolean).join(' · ');
       const revoke = button(t('ביטול גישה'), async () => {
-        if (!confirm(t('לבטל את הגישה? כל מי שקיבל את הקישור הזה יאבד גישה למסלול.'))) return;
+        if (!await ask(t('לבטל את הגישה? כל מי שקיבל את הקישור הזה יאבד גישה למסלול.'), t('ביטול גישה'))) return;
         revoke.disabled = true;
         try {
           await manage({

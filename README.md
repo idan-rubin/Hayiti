@@ -10,11 +10,11 @@ After a long trip, whole days blur together. A friend asks where you ate, and yo
 
 1. Connect hayiti in ChatGPT. In the Finances tab, link the credit card or checking account you used for purchases on the trip.
 2. Open the hayiti web app and choose **Sign in with ChatGPT**. Select a trip or choose **New trip** and enter its dates.
-3. In **Sources and import**, open **Connected accounts** and select **Finances transactions**. Select **Gmail** or **Google Calendar** too if you want ChatGPT to include receipts, reservations or events.
+3. In **Sources and import**, open **Connected accounts**. **Finances transactions** is already selected. Select **Gmail** or **Google Calendar** too if you want ChatGPT to include receipts, reservations or events.
 4. Choose **Copy sync request**, then **Open ChatGPT**. Paste the request into a chat with hayiti connected. ChatGPT suggests stops for your trip dates. If a restaurant charge and an emailed receipt point to the same meal, they can describe a single stop. Uncertain matches stay separate for review.
-5. Tell ChatGPT which stops to save. Back in hayiti, choose **Refresh journal** and select a day to see its route.
+5. Tell ChatGPT which stops to save. The journal picks up the new stops when you return to its tab. Select a day to see its route.
 
-Using the portable journal? Its sync request asks ChatGPT for a JSON file. Import that file into your trip under **Sources and import** → **Files**.
+Using the portable journal, or the web app without signing in? The sync request asks ChatGPT for a JSON file. Import that file into your trip under **Sources and import** → **Files**.
 
 ## A Thursday in Tel Aviv
 
@@ -24,7 +24,7 @@ The sample trip shows how the pieces fit together. Card receipts put you at Caf�
 
 The orange dashed line shows the taxi ride. The street map in this image uses English labels. [OpenFreeMap](https://openfreemap.org/) · [© OpenMapTiles](https://openmaptiles.org/) · [© OpenStreetMap contributors](https://www.openstreetmap.org/copyright)
 
-The [downloadable example](https://hayiti-beta.cocoacoati256.chatgpt.site/sample-trip.json) contains all seven stops. Taxi pins show approximate locations. To load it, open **Sources and import**, choose **Files**, select the JSON and choose **Load trip**.
+The [downloadable example](https://hayiti-beta.cocoacoati256.chatgpt.site/sample-trip.json) contains all seven stops. Taxi pins show approximate locations. In an empty journal, choose **Try the sample trip**. To add it next to your own trips, open **Sources and import**, choose **Files**, select the JSON and choose **Load trip**.
 
 ## Add an event manually
 

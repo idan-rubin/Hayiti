@@ -137,7 +137,8 @@ await test('refresh keeps an in-memory trip when portable storage is unavailable
     await page.locator('#import').click();
     await page.locator('#file').setInputFiles(fileURLToPath(new URL('../../public/sample-trip.json', import.meta.url)));
     await page.locator('#preview button').click();
-    await page.locator('#connections').click();
+    await page.locator('#import').click();
+    await page.locator('[data-tab="connected"]').click();
     await page.locator('#reload').click();
     await page.locator('#sources [data-close]').click();
     assert.equal(await page.locator('#title').textContent(), 'A Thursday in Tel Aviv');
@@ -168,8 +169,8 @@ await test('retrying a failed import applies the selected records exactly once',
         throw new Error('Transient write failure');
       };
     });
-    page.once('dialog', dialog => dialog.accept());
     await page.locator('#preview button').click();
+    await page.locator('#sources .form-error').filter({ hasText: /could not save the edit/ }).waitFor();
     await page.locator('#preview button').click();
     await page.locator('#sources').waitFor({ state: 'hidden' });
     await page.reload();
@@ -315,6 +316,53 @@ await test('untitled backups follow the display language and traveler-written ti
     assert.deepEqual(await page.locator('#trips option').allTextContents(), ['My trip', 'הטיול שלי']);
     await page.locator('#trips').selectOption('named');
     assert.equal(await page.locator('#title').textContent(), 'הטיול שלי');
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('an empty journal opens the sample trip in one step and links each stop to its pin', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await page.route('https://**/*', route => route.abort());
+    await page.goto(new URL('../../dist/web/Hayiti.html', import.meta.url).href);
+    await page.getByRole('button', { name: 'Try the sample trip' }).click();
+    await page.locator('#title').filter({ hasText: 'A Thursday in Tel Aviv' }).waitFor();
+    assert.equal(await page.locator('.leaflet-marker-icon').count(), 7);
+    assert.equal(await page.locator('#welcome').isVisible(), false);
+
+    await page.locator('.leaflet-marker-icon').first().click();
+    assert.equal(await page.locator('#stops .activeStop .stopname').textContent(), 'Café Sonder');
+    await page.getByRole('button', { name: 'Show on map: Anita Gelato' }).click();
+    await page.locator('.leaflet-popup').filter({ hasText: 'Anita Gelato' }).getByRole('button', { name: 'Edit details' }).click();
+    assert.equal(await page.locator('#editForm [name=name]').inputValue(), 'Anita Gelato');
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('reordering keeps keyboard focus, and Suggest walking order explains a day it cannot sort', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    const dialogs: string[] = [];
+    page.on('dialog', dialog => { dialogs.push(dialog.message()); void dialog.dismiss(); });
+    await page.route('https://**/*', route => route.abort());
+    await page.goto(new URL('../../dist/web/Hayiti.html', import.meta.url).href);
+    await page.getByRole('button', { name: 'Try the sample trip' }).click();
+    await page.getByRole('button', { name: 'Move later: Café Sonder' }).click();
+    await page.locator('#stops .stop').nth(1).filter({ hasText: 'Café Sonder' }).waitFor();
+    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Move later: Café Sonder');
+
+    await page.locator('#newTrip').click();
+    await page.locator('#tripForm [name=title]').fill('Empty day');
+    await page.locator('#tripForm .primary').click();
+    await page.locator('#config').waitFor({ state: 'hidden' });
+    await page.locator('#organize').click();
+    await page.locator('#status').filter({ hasText: 'Add at least two stops' }).waitFor();
+    assert.equal(await page.locator('#confirmBox').getAttribute('open'), null);
+    assert.deepEqual(dialogs, []);
   } finally {
     await browser.close();
   }

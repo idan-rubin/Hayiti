@@ -95,14 +95,20 @@ await test('a shared route stays on screen through a temporary failure and clear
     status = 404;
     await recheck();
     await page.locator('body:not(.route-ready)').waitFor();
+    await page.getByRole('heading', { name: 'This shared route isn’t available' }).waitFor();
+    assert.equal(await page.getByRole('link', { name: 'Start your own trip journal' }).isVisible(), true);
   } finally {
     await browser.close();
   }
 });
 
 const draftKey = 'hayiti-unsigned-journal';
+async function openConnectedAccounts(page: Page) {
+  await page.locator('#import').click();
+  await page.locator('[data-tab="connected"]').click();
+}
 async function refreshJournal(page: Page) {
-  await page.locator('#connections').click();
+  await openConnectedAccounts(page);
   await page.locator('#reload').click();
   await page.locator('#sources [data-close]').click();
 }
@@ -127,9 +133,7 @@ await test('an account journal leaves the tab when its session ends and never be
     await page.locator('#title').filter({ hasText: 'Account trip' }).waitFor();
 
     signedIn = false;
-    await page.locator('#connections').click();
-    await page.locator('#reload').click();
-    await page.locator('#sources [data-close]').click();
+    await refreshJournal(page);
     await page.locator('#status').filter({ hasText: 'You are signed out' }).waitFor();
     assert.notEqual(await page.locator('#title').textContent(), 'Account trip');
 
@@ -206,11 +210,8 @@ await test('a save that fails after the session ended does not bring the account
     await page.evaluate(() => document.getElementById('reload')!.click());
     await page.locator('#status').filter({ hasText: 'You are signed out' }).waitFor();
     const failed = page.waitForResponse(response => response.request().method() === 'POST');
-    const notice = page.waitForEvent('dialog');
     release();
-    const dialog = await notice;
-    assert.match(dialog.message(), /edit was not saved/i);
-    await dialog.dismiss();
+    await page.locator('#config .form-error').filter({ hasText: /edit was not saved/i }).waitFor();
     await (await failed).finished();
 
     assert.notEqual(await page.locator('#title').textContent(), 'Account trip');
@@ -276,15 +277,10 @@ await test('a guest edit the tab cannot store fails, and the stored trip is unto
     await page.evaluate(() => {
       Storage.prototype.setItem = () => { throw new DOMException('Full', 'QuotaExceededError'); };
     });
-    let alerted = '';
-    page.once('dialog', dialog => {
-      alerted = dialog.message();
-      void dialog.accept();
-    });
     await page.locator('#newTrip').click();
     await page.locator('#tripForm [name=title]').fill('Does not fit');
     await page.locator('#tripForm .primary').click();
-    assert.match(alerted, /could not save the edit/);
+    await page.locator('#config .form-error').filter({ hasText: /could not save the edit/ }).waitFor();
     assert.equal(await page.locator('#config').getAttribute('open'), '');
     assert.equal(await page.locator('#title').textContent(), 'Small trip');
 
@@ -377,8 +373,8 @@ await test('when the journal cannot take a guest trip, the traveler can back it 
     assert.equal(await page.locator('#export').isDisabled(), false);
 
     await page.locator('#settings').click();
-    page.once('dialog', dialog => void dialog.accept());
     await page.locator('#deleteTrip').click();
+    await page.locator('#confirmYes').click();
     await page.locator('#config').waitFor({ state: 'hidden' });
     await refreshJournal(page);
     await page.locator('#title').filter({ hasText: 'Account trip' }).waitFor();
@@ -448,7 +444,7 @@ await test('a refresh started before a save keeps the saved trip and revision', 
     });
     await page.goto(origin + '/journal.html?lang=en');
     await page.locator('#title').filter({ hasText: 'First' }).waitFor();
-    await page.locator('#connections').click();
+    await openConnectedAccounts(page);
     const requested = page.waitForRequest(request => request.url().endsWith('/api/journal'));
     const refresh = page.locator('#reload').evaluate((button: HTMLButtonElement) => button.onclick?.(new PointerEvent('click')));
     await requested;
@@ -564,10 +560,8 @@ await test('a sign-in conflict keeps the guest draft until the traveler chooses 
 
     await page.locator('#newTrip').click();
     await page.locator('#tripForm [name=title]').fill('Another trip');
-    let feedback = '';
-    page.once('dialog', dialog => { feedback = dialog.message(); void dialog.accept(); });
     await page.locator('#tripForm .primary').click();
-    assert.match(feedback, /try this edit again/i);
+    await page.locator('#config .form-error').filter({ hasText: /try this edit again/i }).waitFor();
     assert.equal(await page.locator('#tripForm [name=title]').inputValue(), 'Another trip');
     await page.locator('#config [data-close]').click();
 
@@ -656,13 +650,10 @@ await test('a conflicting edit reads past a stale refresh before reporting the l
     await page.locator('#newTrip').click();
     await page.locator('#tripForm [name=title]').fill('My edit');
     const rejected = page.waitForResponse(response => response.status() === 409);
-    const notice = page.waitForEvent('dialog');
     await page.locator('#tripForm .primary').click();
     await (await rejected).finished();
     release();
-    const dialog = await notice;
-    assert.match(dialog.message(), /latest version/i);
-    await dialog.dismiss();
+    await page.locator('#config .form-error').filter({ hasText: /latest version/i }).waitFor();
     assert.equal(await page.locator('#title').textContent(), 'New title');
     assert.deepEqual(writes, ['r1']);
     await page.locator('#tripForm .primary').click();
@@ -718,7 +709,7 @@ await test('an unreadable guest draft is retained until the traveler confirms di
     await page.evaluate(key => sessionStorage.setItem(key, '{broken'), draftKey);
     await page.reload();
     const discard = page.getByRole('button', { name: 'Discard unreadable draft' });
-    const newTrip = page.getByRole('button', { name: 'New trip' });
+    const newTrip = page.getByRole('button', { name: 'New trip', exact: true });
     await discard.waitFor();
     assert.equal(await page.locator('#status').innerText(),
       'This tab’s guest draft could not be read. Choose Discard unreadable draft to continue.');
@@ -726,12 +717,12 @@ await test('an unreadable guest draft is retained until the traveler confirms di
     assert.equal(await page.locator('#import').isDisabled(), true);
     assert.equal(await page.locator('[data-tab="files"]').isDisabled(), true);
     assert.equal(await page.locator('[data-tab="paste"]').isDisabled(), true);
-    page.once('dialog', dialog => void dialog.dismiss());
     await discard.click();
+    await page.locator('#confirmNo').click();
     assert.equal(await page.evaluate(key => sessionStorage.getItem(key), draftKey), '{broken');
     assert.equal(await newTrip.isDisabled(), true);
-    page.once('dialog', dialog => void dialog.accept());
     await discard.click();
+    await page.locator('#confirmYes').click();
     await page.locator('#status').filter({ hasText: 'up to date' }).waitFor();
     assert.equal(await discard.isVisible(), false);
     assert.equal(await newTrip.isEnabled(), true);
@@ -743,21 +734,21 @@ await test('an unreadable guest draft is retained until the traveler confirms di
   }
 });
 
-await test('a failed first load blocks import until Refresh journal opens the journal', async () => {
+await test('a failed first load blocks import until Try again opens the journal', async () => {
   const browser = await chromium.launch();
   try {
     const page = await browser.newPage();
     let available = false;
     await hostJournal(page, route => route.fulfill({ status: available ? 401 : 503 }));
     await page.goto(origin + '/journal.html?lang=en');
-    await page.locator('#status').filter({ hasText: 'Refresh the page' }).waitFor();
+    await page.locator('#status').filter({ hasText: 'Choose Try again' }).waitFor();
     assert.equal(await page.locator('#import').isDisabled(), true);
-    await page.getByRole('button', { name: 'Connections', exact: true }).click();
-    assert.equal(await page.getByRole('button', { name: 'Files', exact: true }).isDisabled(), true);
-    assert.equal(await page.getByRole('button', { name: 'Paste', exact: true }).isDisabled(), true);
+    assert.equal(await page.locator('#trySample').isDisabled(), true);
+    assert.equal(await page.locator('[data-tab="files"]').isDisabled(), true);
+    assert.equal(await page.locator('[data-tab="paste"]').isDisabled(), true);
     available = true;
-    await page.getByRole('button', { name: 'Refresh journal' }).click();
-    await page.locator('#sources [data-close]').click();
+    await page.getByRole('button', { name: 'Try again', exact: true }).click();
+    await page.locator('#retryLoad').waitFor({ state: 'hidden' });
     await page.locator('#import').click();
     await page.locator('#file').setInputFiles({
       name: 'trip.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({
@@ -843,8 +834,97 @@ await test('double-clicking Save in trip settings submits once without an alert'
     assert.equal(await page.locator('#title').textContent(), 'Tel Aviv');
     assert.deepEqual(titles, ['Tel Aviv']);
     assert.deepEqual(alerts, []);
+    assert.equal(await page.locator('.form-error').count(), 0);
   } finally {
     release();
+    await browser.close();
+  }
+});
+
+const guestAPI = (route: Route) => route.fulfill({ status: 401, json: { error: 'Authentication required' } });
+
+await test('a phone-width journal with two trips keeps every control on screen', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    await hostJournal(page, guestAPI);
+    await page.goto(origin + '/journal.html?lang=en');
+    await createTrip(page, 'Lisbon with a deliberately long trip name that wraps');
+    await createTrip(page, 'Porto');
+    const fits = await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth);
+    assert.equal(fits, true);
+    for (const id of ['#trips', '#settings', '#newTrip', '#add']) {
+      const box = await page.locator(id).boundingBox();
+      assert.ok(box && box.x >= 0 && box.x + box.width <= 390, id + ' is on screen');
+    }
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('leaving a tab-only journal asks first until the trip is backed up', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await hostJournal(page, guestAPI);
+    await page.goto(origin + '/journal.html?lang=en');
+    const asksBeforeLeaving = () => page.evaluate(() => {
+      const leaving = new Event('beforeunload', { cancelable: true });
+      window.dispatchEvent(leaving);
+      return leaving.defaultPrevented;
+    });
+    assert.equal(await asksBeforeLeaving(), false);
+    await createTrip(page, 'Guest trip');
+    assert.equal(await page.locator('#status').getAttribute('data-tone'), 'warning');
+    assert.equal(await asksBeforeLeaving(), true);
+    const download = page.waitForEvent('download');
+    await page.locator('#export').click();
+    await download;
+    assert.equal(await asksBeforeLeaving(), false);
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('an end date before the start date is explained inside trip settings', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    const dialogs: string[] = [];
+    page.on('dialog', dialog => { dialogs.push(dialog.message()); void dialog.dismiss(); });
+    await hostJournal(page, guestAPI);
+    await page.goto(origin + '/journal.html?lang=en');
+    await page.locator('#newTrip').click();
+    await page.locator('#tripForm [name=title]').fill('Backwards');
+    await page.locator('#tripForm [name=end]').fill('2026-05-03');
+    await page.locator('#tripForm [name=start]').evaluate((input: HTMLInputElement) => { input.value = '2026-05-12'; });
+    await page.locator('#tripForm .primary').click();
+    await page.locator('#config .form-error').filter({ hasText: 'The end date cannot be before the start date.' }).waitFor();
+    assert.equal(await page.locator('#config').getAttribute('open'), '');
+    assert.deepEqual(dialogs, []);
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('stops saved elsewhere appear when the traveler returns to the tab', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    const trip = { id: 'ta', title: 'Tel Aviv', start: '2026-06-14', end: '2026-06-14', stops: [] as unknown[] };
+    let rev = 'r1';
+    await hostJournal(page, route => route.fulfill({ json: { trips: [trip], rev } }));
+    await page.goto(origin + '/journal.html?lang=en');
+    await page.locator('#status').filter({ hasText: 'up to date' }).waitFor();
+    assert.equal(await page.locator('#stops .stopname').count(), 0);
+
+    trip.stops = [{ id: 'a', date: '2026-06-14', name: 'Added in ChatGPT', xy: [32.07, 34.78] }];
+    rev = 'r2';
+    const read = page.waitForResponse(response => response.url().endsWith('/api/journal'));
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+    await read;
+    await page.getByRole('button', { name: 'Added in ChatGPT', exact: true }).waitFor();
+  } finally {
     await browser.close();
   }
 });

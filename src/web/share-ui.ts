@@ -95,7 +95,7 @@ export function enableSharing(getTrip: () => Trip | null, portable: boolean, get
       await navigator.clipboard.writeText(url);
       status.textContent = t('הקישור לאתר הועתק.');
     } catch {
-      prompt(t('קישור לאתר לבעלי גישה'), url);
+      status.textContent = t('קישור לאתר לבעלי גישה') + ': ' + url;
     }
   };
 }

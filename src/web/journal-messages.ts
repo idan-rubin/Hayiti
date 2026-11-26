@@ -112,7 +112,6 @@ export const messages: Record<string, string> = {
   " · כבר קיימות ": " · Already present: ",
   "ייבוא נתונים מ־ChatGPT": "Import from ChatGPT",
   "העתק את בקשת הסנכרון לשיחה שלך. אפשר לייבא כאן את קובץ התחנות שמתקבל.": "Copy the sync prompt into your conversation, then import the stops file here.",
-  " אפשר לרענן את הדף כדי לנסות שוב.": " Refresh the page to try again.",
   ", יום ": ", day ",
   " מתוך ": " of ",
   "יום ": "Day ",
@@ -281,7 +280,18 @@ export const messages: Record<string, string> = {
   "הורדת המסלול": "Download route",
   "שליחת המסלול": "Send route",
   "פותחים את קובץ ה־ZIP, ואז את קובץ ה־HTML שבתוכו בדפדפן.": "Open the ZIP file, then open the HTML file inside it in your browser.",
-  "העתקת קישור לבעלי גישה לאתר": "Copy link for people with site access",
+  "העתקת קישור לאתר Hayiti": "Copy a link to the Hayiti site",
+  "ניסיון נוסף": "Try again",
+  "המסלול המשותף אינו זמין": "This shared route isn’t available",
+  "הקישור בוטל או שאינו שלם. אפשר לבקש קישור חדש ממי ששלח אותו.": "The link was revoked or is incomplete. Ask the person who sent it for a new one.",
+  "יצירת יומן מסע משלך": "Start your own trip journal",
+  "משחזרים טיול ממה שכבר יש לך": "Rebuild a trip from what you already have",
+  "בחיובי אשראי, בקבלות שהגיעו במייל ובאירועי יומן יש מקום ותאריך. ״הייתי״ מסדר אותם על מפה, יום אחרי יום.": "Card charges, emailed receipts and calendar events each carry a place and a date. Hayiti lines them up on a map, one day at a time.",
+  "טיול לדוגמה": "Try the sample trip",
+  "התחלת טיול חדש": "Start a new trip",
+  "פרטים נוספים": "More details",
+  "הגדרות נוספות": "More settings",
+  "נוצר ב־": "Created ",
   "עם חיבור ״הייתי״ בשיחה, ChatGPT יכול לקרוא את המקורות שאישרת ולהוסיף את התחנות לטיול הזה. בחר אילו מקורות לכלול בבקשה.": "With Hayiti connected in your chat, ChatGPT can read the sources you authorize and add stops to this trip. Choose the sources to include."
 };
 export const t = (value: string) => language === 'en' && Object.hasOwn(messages, value) ? messages[value] : value;
