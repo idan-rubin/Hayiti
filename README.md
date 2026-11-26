@@ -4,7 +4,7 @@ hayiti is a trip journal that works with [ChatGPT](https://chatgpt.com/) and its
 
 After a long trip, whole days blur together. A friend asks where you ate, and you can picture the place but the name is gone. Your receipts still have a place and a date on them. Start with one stop and piece together the rest a day at a time, even if you never wrote a journal entry while you were away.
 
-[Open the web app](https://hayiti-beta.cocoacoati256.chatgpt.site) · [Download the portable journal](https://hayiti-beta.cocoacoati256.chatgpt.site/Hayiti.zip)
+[Open the web app](https://hayiti-beta.cocoacoati256.chatgpt.site) · [Download the portable journal](https://hayiti-beta.cocoacoati256.chatgpt.site/Hayiti.zip) · [Read the story: “Hey Dot, Can You Map Where I Went?”](https://mrrubin.substack.com/p/hey-dot-can-you-map-where-i-went)
 
 ## Rebuild a trip with ChatGPT Finances
 
