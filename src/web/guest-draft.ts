@@ -1,14 +1,28 @@
 import { cleanTrip, isRecord, mergeStops, type Trip } from '../domain/core.ts';
 
-const guestKey = 'hayiti-unsigned-journal';
+export const guestKey = 'hayiti-unsigned-journal';
 const attemptsKey = 'hayiti-guest-merge';
 export class UnreadableDraft extends Error {
-  constructor() { super('לא ניתן לקרוא את טיוטת הטיול בלשונית הזאת.'); }
+  constructor() { super('לא ניתן לקרוא את טיוטת הטיול בדפדפן הזה.'); }
+}
+
+// Drafts used to live in their tab. One that is still open moves into the browser's storage once.
+function adoptTabDraft() {
+  if (localStorage.getItem(guestKey) !== null) return;
+  for (const key of [guestKey, attemptsKey]) {
+    const value = sessionStorage.getItem(key);
+    if (value === null) continue;
+    localStorage.setItem(key, value);
+    sessionStorage.removeItem(key);
+  }
 }
 
 export function readGuest(): Trip[] {
   let raw: string | null;
-  try { raw = sessionStorage.getItem(guestKey); } catch { return []; }
+  try {
+    adoptTabDraft();
+    raw = localStorage.getItem(guestKey);
+  } catch { return []; }
   if (raw === null) return [];
   try {
     const data: unknown = JSON.parse(raw);
@@ -18,12 +32,12 @@ export function readGuest(): Trip[] {
 }
 
 export function discardGuest() {
-  sessionStorage.removeItem(attemptsKey);
-  sessionStorage.removeItem(guestKey);
+  localStorage.removeItem(attemptsKey);
+  localStorage.removeItem(guestKey);
 }
 
 export function writeGuest(trips: Trip[]) {
-  if (trips.length) sessionStorage.setItem(guestKey, JSON.stringify({ trips }));
+  if (trips.length) localStorage.setItem(guestKey, JSON.stringify({ trips }));
   else discardGuest();
 }
 
@@ -38,14 +52,14 @@ export function checkGuestBackup(trips: Trip[], backup: Trip) {
   }
   const probe = 'hayiti-guest-space';
   try {
-    const current = sessionStorage.getItem(guestKey);
+    const current = localStorage.getItem(guestKey);
     const size = guestKey.length + JSON.stringify({ trips: projected }).length;
     const extra = size - (current === null ? 0 : guestKey.length + current.length);
     if (extra <= 0) return;
-    sessionStorage.setItem(probe, ' '.repeat(Math.max(0, extra - probe.length)));
-    sessionStorage.removeItem(probe);
+    localStorage.setItem(probe, ' '.repeat(Math.max(0, extra - probe.length)));
+    localStorage.removeItem(probe);
   } catch {
-    throw Error('אין מספיק מקום בלשונית לייבוא הגיבוי. פתחו את הגיבוי ביומן הנייד או היכנסו לחשבון ונסו שוב.');
+    throw Error('אין מספיק מקום בדפדפן לייבוא הגיבוי. פתחו את הגיבוי ביומן הנייד או היכנסו לחשבון ונסו שוב.');
   }
 }
 
@@ -60,7 +74,7 @@ export async function prepareGuestMerge(account: Trip[], guest: Trip[], copyTitl
   const changed: Trip[] = [];
   let copies = 0;
   if (!guest.length) return { changed, copies };
-  const raw = sessionStorage.getItem(attemptsKey);
+  const raw = localStorage.getItem(attemptsKey);
   const previous: unknown = raw === null ? [] : JSON.parse(raw);
   if (!Array.isArray(previous)) throw Error('השמירה נכשלה');
   const attempts: Attempt[] = [];
@@ -91,6 +105,6 @@ export async function prepareGuestMerge(account: Trip[], guest: Trip[], copyTitl
     if (next.id !== draft.id) copies++;
   }
   // Save small fingerprints before POST so a dropped reply or reload can be reconciled.
-  if (changed.length) sessionStorage.setItem(attemptsKey, JSON.stringify(attempts));
+  if (changed.length) localStorage.setItem(attemptsKey, JSON.stringify(attempts));
   return { changed, copies };
 }

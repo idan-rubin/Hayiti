@@ -138,7 +138,7 @@ await test('an account journal leaves the tab when its session ends and never be
     assert.notEqual(await page.locator('#title').textContent(), 'Account trip');
 
     await createTrip(page, 'Guest trip');
-    const draft = await page.evaluate(key => JSON.parse(sessionStorage.getItem(key)!), draftKey);
+    const draft = await page.evaluate(key => JSON.parse(localStorage.getItem(key)!), draftKey);
     assert.deepEqual(draft.trips.map((trip: { title: string }) => trip.title), ['Guest trip']);
   } finally {
     await browser.close();
@@ -176,7 +176,7 @@ await test('guest edits to an untitled account trip get a distinct name in the p
     assert.deepEqual(saved.map(body => body.trips.map(item => [item.title, item.stops.length])),
       [[['', 1], ['My trip (before sign-in)', 2]]]);
     assert.deepEqual(await page.locator('#trips option').allTextContents(), ['My trip', 'My trip (before sign-in)']);
-    assert.equal(await page.evaluate(key => sessionStorage.getItem(key), draftKey), null);
+    assert.equal(await page.evaluate(key => localStorage.getItem(key), draftKey), null);
   } finally {
     await browser.close();
   }
@@ -218,7 +218,7 @@ await test('a save that fails after the session ended does not bring the account
     assert.equal(await page.locator('#trips option').count(), 0);
     await page.locator('#config [data-close]').click();
     await createTrip(page, 'Guest trip');
-    const draft = await page.evaluate(key => JSON.parse(sessionStorage.getItem(key)!), draftKey);
+    const draft = await page.evaluate(key => JSON.parse(localStorage.getItem(key)!), draftKey);
     assert.deepEqual(draft.trips.map((trip: { title: string }) => trip.title), ['Guest trip']);
   } finally {
     await browser.close();
@@ -261,7 +261,7 @@ await test('retrying sign-in after a lost reply does not add the guest copy twic
     await page.locator('#status').filter({ hasText: 'up to date' }).waitFor();
     assert.equal(posts, 1);
     assert.deepEqual(account.map(item => item.title), ['Rotterdam', 'Rotterdam (before sign-in)']);
-    assert.equal(await page.evaluate(key => sessionStorage.getItem(key), draftKey), null);
+    assert.equal(await page.evaluate(key => localStorage.getItem(key), draftKey), null);
   } finally {
     await browser.close();
   }
@@ -332,7 +332,7 @@ await test('a refused guest merge keeps the selected trip and day', async () => 
       { id: 'a', title: 'First trip', start: '2026-05-01', end: '2026-05-01', stops: [] },
       { id: 'b', title: 'Second trip', start: '2026-06-14', end: '2026-06-16', stops: [] }
     ];
-    await page.addInitScript(({ key, trips }) => sessionStorage.setItem(key, JSON.stringify({ trips })), { key: draftKey, trips });
+    await page.addInitScript(({ key, trips }) => localStorage.setItem(key, JSON.stringify({ trips })), { key: draftKey, trips });
     let signedIn = false;
     await hostJournal(page, route => {
       if (!signedIn) return route.fulfill({ status: 401 });
@@ -368,7 +368,7 @@ await test('when the journal cannot take a guest trip, the traveler can back it 
     await createTrip(page, 'Guest trip');
     signedIn = true;
     await page.reload();
-    await page.locator('#status').filter({ hasText: 'could not take the trips from this tab (Invalid journal)' }).waitFor();
+    await page.locator('#status').filter({ hasText: 'could not take the trips from this browser (Invalid journal)' }).waitFor();
     assert.equal(await page.locator('#title').textContent(), 'Guest trip');
     assert.equal(await page.locator('#export').isDisabled(), false);
 
@@ -474,7 +474,7 @@ await test('failed sign-in preparation keeps the draft available for backup and 
       await createTrip(page, 'Guest trip');
       await page.evaluate(failure => {
         const key = 'hayiti-guest-merge';
-        if (failure === 'corrupt') sessionStorage.setItem(key, '{broken');
+        if (failure === 'corrupt') localStorage.setItem(key, '{broken');
         else {
           const set = Storage.prototype.setItem;
           Storage.prototype.setItem = function (keyToWrite, value) {
@@ -526,7 +526,7 @@ await test('a non-JSON sign-in failure leaves the guest backup available and ref
     await refreshJournal(page);
     await page.locator('#status').filter({ hasText: 'is now in your journal' }).waitFor();
     assert.equal(writes, 2);
-    assert.equal(await page.evaluate(key => sessionStorage.getItem(key), draftKey), null);
+    assert.equal(await page.evaluate(key => localStorage.getItem(key), draftKey), null);
   } finally {
     await browser.close();
   }
@@ -572,7 +572,7 @@ await test('a sign-in conflict keeps the guest draft until the traveler chooses 
     await refreshJournal(page);
     await page.locator('#status').filter({ hasText: 'is now in your journal' }).waitFor();
     assert.equal(writes, 2);
-    assert.equal(await page.evaluate(key => sessionStorage.getItem(key), draftKey), null);
+    assert.equal(await page.evaluate(key => localStorage.getItem(key), draftKey), null);
   } finally {
     release();
     await browser.close();
@@ -690,7 +690,7 @@ await test('a guest can edit after a lost sign-in reply and refresh the same acc
     await page.locator('#status').filter({ hasText: 'now in your journal' }).waitFor();
     assert.deepEqual(saves.map(trips => trips.map(trip => trip.title)), [['Guest trip'], ['Edited guest trip']]);
     assert.equal(saves[0][0].id, saves[1][0].id);
-    assert.equal(await page.evaluate(key => sessionStorage.getItem(key), draftKey), null);
+    assert.equal(await page.evaluate(key => localStorage.getItem(key), draftKey), null);
   } finally {
     await browser.close();
   }
@@ -706,20 +706,20 @@ await test('an unreadable guest draft is retained until the traveler confirms di
       return route.fulfill({ json: { trips: [], rev: 'r1' } });
     });
     await page.goto(origin + '/journal.html?lang=en');
-    await page.evaluate(key => sessionStorage.setItem(key, '{broken'), draftKey);
+    await page.evaluate(key => localStorage.setItem(key, '{broken'), draftKey);
     await page.reload();
     const discard = page.getByRole('button', { name: 'Discard unreadable draft' });
     const newTrip = page.getByRole('button', { name: 'New trip', exact: true });
     await discard.waitFor();
     assert.equal(await page.locator('#status').innerText(),
-      'This tab’s guest draft could not be read. Choose Discard unreadable draft to continue.');
+      'The guest draft in this browser could not be read. Choose Discard unreadable draft to continue.');
     assert.equal(await newTrip.isDisabled(), true);
     assert.equal(await page.locator('#import').isDisabled(), true);
     assert.equal(await page.locator('[data-tab="files"]').isDisabled(), true);
     assert.equal(await page.locator('[data-tab="paste"]').isDisabled(), true);
     await discard.click();
     await page.locator('#confirmNo').click();
-    assert.equal(await page.evaluate(key => sessionStorage.getItem(key), draftKey), '{broken');
+    assert.equal(await page.evaluate(key => localStorage.getItem(key), draftKey), '{broken');
     assert.equal(await newTrip.isDisabled(), true);
     await discard.click();
     await page.locator('#confirmYes').click();
@@ -727,7 +727,7 @@ await test('an unreadable guest draft is retained until the traveler confirms di
     assert.equal(await discard.isVisible(), false);
     assert.equal(await newTrip.isEnabled(), true);
     assert.equal(await page.locator('#import').isEnabled(), true);
-    assert.equal(await page.evaluate(key => sessionStorage.getItem(key), draftKey), null);
+    assert.equal(await page.evaluate(key => localStorage.getItem(key), draftKey), null);
     assert.equal(posts, 0);
   } finally {
     await browser.close();
@@ -769,7 +769,7 @@ await test('a backup exceeding actual guest storage is rejected in the preview',
     await hostJournal(page, route => route.fulfill({ status: 401 }));
     await page.goto(origin + '/journal.html?lang=en');
     await createTrip(page, 'Small trip');
-    const previous = await page.evaluate(key => sessionStorage.getItem(key), draftKey);
+    const previous = await page.evaluate(key => localStorage.getItem(key), draftKey);
     const photo = 'data:image/jpeg;base64,/9j/' + 'A'.repeat(280000);
     const date = '2026-06-14';
     const stops = Array.from({ length: 24 }, (_, i) => ({ id: 'p' + i, name: 'Visit ' + i, date, photos: [photo] }));
@@ -778,9 +778,9 @@ await test('a backup exceeding actual guest storage is rejected in the preview',
     await page.locator('#file').setInputFiles({ name: 'photos.json', mimeType: 'application/json', buffer: Buffer.from(
       JSON.stringify({ format: 'hayiti/1', trip: { id: 'photos', title: 'Photo trip', start: date, end: date, stops } })
     ) });
-    await page.locator('#preview').filter({ hasText: 'This tab cannot store the imported backup' }).waitFor();
+    await page.locator('#preview').filter({ hasText: 'This browser cannot store the imported backup' }).waitFor();
     assert.equal(await page.locator('#preview button').count(), 0);
-    assert.equal(await page.evaluate(key => sessionStorage.getItem(key), draftKey), previous);
+    assert.equal(await page.evaluate(key => localStorage.getItem(key), draftKey), previous);
   } finally {
     await browser.close();
   }
@@ -862,25 +862,187 @@ await test('a phone-width journal with two trips keeps every control on screen',
   }
 });
 
-await test('leaving a tab-only journal asks first until the trip is backed up', async () => {
+await test('a trip made without signing in is still there in a new tab, and both tabs stay in step', async () => {
+  const browser = await chromium.launch();
+  try {
+    const context = await browser.newContext();
+    const first = await context.newPage();
+    await hostJournal(first, guestAPI);
+    await first.goto(origin + '/journal.html?lang=en');
+    await createTrip(first, 'Guest trip');
+    await first.locator('#status').filter({ hasText: 'saved in this browser' }).waitFor();
+    // The trip is kept, so leaving needs no warning.
+    assert.equal(await first.evaluate(() => {
+      const leaving = new Event('beforeunload', { cancelable: true });
+      window.dispatchEvent(leaving);
+      return leaving.defaultPrevented;
+    }), false);
+
+    const second = await context.newPage();
+    await hostJournal(second, guestAPI);
+    await second.goto(origin + '/journal.html?lang=en');
+    await second.locator('#title').filter({ hasText: 'Guest trip' }).waitFor();
+
+    await createTrip(second, 'Made in the second tab');
+    await first.locator('#trips option').filter({ hasText: 'Made in the second tab' }).waitFor({ state: 'attached' });
+    await createTrip(first, 'Made in the first tab');
+    const saved = await first.evaluate(key => JSON.parse(localStorage.getItem(key)!).trips.map((trip: { title: string }) => trip.title), draftKey);
+    assert.deepEqual(saved.sort(), ['Guest trip', 'Made in the first tab', 'Made in the second tab']);
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('a draft left in a tab by an earlier version moves into the browser', async () => {
   const browser = await chromium.launch();
   try {
     const page = await browser.newPage();
     await hostJournal(page, guestAPI);
     await page.goto(origin + '/journal.html?lang=en');
-    const asksBeforeLeaving = () => page.evaluate(() => {
-      const leaving = new Event('beforeunload', { cancelable: true });
-      window.dispatchEvent(leaving);
-      return leaving.defaultPrevented;
+    await page.evaluate(key => {
+      sessionStorage.setItem(key, JSON.stringify({ trips: [{ id: 'old', title: 'Started last week', start: '2026-06-14', end: '2026-06-14', stops: [] }] }));
+    }, draftKey);
+    await page.reload();
+    await page.locator('#title').filter({ hasText: 'Started last week' }).waitFor();
+    assert.equal(await page.evaluate(key => sessionStorage.getItem(key), draftKey), null);
+    assert.equal(await page.evaluate(key => JSON.parse(localStorage.getItem(key)!).trips[0].title, draftKey), 'Started last week');
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('saving an address without a pin finds the pin, and says so when it cannot', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await hostJournal(page, guestAPI);
+    const asked: string[] = [];
+    let places = [{ display_name: 'Dizengoff 99, Tel Aviv', lat: '32.0795', lon: '34.7740' }];
+    await page.route('https://nominatim.openstreetmap.org/**', route => {
+      asked.push(new URL(route.request().url()).searchParams.get('q') ?? '');
+      return route.fulfill({ json: places });
     });
-    assert.equal(await asksBeforeLeaving(), false);
-    await createTrip(page, 'Guest trip');
-    assert.equal(await page.locator('#status').getAttribute('data-tone'), 'warning');
-    assert.equal(await asksBeforeLeaving(), true);
-    const download = page.waitForEvent('download');
-    await page.locator('#export').click();
-    await download;
-    assert.equal(await asksBeforeLeaving(), false);
+    await page.goto(origin + '/journal.html?lang=en');
+    await createTrip(page, 'Tel Aviv', '2026-06-14');
+
+    await page.locator('#add').click();
+    await page.locator('#editForm [name=name]').fill('Dinner');
+    await page.locator('#editForm [name=address]').fill('Dizengoff 99, Tel Aviv');
+    await page.locator('#editForm .form-actions .primary').click();
+    await page.locator('#edit').waitFor({ state: 'hidden' });
+    assert.deepEqual(asked, ['Dizengoff 99, Tel Aviv']);
+    assert.equal(await page.locator('.leaflet-marker-icon').count(), 1);
+
+    // An address that is already saved is not looked up again.
+    await page.getByRole('button', { name: 'Dinner', exact: true }).click();
+    await page.locator('#editForm [name=notes]').fill('Window table');
+    await page.locator('#editForm .form-actions .primary').click();
+    await page.locator('#edit').waitFor({ state: 'hidden' });
+    assert.equal(asked.length, 1);
+
+    places = [];
+    await page.locator('#add').click();
+    await page.locator('#editForm [name=name]').fill('Somewhere');
+    await page.locator('#editForm [name=address]').fill('No such street 1');
+    await page.locator('#editForm .form-actions .primary').click();
+    await page.locator('#edit .form-error').filter({ hasText: 'This address was not found on the map.' }).waitFor();
+    assert.equal(await page.locator('#editForm [name=name]').inputValue(), 'Somewhere');
+    await page.locator('#editForm .form-actions .primary').click();
+    await page.locator('#edit').waitFor({ state: 'hidden' });
+    assert.equal(asked.length, 2);
+    assert.equal(await page.locator('#stops .stopname').count(), 2);
+    assert.equal(await page.locator('.leaflet-marker-icon').count(), 1);
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('a form opened for a trip that was deleted elsewhere saves nothing onto another trip', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    const tripA = { id: 'a', title: 'Trip A', start: '2026-06-14', end: '2026-06-14', stops: [] };
+    const tripB = { id: 'b', title: 'Trip B', start: '2026-07-01', end: '2026-07-01', stops: [] };
+    let trips = [tripA, tripB],
+      rev = 'r1',
+      writes = 0,
+      release = () => {},
+      held: Promise<void> | null = null;
+    await hostJournal(page, async route => {
+      if (route.request().method() === 'POST') {
+        writes++;
+        return route.fulfill({ json: { rev: 'r3' } });
+      }
+      const answer = { trips, rev };
+      if (held) await held;
+      await route.fulfill({ json: answer });
+    });
+    await page.goto(origin + '/journal.html?lang=en');
+    await page.locator('#status').filter({ hasText: 'up to date' }).waitFor();
+    await page.locator('#trips').selectOption({ label: 'Trip A' });
+
+    // The refresh is in flight when the traveler opens trip settings, and reports that Trip A is gone.
+    trips = [tripB];
+    rev = 'r2';
+    held = new Promise(resolve => { release = resolve; });
+    const read = page.waitForResponse(response => response.url().endsWith('/api/journal'));
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+    await page.locator('#settings').click();
+    assert.equal(await page.locator('#tripForm [name=title]').inputValue(), 'Trip A');
+    release();
+    await read;
+    await page.locator('#title').filter({ hasText: 'Trip B' }).waitFor();
+
+    await page.locator('#tripForm [name=title]').fill('Trip A renamed');
+    await page.locator('#tripForm .primary').click();
+    await page.locator('#config .form-error').filter({ hasText: 'no longer the one open in your journal' }).waitFor();
+    assert.equal(writes, 0);
+    assert.equal(await page.locator('#title').textContent(), 'Trip B');
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('a form whose trip changed elsewhere says so before it saves over the change', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    let trip = { id: 'a', title: 'Trip A', start: '2026-06-14', end: '2026-06-14', stops: [] as unknown[] },
+      rev = 'r1',
+      release = () => {},
+      held: Promise<void> | null = null;
+    const writes: string[] = [];
+    await hostJournal(page, async route => {
+      if (route.request().method() === 'POST') {
+        writes.push(route.request().postData() ?? '');
+        return route.fulfill({ json: { rev: 'r3' } });
+      }
+      const answer = { trips: [trip], rev };
+      if (held) await held;
+      await route.fulfill({ json: answer });
+    });
+    await page.goto(origin + '/journal.html?lang=en');
+    await page.locator('#status').filter({ hasText: 'up to date' }).waitFor();
+
+    trip = { ...trip, stops: [{ id: 's', date: '2026-06-14', name: 'Added in ChatGPT' }] };
+    rev = 'r2';
+    held = new Promise(resolve => { release = resolve; });
+    const read = page.waitForResponse(response => response.url().endsWith('/api/journal'));
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+    await page.locator('#settings').click();
+    release();
+    await read;
+    await page.getByRole('button', { name: 'Added in ChatGPT', exact: true }).waitFor();
+
+    await page.locator('#tripForm [name=title]').fill('Trip A renamed');
+    await page.locator('#tripForm .primary').click();
+    await page.locator('#config .form-error').filter({ hasText: 'Your journal changed while this form was open' }).waitFor();
+    assert.equal(writes.length, 0);
+    await page.locator('#tripForm .primary').click();
+    await page.locator('#config').waitFor({ state: 'hidden' });
+    assert.equal(writes.length, 1);
+    assert.match(writes[0], /Trip A renamed/);
+    assert.match(writes[0], /Added in ChatGPT/);
   } finally {
     await browser.close();
   }

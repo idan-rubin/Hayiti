@@ -34,7 +34,7 @@ The [downloadable example](https://hayiti-beta.cocoacoati256.chatgpt.site/sample
 
 To add stops from a file, use **Sources and import** to bring in a transaction CSV or a calendar file.
 
-Use **Back up trip** to keep an editable copy or move it to another device. Use **Share** to give someone a read-only route. The portable journal saves edits in browser storage when available. You can import, edit and export offline. Loading map tiles and looking up addresses require internet access.
+Without signing in, the web app keeps your trips in that browser. Use **Back up trip** to keep an editable copy or move it to another device. Use **Share** to give someone a read-only route. The portable journal saves edits in browser storage when available. You can import, edit and export offline. Saving a stop with an address and no map pin looks the address up and adds the pin. Loading map tiles and looking up addresses require internet access.
 
 On a phone, choose **Stops** to see the day’s visits in order.
 

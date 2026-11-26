@@ -306,6 +306,9 @@ await test('untitled backups follow the display language and traveler-written ti
     assert.equal(await page.locator('#tripForm [name=title]').inputValue(), '');
     await page.locator('#tripForm [name=home]').fill('Hotel');
     await page.locator('#tripForm .primary').click();
+    // Offline, the address cannot be looked up. The form says so, and saving again keeps it without a pin.
+    await page.locator('#config .form-error').filter({ hasText: 'Address search is unavailable right now.' }).waitFor();
+    await page.locator('#tripForm .primary').click();
     await page.locator('#config').waitFor({ state: 'hidden' });
     await page.locator('#languageSwitch').selectOption('he');
     assert.equal(await page.locator('#title').textContent(), 'הטיול שלי');
@@ -363,6 +366,60 @@ await test('reordering keeps keyboard focus, and Suggest walking order explains 
     await page.locator('#status').filter({ hasText: 'Add at least two stops' }).waitFor();
     assert.equal(await page.locator('#confirmBox').getAttribute('open'), null);
     assert.deepEqual(dialogs, []);
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('Escape cancels choosing a point on the map and returns to the stop being edited', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await page.route('https://**/*', route => route.abort());
+    await page.goto(new URL('../../dist/web/Hayiti.html', import.meta.url).href);
+    await page.getByRole('button', { name: 'Try the sample trip' }).click();
+    await page.locator('#add').click();
+    await page.locator('#editForm [name=name]').fill('Half-written stop');
+    await page.locator('#pick').click();
+    await page.locator('#edit').waitFor({ state: 'hidden' });
+    await page.keyboard.press('Escape');
+    await page.locator('#edit').waitFor({ state: 'visible' });
+    await page.waitForTimeout(300);
+    assert.equal(await page.locator('#edit').getAttribute('open'), '');
+    assert.equal(await page.locator('#editForm [name=name]').inputValue(), 'Half-written stop');
+    // A second Escape is the ordinary way to close the editor.
+    await page.keyboard.press('Escape');
+    await page.locator('#edit').waitFor({ state: 'hidden' });
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('a journal that lives only in its tab asks before leaving until the trip is backed up', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await page.route('https://**/*', route => route.abort());
+    await page.addInitScript(() => {
+      Storage.prototype.getItem = () => { throw new DOMException('Storage blocked', 'SecurityError'); };
+    });
+    await page.goto(new URL('../../dist/web/Hayiti.html', import.meta.url).href);
+    const asksBeforeLeaving = () => page.evaluate(() => {
+      const leaving = new Event('beforeunload', { cancelable: true });
+      window.dispatchEvent(leaving);
+      return leaving.defaultPrevented;
+    });
+    assert.equal(await asksBeforeLeaving(), false);
+    await page.locator('#newTrip').click();
+    await page.locator('#tripForm [name=title]').fill('Kept in memory');
+    await page.locator('#tripForm .primary').click();
+    await page.locator('#config').waitFor({ state: 'hidden' });
+    assert.equal(await page.locator('#status').getAttribute('data-tone'), 'warning');
+    assert.equal(await asksBeforeLeaving(), true);
+    const download = page.waitForEvent('download');
+    await page.locator('#export').click();
+    await download;
+    assert.equal(await asksBeforeLeaving(), false);
   } finally {
     await browser.close();
   }

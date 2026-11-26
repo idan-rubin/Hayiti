@@ -53,6 +53,13 @@ export class JournalSession {
     this.select(trips.find(trip => trip.id === preferredId) ?? trips[0], this.day);
   }
 
+  /** Another tab saved the guest draft. Show its version so this tab never writes over it with an older one. */
+  adoptGuestDraft() {
+    if (this.mode !== 'guest' || this.saving) return false;
+    this.replace('guest', this.storage.readGuest());
+    return true;
+  }
+
   showSnapshot(trip: Trip | null) {
     this.replace('snapshot', trip ? [trip] : []);
     this.select(trip);

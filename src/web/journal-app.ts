@@ -9,7 +9,7 @@ import { routeStops, indexEdges, offRoute, suggest, walkingStats } from '../doma
 import { createDateReel } from './date-reel.ts';
 import { cleanTrip, cleanStop, mergeStops, combineEvidence, journalCharacterLimit } from '../domain/core.ts';
 import { importCsv, importIcs, pastedStop } from '../domain/importers.ts';
-import { checkGuestBackup, discardGuest } from './guest-draft.ts';
+import { checkGuestBackup, discardGuest, guestKey } from './guest-draft.ts';
 import { JournalSession, localToday } from './journal-session.ts';
 import { preparePhoto } from './photos.ts';
 import { ask, clearError, showError } from './confirm.ts';
@@ -445,11 +445,11 @@ function reveal(id: string, target: 'row' | 'pin') {
     if (popupFor === id) popupFor = '';
   }, 600);
 }
-// A journal kept only in this tab is lost when the tab closes.
-const tabOnly = () => session.mode === 'guest' || session.mode === 'memory';
+// A portable journal whose browser storage is blocked lives only in its tab and is lost when the tab closes.
+const tabOnly = () => session.mode === 'memory';
 const saveTone = (): Tone => tabOnly() && session.trips.length ? 'warning' : '';
 function noTimeCopy() {
-  return portable ? session.mode === 'portable' ? 'נשמר בדפדפן הזה.' : 'השינויים בזיכרון הלשונית. לשמירה יש להוריד גיבוי.' : session.mode === 'account' ? 'השינויים נשמרו ביומן האישי.' : 'השינויים נשמרו בלשונית הזאת. אפשר לייצא גיבוי או להיכנס ל־ChatGPT.';
+  return portable ? session.mode === 'portable' ? 'נשמר בדפדפן הזה.' : 'השינויים בזיכרון הלשונית. לשמירה יש להוריד גיבוי.' : session.mode === 'account' ? 'השינויים נשמרו ביומן האישי.' : 'השינויים נשמרו בדפדפן הזה. כדי לשמור אותם בין מכשירים נכנסים עם ChatGPT.';
 }
 let viewRequest = 0,
   loadedHosted = false;
@@ -548,22 +548,22 @@ async function load(afterConflict = false, quiet = false) {
       msg('היומן האישי מעודכן.');
       break;
     case 'merge-conflict':
-      msg(() => ui('Your journal changed during sign-in. Your trips are still in this tab. Choose Refresh journal to add them.',
-        'היומן השתנה במהלך הכניסה. הטיולים עדיין שמורים בלשונית הזאת. כדי להוסיף אותם, בחרו ברענון היומן.'));
+      msg(() => ui('Your journal changed during sign-in. Your trips are still in this browser. Choose Refresh journal to add them.',
+        'היומן השתנה במהלך הכניסה. הטיולים עדיין שמורים בדפדפן הזה. כדי להוסיף אותם, בחרו ברענון היומן.'));
       break;
     case 'merge-not-sent':
       msg(() => ui('This tab couldn’t prepare the save. No trips were sent this time. Use Back up trip for each trip, then import the backups in a new tab.',
         'הלשונית לא הצליחה להכין את הטיולים לשמירה. הפעם לא נשלחו טיולים. גבו כל טיול בנפרד וייבאו את הגיבויים בלשונית חדשה.'));
       break;
     case 'unconfirmed':
-      msg(() => ui('We couldn’t confirm the save. Your trips are still in this tab. Choose Refresh journal to check.',
-        'לא התקבל אישור שמירה. הטיולים עדיין שמורים בלשונית הזאת. לבדיקה, בחרו ברענון היומן.'));
+      msg(() => ui('We couldn’t confirm the save. Your trips are still in this browser. Choose Refresh journal to check.',
+        'לא התקבל אישור שמירה. הטיולים עדיין שמורים בדפדפן הזה. לבדיקה, בחרו ברענון היומן.'));
       break;
     case 'refused':
       msg(() => {
         const reason = t(result.reason).replace(/\.$/, '');
-        return ui('Signed in, but your journal could not take the trips from this tab (' + reason + '). Back them up or delete them here, then choose Refresh journal to open your journal.',
-          'הכניסה הצליחה, אבל היומן לא קיבל את הטיולים מהלשונית הזאת (' + reason + '). אפשר לגבות או למחוק אותם כאן, ואז לבחור ברענון היומן כדי לפתוח את היומן.');
+        return ui('Signed in, but your journal could not take the trips from this browser (' + reason + '). Back them up or delete them here, then choose Refresh journal to open your journal.',
+          'הכניסה הצליחה, אבל היומן לא קיבל את הטיולים מהדפדפן הזה (' + reason + '). אפשר לגבות או למחוק אותם כאן, ואז לבחור ברענון היומן כדי לפתוח את היומן.');
       });
       break;
     case 'merged':
@@ -576,9 +576,25 @@ async function load(afterConflict = false, quiet = false) {
   return result.kind;
 }
 
+// The trip and journal version an open form was filled from. A refresh can replace or reselect the trip
+// behind the form, and saving must never land on a different trip than the one shown.
+let formTrip = { id: '', revision: '' };
+function bindForm() {
+  formTrip = { id: session.trip?.id ?? '', revision: session.revision };
+}
+function requireFormTrip() {
+  if (session.trip?.id !== formTrip.id) {
+    throw Error(ui('This trip is no longer the one open in your journal, so nothing was saved. Close this form and check your trips.',
+      'הטיול הזה כבר אינו הטיול הפתוח ביומן, ולכן דבר לא נשמר. אפשר לסגור את הטופס ולבדוק את הטיולים.'));
+  }
+  if (session.revision !== formTrip.revision) {
+    bindForm(); // The traveler is told once. Saving again applies the form to the version now shown.
+    throw Error(ui('Your journal changed while this form was open, so nothing was saved. Check the trip, then choose Save again.',
+      'היומן השתנה בזמן שהטופס היה פתוח, ולכן דבר לא נשמר. כדאי לבדוק את הטיול ואז לבחור שוב ב״שמירה״.'));
+  }
+}
 // Trips edited in a tab-only journal since their last backup. Leaving the page with any of them asks first.
 const unbacked = new Set<string>();
-let signingIn = false;
 // `fromFile` marks a change that only loads a trip the traveler already has as a file.
 async function change(edit: () => void, fromFile = false) {
   for (const dialog of document.querySelectorAll<HTMLElement>('dialog[open]')) clearError(dialog);
@@ -597,6 +613,8 @@ async function change(edit: () => void, fromFile = false) {
     renderSelection();
     if (result === 'conflict') {
       const loaded = await load(true);
+      // The traveler is about to be told the latest version loaded, so a retry applies to it.
+      if (session.trip?.id === formTrip.id) bindForm();
       fail(t(loaded === 'account' ? 'הטיול השתנה במכשיר אחר. הגרסה העדכנית נטענה. אפשר לחזור על העריכה.'
         : 'העריכה לא נשמרה. היומן השתנה. בדקו את הטיול הנוכחי לפני שתנסו שוב.'));
       return false;
@@ -616,12 +634,23 @@ async function change(edit: () => void, fromFile = false) {
     return false;
   }
 }
-for (const id of ['login', 'hostedSignIn'] as const) $(id).addEventListener('click', () => {
-  signingIn = true; // The draft travels through sign-in in this tab, so leaving for it needs no warning.
-});
 window.addEventListener('beforeunload', event => {
-  if (signingIn || !tabOnly() || !unbacked.size) return;
+  if (!tabOnly() || !unbacked.size) return;
   event.preventDefault();
+});
+// The guest draft is shared by every tab of this browser. A tab follows what another tab saved.
+window.addEventListener('storage', event => {
+  if (event.storageArea !== localStorage || event.key !== guestKey || portable || sharedRoute) return;
+  if (event.newValue === null) {
+    // The draft left the browser: it was merged into an account after sign-in, or its last trip was deleted.
+    start();
+    return;
+  }
+  try {
+    if (session.adoptGuestDraft()) renderSelection();
+  } catch (error) {
+    msg(() => t(errorMessage(error)), 'error');
+  }
 });
 
 $('trips').onchange = () => {
@@ -702,6 +731,7 @@ const tf = {
 function openSettings(fresh: boolean) {
   const { trip } = session;
   creating = fresh;
+  bindForm();
   $('deleteTrip').hidden = fresh || !trip;
   const t: Partial<Trip> = fresh ? {} : trip ?? {};
   tf.title.value = t.title || '';
@@ -715,6 +745,7 @@ function openSettings(fresh: boolean) {
   $('configTitle').textContent = fresh ? ui('New trip', 'טיול חדש') : ui('Trip settings', 'הגדרות טיול');
   $('moreTrip').open = !!(t.homeXY || t.rules);
   $('homeResults').replaceChildren();
+  homeWithoutPin = '';
   showPin($('homeState'), tf.coords.value);
   $('config').showModal();
 }
@@ -731,18 +762,30 @@ $('settings').onclick = () => openSettings(false);
 $('deleteTrip').onclick = async () => {
   const { trip } = session;
   if (!trip || creating || !await ask(t('למחוק לצמיתות את הטיול ואת כל התחנות שבו?'), t('מחיקת הטיול'))) return;
-  const tripId = trip.id;
   if (await change(() => {
-    session.trips = session.trips.filter(item => item.id !== tripId);
+    requireFormTrip();
+    session.trips = session.trips.filter(item => item.id !== formTrip.id);
     session.select(null);
   })) $('config').close();
 };
 $('tripForm').onsubmit = async e => {
   e.preventDefault();
+  if (locating) return;
   clearError($('config'));
   if (tf.end.value < tf.start.value) {
     fail(ui('The end date cannot be before the start date.', 'תאריך הסיום אינו יכול להיות לפני תאריך ההתחלה.'));
     return;
+  }
+  const home = tf.home.value.trim();
+  const savedHome = creating ? '' : session.trip?.home ?? '';
+  if (home && !tf.coords.value.trim() && home !== savedHome && home !== homeWithoutPin) {
+    const found = await pinFor(home, creating ? null : session.trip, $('homeState'), ui('Enter coordinates under More settings.', 'אפשר להזין קואורדינטות תחת ״הגדרות נוספות״.'));
+    if (!found) {
+      homeWithoutPin = home;
+      return;
+    }
+    tf.coords.value = found;
+    showPin($('homeState'), found);
   }
   try {
     const fields = {
@@ -762,6 +805,7 @@ $('tripForm').onsubmit = async e => {
         session.trips.push(trip);
         session.select(trip);
       } else {
+        requireFormTrip();
         const { trip } = session;
         if (!trip) return;
         if (fields.home !== trip.home || JSON.stringify(fields.homeXY) !== JSON.stringify(trip.homeXY)) {
@@ -851,6 +895,7 @@ function openStop(s: Partial<Stop> = {}) {
   if (!trip) return;
   fileEpoch++;
   photoBusy = false;
+  bindForm();
   draftPhotos = [...(s.photos || [])];
   draftId = s.id || '';
   updatePhotos();
@@ -869,25 +914,43 @@ function openStop(s: Partial<Stop> = {}) {
   $('removeStop').hidden = !draftId;
   // A new stop needs only a name. A saved stop shows everything recorded about it.
   $('moreStop').open = !!draftId;
+  keptWithoutPin = '';
   showPin($('pinState'), ef.coords.value);
   relatedStops();
   $('edit').showModal();
 }
 ef.coords.oninput = () => showPin($('pinState'), ef.coords.value);
+// The address the traveler chose to keep without a pin after being told none was found.
+let keptWithoutPin = '',
+  homeWithoutPin = '';
 $('add').onclick = () => openStop();
 $('editForm').onsubmit = async e => {
   e.preventDefault();
+  if (locating) return;
   clearError($('edit'));
   if (photoBusy) {
     fail(t('התמונה עדיין בעיבוד'));
     return;
   }
+  const address = ef.address.value.trim();
+  const savedAddress = session.trip?.stops.find(x => x.id === draftId)?.address ?? '';
+  if (address && !ef.coords.value.trim() && address !== savedAddress && address !== keptWithoutPin) {
+    const found = await pinFor(address, session.trip, $('pinState'), ui('Choose a point on the map.', 'אפשר לבחור נקודה במפה.'));
+    if (!found) {
+      keptWithoutPin = address;
+      return;
+    }
+    ef.coords.value = found;
+    showPin($('pinState'), found);
+  }
   try {
     const xy = points(ef.coords.value);
     const ok = await change(() => {
+      requireFormTrip();
       const { trip } = session;
       if (!trip) return;
       const old = trip.stops.find(x => x.id === draftId);
+      if (draftId && !old) throw Error(t('התחנה שנבחרה אינה זמינה'));
       const previous = old?.sources ?? [];
       const primary = primarySource(previous);
       let evidence: string[] = previous;
@@ -942,6 +1005,7 @@ $('editForm').onsubmit = async e => {
 $('removeStop').onclick = async () => {
   if (!await ask(t('למחוק את התחנה מהטיול?'), t('מחיקת התחנה'))) return;
   const ok = await change(() => {
+    requireFormTrip();
     const { trip, day } = session;
     if (!trip) return;
     trip.stops = trip.stops.filter(s => s.id !== draftId);
@@ -970,10 +1034,40 @@ map.on('click', e => {
   endPick();
 });
 document.addEventListener('keydown', event => {
-  if (pick && event.key === 'Escape') endPick();
+  if (!pick || event.key !== 'Escape') return;
+  // The same key press would otherwise close the editor the moment it reopens.
+  event.preventDefault();
+  setTimeout(endPick);
 });
-// Looks an address up only when the traveler asks, and lets them choose among the matches.
-async function findOnMap(query: string, target: HTMLElement, trigger: HTMLButtonElement, choose: (coordinates: string) => void) {
+interface Place {
+  name: string;
+  coordinates: string;
+}
+// Asks OpenStreetMap for matching places. Results near the trip's existing pins rank first.
+async function searchPlaces(query: string, trip: Trip | null): Promise<Place[]> {
+  let url = 'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=4&accept-language=' + locale() + '&q=' + encodeURIComponent(query);
+  const pins = trip ? [...trip.stops.map(stop => stop.xy), trip.homeXY].filter(xy => !!xy) : [];
+  if (pins.length) {
+    const lat = pins.map(xy => xy[0]),
+      lon = pins.map(xy => xy[1]),
+      margin = .2;
+    url += '&viewbox=' + [Math.min(...lon) - margin, Math.max(...lat) + margin, Math.max(...lon) + margin, Math.min(...lat) - margin].map(n => n.toFixed(2)).join(',');
+  }
+  const res = await fetch(url);
+  if (!res.ok) throw Error('Address search unavailable');
+  const payload: unknown = await res.json();
+  if (!Array.isArray(payload)) throw Error('Address search unavailable');
+  return payload.filter((a): a is {
+    display_name: string;
+    lat: string;
+    lon: string;
+  } => isRecord(a) && typeof a.display_name === 'string' && typeof a.lat === 'string' && typeof a.lon === 'string').map(a => ({
+    name: a.display_name,
+    coordinates: a.lat + ', ' + a.lon
+  }));
+}
+// The traveler asked to see the matches and chooses among them.
+async function findOnMap(query: string, trip: Trip | null, target: HTMLElement, trigger: HTMLButtonElement, choose: (coordinates: string) => void) {
   const q = query.trim();
   if (!q) {
     target.textContent = ui('Enter an address or a place name first.', 'יש להזין תחילה כתובת או שם מקום.');
@@ -982,17 +1076,9 @@ async function findOnMap(query: string, target: HTMLElement, trigger: HTMLButton
   target.textContent = t('מחפש ב־OpenStreetMap…');
   trigger.disabled = true;
   try {
-    const res = await fetch('https://nominatim.openstreetmap.org/search?format=jsonv2&limit=4&accept-language=' + locale() + '&q=' + encodeURIComponent(q));
-    if (!res.ok) throw Error();
-    const payload: unknown = await res.json();
-    if (!Array.isArray(payload)) throw Error();
-    const results = payload.filter((a): a is {
-      display_name: string;
-      lat: string;
-      lon: string;
-    } => isRecord(a) && typeof a.display_name === 'string' && typeof a.lat === 'string' && typeof a.lon === 'string');
-    target.replaceChildren(...results.map(a => button(a.display_name, () => {
-      choose(a.lat + ', ' + a.lon);
+    const results = await searchPlaces(q, trip);
+    target.replaceChildren(...results.map(place => button(place.name, () => {
+      choose(place.coordinates);
       target.textContent = t('המיקום נבחר.');
     })));
     if (!results.length) target.textContent = t('לא נמצאה כתובת. אפשר לבחור נקודה במפה.');
@@ -1002,11 +1088,30 @@ async function findOnMap(query: string, target: HTMLElement, trigger: HTMLButton
     setTimeout(() => trigger.disabled = false, 1100);
   }
 }
-$('findPlace').onclick = () => findOnMap(ef.address.value.trim() || ef.name.value, $('georesults'), $('findPlace'), coordinates => {
+// Saving an address without a pin looks the address up. When no pin is found the save stops and says so,
+// and saving the same address again keeps it without a pin.
+let locating = false;
+async function pinFor(address: string, trip: Trip | null, state: HTMLElement, alternative: string): Promise<string | null> {
+  locating = true;
+  state.textContent = t('מחפש ב־OpenStreetMap…');
+  const again = ui(' Or choose Save again to keep it without a pin.', ' אפשר גם לבחור שוב ב״שמירה״ כדי לשמור בלי סיכה.');
+  try {
+    const [best] = await searchPlaces(address, trip);
+    if (best) return best.coordinates;
+    fail(ui('This address was not found on the map. ', 'הכתובת לא נמצאה במפה. ') + alternative + again);
+  } catch {
+    fail(ui('Address search is unavailable right now. ', 'חיפוש הכתובת אינו זמין כרגע. ') + alternative + again);
+  } finally {
+    locating = false;
+    showPin(state, '');
+  }
+  return null;
+}
+$('findPlace').onclick = () => findOnMap(ef.address.value.trim() || ef.name.value, session.trip, $('georesults'), $('findPlace'), coordinates => {
   ef.coords.value = coordinates;
   showPin($('pinState'), coordinates);
 });
-$('findHome').onclick = () => findOnMap(tf.home.value, $('homeResults'), $('findHome'), coordinates => {
+$('findHome').onclick = () => findOnMap(tf.home.value, creating ? null : session.trip, $('homeResults'), $('findHome'), coordinates => {
   tf.coords.value = coordinates;
   showPin($('homeState'), coordinates);
 });
@@ -1072,7 +1177,7 @@ $('copyPrompt').onclick = async () => {
   }
 };
 $('discardDraft').onclick = async () => {
-  if (!await ask(t('למחוק את טיוטת הטיול שלא ניתן לקרוא מהלשונית הזאת לצמיתות?'), t('מחיקת טיוטה שלא ניתן לקרוא'))) return;
+  if (!await ask(t('למחוק את טיוטת הטיול שלא ניתן לקרוא מהדפדפן הזה לצמיתות?'), t('מחיקת טיוטה שלא ניתן לקרוא'))) return;
   try {
     discardGuest();
     $('discardDraft').hidden = true;
