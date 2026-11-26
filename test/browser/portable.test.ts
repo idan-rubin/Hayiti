@@ -691,3 +691,38 @@ await test('the street map note goes away once every street tile in view has loa
     await browser.close();
   }
 });
+
+await test('a terrain image that failed on the overview does not keep the note at street level', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await page.route('https://**/*', route => route.abort());
+    await page.route('https://tiles.openfreemap.org/styles/liberty', route => route.fulfill({
+      headers: { 'access-control-allow-origin': '*' },
+      json: {
+        version: 8,
+        sources: { relief: { type: 'raster', tiles: ['https://tiles.openfreemap.org/natural_earth/{z}/{x}/{y}.png'], tileSize: 256, maxzoom: 6 } },
+        layers: [
+          { id: 'land', type: 'background', paint: { 'background-color': '#e8efe9' } },
+          { id: 'relief', type: 'raster', source: 'relief', maxzoom: 7 }
+        ]
+      }
+    }));
+    let images = 0;
+    await page.route('https://tiles.openfreemap.org/natural_earth/**', route => {
+      images++;
+      return route.abort();
+    });
+    // The empty journal opens on a map of the world, which draws the terrain images.
+    await page.goto(new URL('../../dist/web/Hayiti.html?lang=en', import.meta.url).href);
+    await page.locator('#map[data-note]').waitFor({ state: 'attached' });
+    assert.ok(images > 0);
+
+    // The sample trip is shown at street level, where the terrain images are not part of the map.
+    await page.getByRole('button', { name: 'Try the sample trip' }).click();
+    await page.locator('#map:not([data-note]) canvas.maplibregl-canvas').waitFor();
+    assert.equal(await page.locator('.leaflet-marker-icon').count(), 7);
+  } finally {
+    await browser.close();
+  }
+});

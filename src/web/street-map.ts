@@ -68,10 +68,10 @@ export function addStreetMap(map: JournalMap, language: () => Language, report: 
     styled = false,
     loading = false,
     sourceFailed = false;
-  // Tiles that failed to load. One that leaves the view or loads on a later try is no longer in the failed state.
+  // Tiles that failed to load. One that has left the view, or loaded on a later try, is no longer missing.
   const failedTiles = new Set<StreetTile>();
   const tilesMissing = () => {
-    for (const tile of failedTiles) if (tile.state !== 'errored') failedTiles.delete(tile);
+    for (const tile of failedTiles) if (tile.uses === 0 || tile.state !== 'errored') failedTiles.delete(tile);
     return failedTiles.size > 0;
   };
   const relabel = () => {
