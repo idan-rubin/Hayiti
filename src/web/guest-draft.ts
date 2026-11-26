@@ -31,6 +31,17 @@ export function readGuest(): Trip[] {
   throw new UnreadableDraft();
 }
 
+const requestKey = 'hayiti-guest-merge-requested';
+/** Choosing Sign in from the tab that shows the draft is the traveler's request to keep it in their account. */
+export function requestGuestMerge(requested: boolean) {
+  if (requested) sessionStorage.setItem(requestKey, '1');
+  else sessionStorage.removeItem(requestKey);
+}
+
+export function guestMergeRequested() {
+  return sessionStorage.getItem(requestKey) === '1';
+}
+
 export function discardGuest() {
   localStorage.removeItem(attemptsKey);
   localStorage.removeItem(guestKey);

@@ -52,6 +52,8 @@ await test('a trip started before signing in is added to the journal after sign-
     await page.reload();
     await page.locator('#title').filter({ hasText: 'Before sign-in' }).waitFor();
 
+    await chooseSignIn(page);
+
     signedIn = true;
     await page.reload();
     await page.locator('#status').filter({ hasText: 'is now in your journal' }).waitFor();
@@ -112,6 +114,14 @@ async function refreshJournal(page: Page) {
   await page.locator('#reload').click();
   await page.locator('#sources [data-close]').click();
 }
+// Chooses Sign in the way a traveler does. The test answers the sign-in itself, so the navigation is held back.
+async function chooseSignIn(page: Page) {
+  await page.locator('#login').evaluate((link: HTMLAnchorElement) => {
+    link.addEventListener('click', event => event.preventDefault(), { once: true });
+    link.click();
+  });
+}
+
 async function createTrip(page: Page, title: string, date?: string) {
   await page.locator('#newTrip').click();
   await page.locator('#tripForm [name=title]').fill(title);
@@ -169,6 +179,8 @@ await test('guest edits to an untitled account trip get a distinct name in the p
     });
     await page.locator('#preview button').click();
     await page.locator('#sources').waitFor({ state: 'hidden' });
+
+    await chooseSignIn(page);
 
     signedIn = true;
     await page.reload();
@@ -252,6 +264,8 @@ await test('retrying sign-in after a lost reply does not add the guest copy twic
     await page.locator('#preview button').click();
     await page.locator('#sources').waitFor({ state: 'hidden' });
 
+    await chooseSignIn(page);
+
     signedIn = true;
     const lost = page.waitForEvent('requestfailed', request => request.method() === 'POST');
     await page.reload();
@@ -314,6 +328,8 @@ await test('refreshing after signing in elsewhere adds the guest trip with its s
     await page.locator('#preview button').click();
     await page.locator('#sources').waitFor({ state: 'hidden' });
 
+    await chooseSignIn(page);
+
     signedIn = true;
     await refreshJournal(page);
     await page.locator('#status').filter({ hasText: 'is now in your journal' }).waitFor();
@@ -343,6 +359,7 @@ await test('a refused guest merge keeps the selected trip and day', async () => 
     await page.locator('#trips').selectOption('b');
     await page.locator('#dayReel').press('End');
     assert.equal(await page.locator('#tripDate').inputValue(), trips[1].end);
+    await chooseSignIn(page);
     signedIn = true;
     await refreshJournal(page);
     await page.locator('#status').filter({ hasText: 'Invalid journal' }).waitFor();
@@ -366,6 +383,7 @@ await test('when the journal cannot take a guest trip, the traveler can back it 
     });
     await page.goto(origin + '/journal.html?lang=en');
     await createTrip(page, 'Guest trip');
+    await chooseSignIn(page);
     signedIn = true;
     await page.reload();
     await page.locator('#status').filter({ hasText: 'could not take the trips from this browser (Invalid journal)' }).waitFor();
@@ -405,6 +423,7 @@ await test('overlapping refreshes share one load: one save, one status, and the 
     });
     await page.goto(origin + '/journal.html?lang=en');
     await createTrip(page, 'Guest trip');
+    await chooseSignIn(page);
     signedIn = true;
     await page.evaluate(() => {
       document.getElementById('reload')!.click();
@@ -483,6 +502,7 @@ await test('failed sign-in preparation keeps the draft available for backup and 
           };
         }
       }, failure);
+      await chooseSignIn(page);
       signedIn = true;
       await refreshJournal(page);
       await page.locator('#status').filter({ hasText: 'No trips were sent this time' }).waitFor();
@@ -514,6 +534,7 @@ await test('a non-JSON sign-in failure leaves the guest backup available and ref
     });
     await page.goto(origin + '/journal.html?lang=en');
     await createTrip(page, 'Guest trip');
+    await chooseSignIn(page);
     signedIn = true;
     await page.reload();
     await page.locator('#title').filter({ hasText: 'Guest trip' }).waitFor();
@@ -553,6 +574,7 @@ await test('a sign-in conflict keeps the guest draft until the traveler chooses 
     });
     await page.goto(origin + '/journal.html?lang=en');
     await createTrip(page, 'Guest trip');
+    await chooseSignIn(page);
     signedIn = true;
     const merging = page.waitForRequest(request => request.method() === 'POST');
     await refreshJournal(page);
@@ -678,6 +700,7 @@ await test('a guest can edit after a lost sign-in reply and refresh the same acc
     });
     await page.goto(origin + '/journal.html?lang=en');
     await createTrip(page, 'Guest trip');
+    await chooseSignIn(page);
     signedIn = true;
     await refreshJournal(page);
     await page.locator('#status').filter({ hasText: 'couldn’t confirm the save' }).waitFor();
@@ -1086,6 +1109,58 @@ await test('stops saved elsewhere appear when the traveler returns to the tab', 
     await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
     await read;
     await page.getByRole('button', { name: 'Added in ChatGPT', exact: true }).waitFor();
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('a draft found by someone who did not sign in from its tab is shown and joins their journal only if they say so', async () => {
+  const browser = await chromium.launch();
+  try {
+    const context = await browser.newContext();
+    const bucket = new MemoryBucket();
+    let signedIn = false,
+      writes = 0;
+    const host = (page: Page) => hostJournal(page, async route => {
+      const request = route.request();
+      if (request.method() === 'POST') writes++;
+      const response = await journalAPI(new Request(request.url(), {
+        method: request.method(),
+        headers: await request.allHeaders(),
+        body: request.postData()
+      }), bucket, 'web', signedIn ? 'traveler' : null);
+      await route.fulfill({ status: response.status, contentType: 'application/json', body: await response.text() });
+    });
+    const earlier = await context.newPage();
+    await host(earlier);
+    await earlier.goto(origin + '/journal.html?lang=en');
+    await createTrip(earlier, 'Left by an earlier visitor');
+    await earlier.close();
+
+    // Someone opens the site later in the same browser, already signed in.
+    signedIn = true;
+    const page = await context.newPage();
+    await host(page);
+    await page.goto(origin + '/journal.html?lang=en');
+    await page.locator('#confirmText').filter({ hasText: 'Left by an earlier visitor' }).waitFor();
+    await page.locator('#confirmNo').click();
+    await page.locator('#status').filter({ hasText: 'left out of your journal' }).waitFor();
+    assert.equal(writes, 0);
+    assert.equal(await page.locator('#trips option').filter({ hasText: 'Left by an earlier visitor' }).count(), 0);
+    assert.equal(await page.evaluate(key => JSON.parse(localStorage.getItem(key)!).trips.length, draftKey), 1);
+
+    // Returning to the tab checks the journal again without asking twice.
+    const read = page.waitForResponse(response => response.url().endsWith('/api/journal'));
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+    await read;
+    assert.equal(await page.locator('#confirmBox').getAttribute('open'), null);
+
+    await page.reload();
+    await page.locator('#confirmText').filter({ hasText: 'Left by an earlier visitor' }).waitFor();
+    await page.locator('#confirmYes').click();
+    await page.locator('#status').filter({ hasText: 'is now in your journal' }).waitFor();
+    assert.equal(writes, 1);
+    assert.equal(await page.evaluate(key => localStorage.getItem(key), draftKey), null);
   } finally {
     await browser.close();
   }

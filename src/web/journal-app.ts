@@ -9,7 +9,7 @@ import { routeStops, indexEdges, offRoute, suggest, walkingStats } from '../doma
 import { createDateReel } from './date-reel.ts';
 import { cleanTrip, cleanStop, mergeStops, combineEvidence, journalCharacterLimit } from '../domain/core.ts';
 import { importCsv, importIcs, pastedStop } from '../domain/importers.ts';
-import { checkGuestBackup, discardGuest, guestKey } from './guest-draft.ts';
+import { checkGuestBackup, discardGuest, guestKey, guestMergeRequested, requestGuestMerge } from './guest-draft.ts';
 import { JournalSession, localToday } from './journal-session.ts';
 import { preparePhoto } from './photos.ts';
 import { ask, clearError, showError } from './confirm.ts';
@@ -503,6 +503,22 @@ window.addEventListener('hashchange', () => {
   if (hostedView || location.hash.startsWith('#route=')) location.reload();
 });
 let journalReady = false;
+// A draft kept in the browser can outlive the person who made it. It joins an account without a question only
+// when the traveler chose Sign in from the tab showing it. Anyone else is shown the trips and asked.
+let mergeAnswer: boolean | null = null;
+async function approveGuestMerge(draft: Trip[]) {
+  if (guestMergeRequested()) return true;
+  if (mergeAnswer !== null) return mergeAnswer;
+  const titles = draft.map(trip => '• ' + displayTripTitle(trip.title)).join('\n');
+  mergeAnswer = await ask(ui(
+    (draft.length === 1 ? 'This browser has a trip made before signing in:' : 'This browser has trips made before signing in:') + '\n' + titles
+      + '\n\n' + (draft.length === 1 ? 'Add it to your journal?' : 'Add them to your journal?') + ' If you did not make ' + (draft.length === 1 ? 'it' : 'them') + ', choose Cancel.',
+    (draft.length === 1 ? 'בדפדפן הזה שמור טיול שנוצר לפני הכניסה:' : 'בדפדפן הזה שמורים טיולים שנוצרו לפני הכניסה:') + '\n' + titles
+      + '\n\n' + (draft.length === 1 ? 'להוסיף אותו ליומן שלך? אם לא יצרת אותו, בחרו בביטול.' : 'להוסיף אותם ליומן שלך? אם לא יצרת אותם, בחרו בביטול.')
+  ), ui('Add to my journal', 'הוספה ליומן שלי'));
+  if (mergeAnswer) requestGuestMerge(true);
+  return mergeAnswer;
+}
 // A quiet load is the automatic check when the traveler returns to the tab. It redraws only when the journal changed.
 async function load(afterConflict = false, quiet = false) {
   if (hostedView) return loadHostedRoute();
@@ -518,9 +534,11 @@ async function load(afterConflict = false, quiet = false) {
   const result = await session.load(portable, title => {
     const suffix = ui(' (before sign-in)', ' (לפני הכניסה)');
     return displayTripTitle(title).slice(0, 100 - suffix.length) + suffix;
-  }, afterConflict);
+  }, approveGuestMerge, afterConflict);
   if (result.kind === 'unchanged') return;
-  if (quiet && result.kind === 'account' && session.revision === revision) return result.kind;
+  if (quiet && (result.kind === 'account' || result.kind === 'draft-left-out') && session.revision === revision) return result.kind;
+  // The request to keep a draft ends once it is in the account, or once sign-in was abandoned.
+  if (result.kind === 'merged' || result.kind === 'account' || result.kind === 'guest') requestGuestMerge(false);
   const unreadable = result.kind === 'unreadable-draft';
   journalReady = !unreadable;
   $('retryLoad').hidden = true;
@@ -546,6 +564,10 @@ async function load(afterConflict = false, quiet = false) {
       break;
     case 'account':
       msg('היומן האישי מעודכן.');
+      break;
+    case 'draft-left-out':
+      msg(() => ui('The trips made in this browser before signing in were left out of your journal. Reload the page to be asked again.',
+        'הטיולים שנוצרו בדפדפן הזה לפני הכניסה לא נוספו ליומן שלך. כדי להישאל שוב, טענו מחדש את הדף.'));
       break;
     case 'merge-conflict':
       msg(() => ui('Your journal changed during sign-in. Your trips are still in this browser. Choose Refresh journal to add them.',
@@ -634,6 +656,9 @@ async function change(edit: () => void, fromFile = false) {
     return false;
   }
 }
+for (const id of ['login', 'hostedSignIn'] as const) $(id).addEventListener('click', () => {
+  try { requestGuestMerge(true); } catch { /* Without tab storage the traveler is asked after sign-in instead. */ }
+});
 window.addEventListener('beforeunload', event => {
   if (!tabOnly() || !unbacked.size) return;
   event.preventDefault();
@@ -1043,15 +1068,16 @@ interface Place {
   name: string;
   coordinates: string;
 }
-// Asks OpenStreetMap for matching places. Results near the trip's existing pins rank first.
+// Asks OpenStreetMap for matching places. Results in the region of the trip's existing pins rank first.
 async function searchPlaces(query: string, trip: Trip | null): Promise<Place[]> {
   let url = 'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=4&accept-language=' + locale() + '&q=' + encodeURIComponent(query);
   const pins = trip ? [...trip.stops.map(stop => stop.xy), trip.homeXY].filter(xy => !!xy) : [];
   if (pins.length) {
     const lat = pins.map(xy => xy[0]),
       lon = pins.map(xy => xy[1]),
-      margin = .2;
-    url += '&viewbox=' + [Math.min(...lon) - margin, Math.max(...lat) + margin, Math.max(...lon) + margin, Math.min(...lat) - margin].map(n => n.toFixed(2)).join(',');
+      margin = .3;
+    // Only a region tens of kilometres wide is sent, never a pin's own position.
+    url += '&viewbox=' + [Math.min(...lon) - margin, Math.max(...lat) + margin, Math.max(...lon) + margin, Math.min(...lat) - margin].map(n => n.toFixed(1)).join(',');
   }
   const res = await fetch(url);
   if (!res.ok) throw Error('Address search unavailable');

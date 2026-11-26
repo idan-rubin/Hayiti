@@ -4,7 +4,7 @@ import { journalStorage, SaveRejected } from './journal-storage.ts';
 
 type Mode = 'initial' | 'snapshot' | 'portable' | 'memory' | 'guest' | 'account';
 type LoadResult =
-  | { kind: 'portable' | 'guest' | 'signed-out' | 'account' | 'unchanged' | 'merge-conflict' | 'merge-not-sent' | 'unconfirmed' }
+  | { kind: 'portable' | 'guest' | 'signed-out' | 'account' | 'unchanged' | 'merge-conflict' | 'merge-not-sent' | 'unconfirmed' | 'draft-left-out' }
   | { kind: 'merged'; trips: number; copies: number }
   | { kind: 'refused' | 'unreadable-draft'; reason: string };
 type EditResult = 'saved' | 'saved-after-refresh' | 'ignored' | 'loading' | 'superseded' | 'conflict' | 'storage-error';
@@ -65,11 +65,15 @@ export class JournalSession {
     this.select(trip);
   }
 
-  async load(portable: boolean, copyTitle: (title: string) => string, afterConflict = false): Promise<LoadResult> {
+  /**
+   * A draft in this browser may have been made by someone other than the person now signed in,
+   * so `approveMerge` decides whether it joins the account.
+   */
+  async load(portable: boolean, copyTitle: (title: string) => string, approveMerge: (draft: Trip[]) => Promise<boolean>, afterConflict = false): Promise<LoadResult> {
     const revision = this.rev;
     // A read started before the rejected write can still return its old revision.
     if (afterConflict && this.loading) await this.loading.catch(() => {});
-    this.loading ??= this.read(portable, copyTitle).catch((error): LoadResult => {
+    this.loading ??= this.read(portable, copyTitle, approveMerge).catch((error): LoadResult => {
       if (!(error instanceof UnreadableDraft)) throw error;
       this.replace('initial', []);
       return { kind: 'unreadable-draft', reason: error.message };
@@ -79,7 +83,7 @@ export class JournalSession {
     return result;
   }
 
-  private async read(portable: boolean, copyTitle: (title: string) => string): Promise<LoadResult> {
+  private async read(portable: boolean, copyTitle: (title: string) => string, approveMerge: (draft: Trip[]) => Promise<boolean>): Promise<LoadResult> {
     if (portable) {
       if (this.mode !== 'memory') {
         const trips = await this.storage.readPortable();
@@ -101,6 +105,11 @@ export class JournalSession {
       return { kind: 'unchanged' };
     }
     const guest = this.storage.readGuest();
+    if (guest.length && !await approveMerge(guest)) {
+      // The draft stays in the browser, untouched, and out of this account.
+      this.replace('account', account.trips, account.rev);
+      return { kind: 'draft-left-out' };
+    }
     let started: Trip[] | undefined;
     let copies: number;
     try {

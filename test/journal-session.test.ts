@@ -16,10 +16,10 @@ await test('malformed account replies preserve the selected trip, day, and last 
     return Response.json(saveReply);
   });
 
-  await session.load(false, title => title);
+  await session.load(false, title => title, async () => true);
   session.select(session.trip, trip.end);
   readReply = { trips: [] };
-  await assert.rejects(session.load(false, title => title));
+  await assert.rejects(session.load(false, title => title, async () => true));
   assert.equal(session.trip?.id, trip.id);
 
   await assert.rejects(session.change(() => { session.trips[0].title = 'First edit'; }));
