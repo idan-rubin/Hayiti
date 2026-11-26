@@ -1478,3 +1478,53 @@ await test('choosing Sign in covers the trips shown then, and a trip added after
     await browser.close();
   }
 });
+
+await test('two tabs that upgrade at the same moment both keep the trips from the earlier version', async () => {
+  const browser = await chromium.launch();
+  try {
+    const context = await browser.newContext();
+    const tabs = [await context.newPage(), await context.newPage()];
+    for (const page of tabs) {
+      await hostJournal(page, guestAPI);
+      await page.goto(origin + '/journal.html?lang=en');
+    }
+    for (let round = 0; round < 5; round++) {
+      await tabs[0].evaluate(key => localStorage.removeItem(key), draftKey);
+      for (const [tab, page] of tabs.entries()) {
+        await page.evaluate(({ key, draft }) => sessionStorage.setItem(key, draft), {
+          key: draftKey,
+          draft: JSON.stringify({ trips: [{ id: 'tab' + tab, title: 'Legacy trip ' + tab, start: '2026-06-14', end: '2026-06-14', stops: [] }] })
+        });
+      }
+      await Promise.all(tabs.map(page => page.reload()));
+      for (const page of tabs) {
+        for (const title of ['Legacy trip 0', 'Legacy trip 1']) await page.locator('#trips option').filter({ hasText: title }).waitFor({ state: 'attached' });
+        assert.equal(await page.evaluate(key => sessionStorage.getItem(key), draftKey), null);
+      }
+      assert.deepEqual(await storedTitles(tabs[0]), ['Legacy trip 0', 'Legacy trip 1']);
+    }
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('a signed-in journal opens in a browser that blocks only tab storage', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await page.addInitScript(() => {
+      Object.defineProperty(window, 'sessionStorage', {
+        get() { throw new DOMException('Storage blocked', 'SecurityError'); }
+      });
+    });
+    await hostJournal(page, route => route.fulfill({
+      json: { trips: [{ id: 'a', title: 'Saved in the account', start: '2026-06-14', end: '2026-06-14', stops: [] }], rev: 'r1' }
+    }));
+    await page.goto(origin + '/journal.html?lang=en');
+    await page.locator('#title').filter({ hasText: 'Saved in the account' }).waitFor();
+    await page.locator('#status').filter({ hasText: 'up to date' }).waitFor();
+    assert.equal(await page.locator('#retryLoad').isVisible(), false);
+  } finally {
+    await browser.close();
+  }
+});

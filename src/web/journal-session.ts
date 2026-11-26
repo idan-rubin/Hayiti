@@ -110,6 +110,7 @@ export class JournalSession {
       return { kind: 'portable' };
     }
     const revisionAtRead = this.rev;
+    await this.storage.moveTabDraft();
     const account = await this.storage.readAccount();
     if (!account) {
       const expired = this.mode === 'account';

@@ -14,8 +14,7 @@ function parseDraft(raw: string): Trip[] | null {
   return null;
 }
 
-// Drafts used to live in their tab. Every tab that still holds one adds its trips to the browser's draft,
-// so two tabs open during the upgrade both keep their trips.
+// Drafts used to live in their tab. Every tab that still holds one adds its trips to the browser's draft.
 function adoptTabDraft() {
   const fromTab = sessionStorage.getItem(guestKey);
   if (fromTab === null) return;
@@ -53,19 +52,32 @@ export function tripsWaitingInTab(): number {
   }
 }
 
+/**
+ * Moves a draft the earlier version left in this tab into the browser's draft. Tabs take turns, as they do
+ * for saves, so two tabs that upgrade at the same moment both keep their trips.
+ */
+export async function moveTabDraft() {
+  let waiting: boolean;
+  try {
+    waiting = sessionStorage.getItem(guestKey) !== null;
+  } catch {
+    return; // A browser that blocks tab storage never held a draft there.
+  }
+  if (!waiting) return;
+  await withGuestLock(() => {
+    try {
+      adoptTabDraft();
+    } catch {
+      // The browser has no room for both drafts. Each stays where it is, and the next load tries again.
+    }
+  });
+}
+
 export function readGuest(): Trip[] {
   let raw: string | null;
   try {
     raw = localStorage.getItem(guestKey);
   } catch { return []; }
-  if (sessionStorage.getItem(guestKey) !== null) {
-    try {
-      adoptTabDraft();
-    } catch {
-      // The browser has no room for both drafts. Each stays where it is, and the next read tries again.
-    }
-    raw = localStorage.getItem(guestKey);
-  }
   if (raw === null) return [];
   // Keep the original until the traveler explicitly discards it.
   const trips = parseDraft(raw);
