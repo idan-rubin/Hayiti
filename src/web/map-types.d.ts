@@ -45,12 +45,18 @@ interface MapMarker {
   openPopup(): MapMarker;
   on(type: 'click', callback: () => void): MapMarker;
 }
+/** A tile of the street map. The library moves it out of the 'errored' state when it leaves the view or is loaded again. */
+interface StreetTile {
+  state: string;
+}
 /** The vector street map that the Leaflet layer draws. */
 interface StreetMap {
   on(type: 'style.load', callback: () => void): void;
   on(type: 'error', callback: (event: {
     sourceId?: string;
+    tile?: StreetTile;
   }) => void): void;
+  on(type: 'idle', callback: () => void): void;
   setLayoutProperty(layer: string, name: 'text-field', value: unknown): void;
 }
 interface StreetMapLayer {

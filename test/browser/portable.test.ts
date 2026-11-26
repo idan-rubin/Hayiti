@@ -640,3 +640,54 @@ await test('streets that fail to load after the style say so and load when the c
     await browser.close();
   }
 });
+
+await test('the street map note goes away once every street tile in view has loaded', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await page.route('https://**/*', route => route.abort());
+    await page.route('https://tiles.openfreemap.org/styles/liberty', route => route.fulfill({
+      headers: { 'access-control-allow-origin': '*' },
+      json: {
+        version: 8,
+        sources: { streets: { type: 'vector', url: 'https://tiles.openfreemap.org/planet' } },
+        layers: [
+          { id: 'land', type: 'background', paint: { 'background-color': '#e8efe9' } },
+          { id: 'roads', type: 'line', source: 'streets', 'source-layer': 'transportation' }
+        ]
+      }
+    }));
+    let described = 0,
+      failing = true;
+    await page.route('https://tiles.openfreemap.org/planet', route => {
+      described++;
+      return route.fulfill({
+        headers: { 'access-control-allow-origin': '*' },
+        json: { tilejson: '2.2.0', tiles: ['https://tiles.openfreemap.org/planet/{z}/{x}/{y}.pbf'], minzoom: 0, maxzoom: 14 }
+      });
+    });
+    await page.route('https://tiles.openfreemap.org/planet/**', route => failing
+      ? route.abort()
+      : route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } }));
+    await page.goto(new URL('../../dist/web/Hayiti.html?lang=en', import.meta.url).href);
+    await page.getByRole('button', { name: 'Try the sample trip' }).click();
+    await page.locator('#map[data-note]').waitFor();
+
+    // The tiles that failed are still in view after a small move, so the note stays.
+    failing = false;
+    await page.mouse.move(400, 400);
+    await page.mouse.down();
+    await page.mouse.move(404, 404, { steps: 2 });
+    await page.mouse.up();
+    await page.waitForTimeout(1200);
+    assert.equal(await page.locator('#map').getAttribute('data-note'), 'The street map could not load. Pins and routes still appear.');
+
+    // A closer view needs other tiles. They load, and nothing in view is missing any more.
+    await page.locator('.leaflet-control-zoom-in').click();
+    await page.locator('.leaflet-control-zoom-in').click();
+    await page.locator('#map:not([data-note]) canvas.maplibregl-canvas').waitFor();
+    assert.equal(described, 1, 'the street map was not drawn again from the start');
+  } finally {
+    await browser.close();
+  }
+});

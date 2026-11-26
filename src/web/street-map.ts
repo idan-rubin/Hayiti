@@ -67,7 +67,13 @@ export function addStreetMap(map: JournalMap, language: () => Language, report: 
     names: string[] = [],
     styled = false,
     loading = false,
-    incomplete = false;
+    sourceFailed = false;
+  // Tiles that failed to load. One that leaves the view or loads on a later try is no longer in the failed state.
+  const failedTiles = new Set<StreetTile>();
+  const tilesMissing = () => {
+    for (const tile of failedTiles) if (tile.state !== 'errored') failedTiles.delete(tile);
+    return failedTiles.size > 0;
+  };
   const relabel = () => {
     if (street && styled) for (const id of names) street.setLayoutProperty(id, 'text-field', nameIn(language()));
   };
@@ -127,16 +133,22 @@ export function addStreetMap(map: JournalMap, language: () => Language, report: 
     // The style can arrive and the streets it points to still fail, all of them or some tiles.
     street.on('error', event => {
       if (event.sourceId === undefined) return;
-      incomplete = true;
+      if (event.tile) failedTiles.add(event.tile);
+      else sourceFailed = true;
       report('unreachable');
+    });
+    // Once the map has drawn a view that no failed tile is part of, the streets in view are complete again.
+    street.on('idle', () => {
+      if (!sourceFailed && !tilesMissing()) report(null);
     });
   }
   window.addEventListener('online', () => {
     // Streets that failed to load are drawn again from the start.
-    if (layer && incomplete) {
+    if (layer && (sourceFailed || tilesMissing())) {
       map.removeLayer(layer);
       layer = street = null;
-      styled = incomplete = false;
+      styled = sourceFailed = false;
+      failedTiles.clear();
     }
     void load();
   });
