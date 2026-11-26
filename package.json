@@ -1,0 +1,36 @@
+{
+  "name": "hayiti",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Bilingual trip journal and daily route map",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": "^24.12.0 || >=26.0.0"
+  },
+  "scripts": {
+    "typecheck": "node node_modules/typescript-native/bin/tsc --noEmit",
+    "test": "node --test test/*.test.ts",
+    "build": "node scripts/build.ts",
+    "check": "node scripts/check-source.ts && npm run typecheck && npm run lint && npm test && npm run build",
+    "lint": "eslint . --max-warnings 0",
+    "test:browser": "node --test test/browser/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.10",
+    "esbuild": "0.28.2",
+    "eslint": "10.15.0",
+    "jiti": "2.7.0",
+    "playwright-core": "1.65.1",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.74.0",
+    "typescript-native": "npm:typescript@7.0.2"
+  },
+  "dependencies": {
+    "fflate": "0.8.3",
+    "leaflet": "1.9.4"
+  },
+  "allowScripts": {
+    "esbuild": true
+  }
+}

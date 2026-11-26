@@ -1,0 +1,143 @@
+{
+  "format": "hayiti/1",
+  "trip": {
+    "id": "tel-aviv-sample",
+    "title": "A Thursday in Tel Aviv",
+    "start": "2026-03-12",
+    "end": "2026-03-12",
+    "stops": [
+      {
+        "id": "cafe",
+        "date": "2026-03-12",
+        "name": "Café Sonder",
+        "xy": [
+          32.06836,
+          34.76842
+        ],
+        "rank": 1,
+        "kind": "visit",
+        "sources": [
+          "card"
+        ],
+        "count": 1
+      },
+      {
+        "id": "gelato",
+        "date": "2026-03-12",
+        "name": "Anita Gelato",
+        "xy": [
+          32.0627,
+          34.76644
+        ],
+        "rank": 2,
+        "kind": "visit",
+        "sources": [
+          "card"
+        ],
+        "count": 1
+      },
+      {
+        "id": "pickup",
+        "date": "2026-03-12",
+        "name": "Taxi pickup in Neve Tzedek",
+        "xy": [
+          32.063,
+          34.768
+        ],
+        "rank": 3,
+        "kind": "pickup",
+        "sources": [
+          "taxi"
+        ],
+        "time": "14:40",
+        "approx": true
+      },
+      {
+        "id": "dropoff",
+        "date": "2026-03-12",
+        "name": "Taxi drop-off on Shaul HaMelech Boulevard",
+        "xy": [
+          32.077,
+          34.784
+        ],
+        "rank": 4,
+        "kind": "dropoff",
+        "sources": [
+          "taxi"
+        ],
+        "time": "14:54",
+        "approx": true
+      },
+      {
+        "id": "museum",
+        "date": "2026-03-12",
+        "name": "Tel Aviv Museum of Art",
+        "xy": [
+          32.0776,
+          34.78664
+        ],
+        "rank": 5,
+        "kind": "visit",
+        "sources": [
+          "card"
+        ],
+        "count": 1
+      },
+      {
+        "id": "brewery",
+        "date": "2026-03-12",
+        "name": "Schnitt Brewing Company",
+        "xy": [
+          32.07016,
+          34.78405
+        ],
+        "rank": 6,
+        "kind": "visit",
+        "sources": [
+          "card"
+        ],
+        "count": 1
+      },
+      {
+        "id": "show",
+        "date": "2026-03-12",
+        "name": "Concert at Tzavta",
+        "xy": [
+          32.07524,
+          34.78227
+        ],
+        "rank": 7,
+        "kind": "visit",
+        "sources": [
+          "calendar"
+        ],
+        "time": "20:30"
+      }
+    ],
+    "edges": [
+      {
+        "a": "cafe",
+        "b": "gelato",
+        "type": "walk",
+        "m": 810
+      },
+      {
+        "a": "pickup",
+        "b": "dropoff",
+        "type": "taxi"
+      },
+      {
+        "a": "museum",
+        "b": "brewery",
+        "type": "walk",
+        "m": 1065
+      },
+      {
+        "a": "brewery",
+        "b": "show",
+        "type": "walk",
+        "m": 791
+      }
+    ]
+  }
+}

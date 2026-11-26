@@ -1,0 +1,48 @@
+{
+  "format": "hayiti/1",
+  "trip": {
+    "id": "rotterdam-sample",
+    "title": "Rotterdam sample",
+    "start": "2026-06-14",
+    "end": "2026-06-15",
+    "stops": [
+      {
+        "id": "sample-1",
+        "date": "2026-06-14",
+        "name": "Markthal",
+        "xy": [
+          51.92,
+          4.4867
+        ],
+        "time": "10:00",
+        "rank": 1,
+        "kind": "visit",
+        "sources": [
+          "card",
+          "email"
+        ],
+        "refs": [
+          "sample-1"
+        ]
+      },
+      {
+        "id": "sample-2",
+        "date": "2026-06-14",
+        "name": "Cube Houses",
+        "xy": [
+          51.9203,
+          4.4905
+        ],
+        "time": "11:00",
+        "rank": 2,
+        "kind": "visit",
+        "sources": [
+          "calendar"
+        ],
+        "refs": [
+          "sample-2"
+        ]
+      }
+    ]
+  }
+}
