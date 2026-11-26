@@ -6,15 +6,38 @@ export class UnreadableDraft extends Error {
   constructor() { super('לא ניתן לקרוא את טיוטת הטיול בדפדפן הזה.'); }
 }
 
-// Drafts used to live in their tab. One that is still open moves into the browser's storage once.
+function parseDraft(raw: string): Trip[] | null {
+  try {
+    const data: unknown = JSON.parse(raw);
+    if (isRecord(data) && Array.isArray(data.trips)) return data.trips.map(cleanTrip);
+  } catch { /* The caller decides what an unreadable draft means. */ }
+  return null;
+}
+
+// Drafts used to live in their tab. Every tab that still holds one adds its trips to the browser's draft,
+// so two tabs open during the upgrade both keep their trips.
 function adoptTabDraft() {
-  if (localStorage.getItem(guestKey) !== null) return;
-  for (const key of [guestKey, attemptsKey]) {
-    const value = sessionStorage.getItem(key);
-    if (value === null) continue;
-    localStorage.setItem(key, value);
-    sessionStorage.removeItem(key);
+  const fromTab = sessionStorage.getItem(guestKey);
+  if (fromTab === null) return;
+  const stored = localStorage.getItem(guestKey);
+  if (stored === null) {
+    localStorage.setItem(guestKey, fromTab);
+    const attempts = sessionStorage.getItem(attemptsKey);
+    if (attempts !== null && localStorage.getItem(attemptsKey) === null) localStorage.setItem(attemptsKey, attempts);
+  } else {
+    const kept = parseDraft(stored),
+      mine = parseDraft(fromTab);
+    // An unreadable draft stays where it is until the traveler discards it.
+    if (!kept || !mine) return;
+    for (const trip of mine) {
+      const same = kept.find(other => other.id === trip.id);
+      if (!same) kept.push(trip);
+      else if (JSON.stringify(same) !== JSON.stringify(trip)) kept.push({ ...trip, id: crypto.randomUUID() });
+    }
+    localStorage.setItem(guestKey, JSON.stringify({ trips: kept }));
   }
+  sessionStorage.removeItem(guestKey);
+  sessionStorage.removeItem(attemptsKey);
 }
 
 export function readGuest(): Trip[] {
@@ -24,22 +47,45 @@ export function readGuest(): Trip[] {
     raw = localStorage.getItem(guestKey);
   } catch { return []; }
   if (raw === null) return [];
+  // Keep the original until the traveler explicitly discards it.
+  const trips = parseDraft(raw);
+  if (!trips) throw new UnreadableDraft();
+  return trips;
+}
+
+/** The stored draft exactly as saved, to tell whether another tab has saved since this tab last looked. */
+export function guestSnapshot(): string | null {
   try {
-    const data: unknown = JSON.parse(raw);
-    if (isRecord(data) && Array.isArray(data.trips)) return data.trips.map(cleanTrip);
-  } catch { /* Keep the original until the traveler explicitly discards it. */ }
-  throw new UnreadableDraft();
+    return localStorage.getItem(guestKey);
+  } catch {
+    return null;
+  }
+}
+
+/** After sign-in, removes only the trips that were uploaded. One that another tab added or changed meanwhile stays. */
+export function retireGuest(uploaded: Trip[]) {
+  const sent = new Set(uploaded.map(trip => JSON.stringify(trip)));
+  writeGuest(readGuest().filter(trip => !sent.has(JSON.stringify(trip))));
 }
 
 const requestKey = 'hayiti-guest-merge-requested';
-/** Choosing Sign in from the tab that shows the draft is the traveler's request to keep it in their account. */
+/**
+ * Choosing Sign in from the tab that shows the draft is the traveler's request to keep it in their account.
+ * A browser that blocks tab storage has no such request, and the traveler is asked after sign-in instead.
+ */
 export function requestGuestMerge(requested: boolean) {
-  if (requested) sessionStorage.setItem(requestKey, '1');
-  else sessionStorage.removeItem(requestKey);
+  try {
+    if (requested) sessionStorage.setItem(requestKey, '1');
+    else sessionStorage.removeItem(requestKey);
+  } catch { /* No request is recorded. */ }
 }
 
 export function guestMergeRequested() {
-  return sessionStorage.getItem(requestKey) === '1';
+  try {
+    return sessionStorage.getItem(requestKey) === '1';
+  } catch {
+    return false;
+  }
 }
 
 export function discardGuest() {

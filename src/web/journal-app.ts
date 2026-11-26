@@ -505,19 +505,22 @@ window.addEventListener('hashchange', () => {
 let journalReady = false;
 // A draft kept in the browser can outlive the person who made it. It joins an account without a question only
 // when the traveler chose Sign in from the tab showing it. Anyone else is shown the trips and asked.
-let mergeAnswer: boolean | null = null;
+const mergeAnswers = new Map<string, boolean>();
 async function approveGuestMerge(draft: Trip[]) {
   if (guestMergeRequested()) return true;
-  if (mergeAnswer !== null) return mergeAnswer;
+  // The answer covers the trips that were shown. A draft another tab changes afterwards is asked about again.
+  const shown = JSON.stringify(draft);
+  const answered = mergeAnswers.get(shown);
+  if (answered !== undefined) return answered;
   const titles = draft.map(trip => '• ' + displayTripTitle(trip.title)).join('\n');
-  mergeAnswer = await ask(ui(
+  const answer = await ask(ui(
     (draft.length === 1 ? 'This browser has a trip made before signing in:' : 'This browser has trips made before signing in:') + '\n' + titles
       + '\n\n' + (draft.length === 1 ? 'Add it to your journal?' : 'Add them to your journal?') + ' If you did not make ' + (draft.length === 1 ? 'it' : 'them') + ', choose Cancel.',
     (draft.length === 1 ? 'בדפדפן הזה שמור טיול שנוצר לפני הכניסה:' : 'בדפדפן הזה שמורים טיולים שנוצרו לפני הכניסה:') + '\n' + titles
       + '\n\n' + (draft.length === 1 ? 'להוסיף אותו ליומן שלך? אם לא יצרת אותו, בחרו בביטול.' : 'להוסיף אותם ליומן שלך? אם לא יצרת אותם, בחרו בביטול.')
   ), ui('Add to my journal', 'הוספה ליומן שלי'));
-  if (mergeAnswer) requestGuestMerge(true);
-  return mergeAnswer;
+  mergeAnswers.set(shown, answer);
+  return answer;
 }
 // A quiet load is the automatic check when the traveler returns to the tab. It redraws only when the journal changed.
 async function load(afterConflict = false, quiet = false) {
@@ -658,9 +661,7 @@ async function change(edit: () => void, fromFile = false) {
     return false;
   }
 }
-for (const id of ['login', 'hostedSignIn'] as const) $(id).addEventListener('click', () => {
-  try { requestGuestMerge(true); } catch { /* Without tab storage the traveler is asked after sign-in instead. */ }
-});
+for (const id of ['login', 'hostedSignIn'] as const) $(id).addEventListener('click', () => requestGuestMerge(true));
 window.addEventListener('beforeunload', event => {
   if (!tabOnly() || !unbacked.size) return;
   event.preventDefault();
@@ -668,16 +669,13 @@ window.addEventListener('beforeunload', event => {
 // The guest draft is shared by every tab of this browser. A tab follows what another tab saved.
 window.addEventListener('storage', event => {
   if (event.storageArea !== localStorage || event.key !== guestKey || portable || sharedRoute) return;
-  if (event.newValue === null) {
-    // The draft left the browser: it was merged into an account after sign-in, or its last trip was deleted.
-    start();
-    return;
-  }
   try {
     if (session.adoptGuestDraft()) renderSelection();
   } catch (error) {
     msg(() => t(errorMessage(error)), 'error');
   }
+  // An emptied draft may mean its trips joined an account after sign-in, so this tab checks whether it is signed in.
+  if (event.newValue === null) start();
 });
 
 $('trips').onchange = () => {
@@ -772,7 +770,7 @@ function openSettings(fresh: boolean) {
   $('configTitle').textContent = fresh ? ui('New trip', 'טיול חדש') : ui('Trip settings', 'הגדרות טיול');
   $('moreTrip').open = !!(t.homeXY || t.rules);
   $('homeResults').replaceChildren();
-  homeWithoutPin = '';
+  resetPinForm(homePin);
   showPin($('homeState'), tf.coords.value);
   $('config').showModal();
 }
@@ -797,23 +795,12 @@ $('deleteTrip').onclick = async () => {
 };
 $('tripForm').onsubmit = async e => {
   e.preventDefault();
-  if (locating) return;
   clearError($('config'));
   if (tf.end.value < tf.start.value) {
     fail(ui('The end date cannot be before the start date.', 'תאריך הסיום אינו יכול להיות לפני תאריך ההתחלה.'));
     return;
   }
-  const home = tf.home.value.trim();
-  const savedHome = creating ? '' : session.trip?.home ?? '';
-  if (home && !tf.coords.value.trim() && home !== savedHome && home !== homeWithoutPin) {
-    const found = await pinFor(home, creating ? null : session.trip, $('homeState'), ui('Enter coordinates under More settings.', 'אפשר להזין קואורדינטות תחת ״הגדרות נוספות״.'));
-    if (!found) {
-      homeWithoutPin = home;
-      return;
-    }
-    tf.coords.value = found;
-    showPin($('homeState'), found);
-  }
+  if (!await pinBeforeSave(homePin, creating ? '' : session.trip?.home ?? '', creating ? null : session.trip)) return;
   try {
     const fields = {
       title: tf.title.value,
@@ -941,35 +928,42 @@ function openStop(s: Partial<Stop> = {}) {
   $('removeStop').hidden = !draftId;
   // A new stop needs only a name. A saved stop shows everything recorded about it.
   $('moreStop').open = !!draftId;
-  keptWithoutPin = '';
+  resetPinForm(stopPin);
   showPin($('pinState'), ef.coords.value);
   relatedStops();
   $('edit').showModal();
 }
 ef.coords.oninput = () => showPin($('pinState'), ef.coords.value);
-// The address the traveler chose to keep without a pin after being told none was found.
-let keptWithoutPin = '',
-  homeWithoutPin = '';
+const stopPin: PinForm = {
+  address: ef.address,
+  coords: ef.coords,
+  state: $('pinState'),
+  alternative: () => ui('Choose a point on the map.', 'אפשר לבחור נקודה במפה.'),
+  opened: 0,
+  looking: false,
+  unpinned: ''
+};
+const homePin: PinForm = {
+  address: tf.home,
+  coords: tf.coords,
+  state: $('homeState'),
+  alternative: () => ui('Enter coordinates under More settings.', 'אפשר להזין קואורדינטות תחת ״הגדרות נוספות״.'),
+  opened: 0,
+  looking: false,
+  unpinned: ''
+};
+// Closing a form ends its claim on a lookup that is still on its way.
+$('edit').addEventListener('close', () => resetPinForm(stopPin));
+$('config').addEventListener('close', () => resetPinForm(homePin));
 $('add').onclick = () => openStop();
 $('editForm').onsubmit = async e => {
   e.preventDefault();
-  if (locating) return;
   clearError($('edit'));
   if (photoBusy) {
     fail(t('התמונה עדיין בעיבוד'));
     return;
   }
-  const address = ef.address.value.trim();
-  const savedAddress = session.trip?.stops.find(x => x.id === draftId)?.address ?? '';
-  if (address && !ef.coords.value.trim() && address !== savedAddress && address !== keptWithoutPin) {
-    const found = await pinFor(address, session.trip, $('pinState'), ui('Choose a point on the map.', 'אפשר לבחור נקודה במפה.'));
-    if (!found) {
-      keptWithoutPin = address;
-      return;
-    }
-    ef.coords.value = found;
-    showPin($('pinState'), found);
-  }
+  if (!await pinBeforeSave(stopPin, session.trip?.stops.find(x => x.id === draftId)?.address ?? '', session.trip)) return;
   try {
     const xy = points(ef.coords.value);
     const ok = await change(() => {
@@ -1116,24 +1110,60 @@ async function findOnMap(query: string, trip: Trip | null, target: HTMLElement, 
     setTimeout(() => trigger.disabled = false, 1100);
   }
 }
-// Saving an address without a pin looks the address up. When no pin is found the save stops and says so,
-// and saving the same address again keeps it without a pin.
-let locating = false;
-async function pinFor(address: string, trip: Trip | null, state: HTMLElement, alternative: string): Promise<string | null> {
-  locating = true;
-  state.textContent = t('מחפש ב־OpenStreetMap…');
-  const again = ui(' Or choose Save again to keep it without a pin.', ' אפשר גם לבחור שוב ב״שמירה״ כדי לשמור בלי סיכה.');
+// A form that can pin its address when saved. It counts its openings and closings, so an answer that arrives
+// late never reaches a form that was closed or reused for something else.
+interface PinForm {
+  address: HTMLInputElement;
+  coords: HTMLInputElement;
+  state: HTMLElement;
+  alternative: () => string;
+  opened: number;
+  looking: boolean;
+  /** The address the traveler chose to keep without a pin after being told none was found. */
+  unpinned: string;
+}
+function resetPinForm(form: PinForm) {
+  form.opened++;
+  form.looking = false;
+  form.unpinned = '';
+}
+/**
+ * Saving an address without a pin looks the address up first. When no pin is found the save stops and says so,
+ * and saving the same address again keeps it without a pin. Returns whether the save goes on.
+ */
+async function pinBeforeSave(form: PinForm, saved: string, trip: Trip | null) {
+  if (form.looking) return false;
+  const address = form.address.value.trim();
+  if (!address || form.coords.value.trim() || address === saved || address === form.unpinned) return true;
+  const opened = form.opened;
+  form.looking = true;
+  form.state.textContent = t('מחפש ב־OpenStreetMap…');
+  let found: string | undefined,
+    problem = '';
   try {
-    const [best] = await searchPlaces(address, trip);
-    if (best) return best.coordinates;
-    fail(ui('This address was not found on the map. ', 'הכתובת לא נמצאה במפה. ') + alternative + again);
+    found = (await searchPlaces(address, trip))[0]?.coordinates;
+    if (!found) problem = ui('This address was not found on the map. ', 'הכתובת לא נמצאה במפה. ');
   } catch {
-    fail(ui('Address search is unavailable right now. ', 'חיפוש הכתובת אינו זמין כרגע. ') + alternative + again);
-  } finally {
-    locating = false;
-    showPin(state, '');
+    problem = ui('Address search is unavailable right now. ', 'חיפוש הכתובת אינו זמין כרגע. ');
   }
-  return null;
+  // The form was closed or reused while the answer was on its way. Nothing is saved without another Save.
+  if (opened !== form.opened) return false;
+  form.looking = false;
+  if (form.address.value.trim() !== address) {
+    showPin(form.state, form.coords.value);
+    return false;
+  }
+  // The traveler set the pin while the lookup ran.
+  if (form.coords.value.trim()) return true;
+  if (!found) {
+    form.unpinned = address;
+    showPin(form.state, '');
+    fail(problem + form.alternative() + ui(' Or choose Save again to keep it without a pin.', ' אפשר גם לבחור שוב ב״שמירה״ כדי לשמור בלי סיכה.'));
+    return false;
+  }
+  form.coords.value = found;
+  showPin(form.state, found);
+  return true;
 }
 $('findPlace').onclick = () => findOnMap(ef.address.value.trim() || ef.name.value, session.trip, $('georesults'), $('findPlace'), coordinates => {
   ef.coords.value = coordinates;

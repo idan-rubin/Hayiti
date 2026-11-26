@@ -1188,3 +1188,187 @@ await test('Sign out is offered only while the account journal is open', async (
     await browser.close();
   }
 });
+
+// Answers the journal API from a bucket, signed in or not as each tab's own flag says.
+const hostBucket = (page: Page, bucket: MemoryBucket, signedIn: () => boolean, onWrite = () => {}) => hostJournal(page, async route => {
+  const request = route.request();
+  if (request.method() === 'POST') onWrite();
+  const response = await journalAPI(new Request(request.url(), {
+    method: request.method(),
+    headers: await request.allHeaders(),
+    body: request.postData()
+  }), bucket, 'web', signedIn() ? 'traveler' : null);
+  await route.fulfill({ status: response.status, contentType: 'application/json', body: await response.text() });
+});
+const storedTitles = (page: Page) => page.evaluate(key => {
+  const raw = localStorage.getItem(key);
+  return raw ? JSON.parse(raw).trips.map((trip: { title: string }) => trip.title).sort() : [];
+}, draftKey);
+
+await test('a trip made in another tab while sign-in asks about the draft stays in the browser', async () => {
+  const browser = await chromium.launch();
+  try {
+    const context = await browser.newContext();
+    const bucket = new MemoryBucket();
+    let writes = 0;
+    const guest = await context.newPage();
+    await hostBucket(guest, bucket, () => false);
+    await guest.goto(origin + '/journal.html?lang=en');
+    await createTrip(guest, 'Trip A');
+
+    const account = await context.newPage();
+    await hostBucket(account, bucket, () => true, () => writes++);
+    await account.goto(origin + '/journal.html?lang=en');
+    await account.locator('#confirmText').filter({ hasText: 'Trip A' }).waitFor();
+
+    await createTrip(guest, 'Trip B');
+    assert.deepEqual(await storedTitles(guest), ['Trip A', 'Trip B']);
+
+    await account.locator('#confirmYes').click();
+    await account.locator('#status').filter({ hasText: 'is now in your journal' }).waitFor();
+    assert.equal(writes, 1);
+    assert.equal(await account.locator('#title').textContent(), 'Trip A');
+    // Only the trip that was shown and uploaded left the browser.
+    assert.deepEqual(await storedTitles(account), ['Trip B']);
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('an address lookup that answers after its stop was canceled saves nothing onto the next stop', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await hostJournal(page, guestAPI);
+    let answer = () => {};
+    const asked = new Promise<void>(resolve => {
+      void page.route('https://nominatim.openstreetmap.org/**', async route => {
+        const held = new Promise<void>(release => { answer = release; });
+        resolve();
+        await held;
+        await route.fulfill({ json: [{ display_name: 'First address', lat: '32.0795', lon: '34.7740' }] });
+      });
+    });
+    await page.goto(origin + '/journal.html?lang=en');
+    await createTrip(page, 'Tel Aviv', '2026-06-14');
+
+    await page.locator('#add').click();
+    await page.locator('#editForm [name=name]').fill('First stop');
+    await page.locator('#editForm [name=address]').fill('First address');
+    await page.locator('#editForm .form-actions .primary').click();
+    await asked;
+    await page.locator('#edit [data-close]').click();
+
+    await page.locator('#add').click();
+    await page.locator('#editForm [name=name]').fill('Second stop');
+    const answered = page.waitForResponse(response => response.url().startsWith('https://nominatim.openstreetmap.org/'));
+    answer();
+    await answered;
+    await page.waitForTimeout(300);
+    assert.equal(await page.locator('#edit').getAttribute('open'), '');
+    assert.equal(await page.locator('#editForm [name=coords]').inputValue(), '');
+    assert.equal(await page.locator('#stops .stopname').count(), 0);
+    assert.equal(await page.locator('.leaflet-marker-icon').count(), 0);
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('deleting the last guest trip in one tab removes it from the other tab too', async () => {
+  const browser = await chromium.launch();
+  try {
+    const context = await browser.newContext();
+    const first = await context.newPage(),
+      second = await context.newPage();
+    for (const page of [first, second]) await hostJournal(page, guestAPI);
+    await first.goto(origin + '/journal.html?lang=en');
+    await createTrip(first, 'Deleted in the first tab');
+    await second.goto(origin + '/journal.html?lang=en');
+    await second.locator('#title').filter({ hasText: 'Deleted in the first tab' }).waitFor();
+
+    await first.locator('#settings').click();
+    await first.locator('#deleteTrip').click();
+    await first.locator('#confirmYes').click();
+    await first.locator('#config').waitFor({ state: 'hidden' });
+    await second.locator('#welcome').waitFor();
+    assert.equal(await second.locator('#trips option').count(), 0);
+
+    await createTrip(second, 'Made afterwards');
+    assert.deepEqual(await storedTitles(second), ['Made afterwards']);
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('a form left open in one guest tab does not undo a change saved in another', async () => {
+  const browser = await chromium.launch();
+  try {
+    const context = await browser.newContext();
+    const first = await context.newPage(),
+      second = await context.newPage();
+    for (const page of [first, second]) await hostJournal(page, guestAPI);
+    await first.goto(origin + '/journal.html?lang=en');
+    await createTrip(first, 'Original title', '2026-06-14');
+    await second.goto(origin + '/journal.html?lang=en');
+    await second.locator('#title').filter({ hasText: 'Original title' }).waitFor();
+
+    await first.locator('#settings').click();
+    await second.locator('#settings').click();
+    await second.locator('#tripForm [name=title]').fill('Renamed in the second tab');
+    await second.locator('#tripForm .primary').click();
+    await second.locator('#config').waitFor({ state: 'hidden' });
+    await first.locator('#title').filter({ hasText: 'Renamed in the second tab' }).waitFor();
+
+    await first.locator('#tripForm [name=end]').fill('2026-06-16');
+    await first.locator('#tripForm .primary').click();
+    await first.locator('#config .form-error').filter({ hasText: 'Your journal changed while this form was open' }).waitFor();
+    assert.deepEqual(await storedTitles(first), ['Renamed in the second tab']);
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('two tabs that each hold a draft from the earlier version both keep their trips', async () => {
+  const browser = await chromium.launch();
+  try {
+    const context = await browser.newContext();
+    const first = await context.newPage(),
+      second = await context.newPage();
+    const legacy = (id: string, title: string) => JSON.stringify({ trips: [{ id, title, start: '2026-06-14', end: '2026-06-14', stops: [] }] });
+    for (const [page, id, title] of [[first, 'one', 'First tab trip'], [second, 'two', 'Second tab trip']] as const) {
+      await hostJournal(page, guestAPI);
+      await page.goto(origin + '/journal.html?lang=en');
+      await page.evaluate(({ key, draft }) => sessionStorage.setItem(key, draft), { key: draftKey, draft: legacy(id, title) });
+    }
+    await first.reload();
+    await first.locator('#title').filter({ hasText: 'First tab trip' }).waitFor();
+    await second.reload();
+    await second.locator('#trips option').filter({ hasText: 'Second tab trip' }).waitFor({ state: 'attached' });
+    assert.deepEqual(await storedTitles(second), ['First tab trip', 'Second tab trip']);
+    assert.equal(await second.evaluate(key => sessionStorage.getItem(key), draftKey), null);
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('a signed-in journal opens in a browser that blocks storage', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await page.addInitScript(() => {
+      const blocked = () => { throw new DOMException('Storage blocked', 'SecurityError'); };
+      Storage.prototype.getItem = blocked;
+      Storage.prototype.setItem = blocked;
+      Storage.prototype.removeItem = blocked;
+    });
+    await hostJournal(page, route => route.fulfill({
+      json: { trips: [{ id: 'a', title: 'Saved in the account', start: '2026-06-14', end: '2026-06-14', stops: [] }], rev: 'r1' }
+    }));
+    await page.goto(origin + '/journal.html?lang=en');
+    await page.locator('#title').filter({ hasText: 'Saved in the account' }).waitFor();
+    await page.locator('#status').filter({ hasText: 'up to date' }).waitFor();
+    assert.equal(await page.locator('#retryLoad').isVisible(), false);
+  } finally {
+    await browser.close();
+  }
+});
