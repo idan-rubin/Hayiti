@@ -3,6 +3,11 @@ import { isRecord } from '../domain/core.ts';
 /** The street map under the journal's pins: OpenFreeMap vector tiles, with place names in the journal's language. */
 const styleURL = 'https://tiles.openfreemap.org/styles/liberty';
 
+// The credit line is written here. The style and its tile sources carry their own credit text, which the
+// map layer would otherwise insert into the page as markup.
+const credit = '<a href="https://openfreemap.org/">OpenFreeMap</a> © <a href="https://openmaptiles.org/">OpenMapTiles</a>'
+  + ' Data from <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
+
 type Language = 'en' | 'he';
 /** Why the street map is missing, or null when it is drawn. */
 export type StreetMapProblem = 'unreachable' | 'unsupported' | null;
@@ -72,7 +77,7 @@ export function addStreetMap(map: JournalMap, language: () => Language, report: 
       loading = false;
     }
     try {
-      street = L.maplibreGL({ style }).addTo(map).getMaplibreMap();
+      street = L.maplibreGL({ style, attributionControl: { customAttribution: credit } }).addTo(map).getMaplibreMap();
     } catch {
       report('unsupported');
       return;

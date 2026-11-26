@@ -1540,11 +1540,20 @@ await test('the hosted journal draws the street map and makes route files from t
     await hostJournal(page, route => route.fulfill({ json: { trips: [trip], rev: 'r1' } }));
     await page.route('https://tiles.openfreemap.org/styles/liberty', route => route.fulfill({
       headers: { 'access-control-allow-origin': '*' },
-      json: { version: 8, sources: {}, layers: [{ id: 'land', type: 'background', paint: { 'background-color': '#e8efe9' } }] }
+      json: {
+        version: 8,
+        sources: { places: { type: 'geojson', data: { type: 'FeatureCollection', features: [] }, attribution: 'Injected <img src="x">' } },
+        layers: [{ id: 'land', type: 'background', paint: { 'background-color': '#e8efe9' } }]
+      }
     }));
     await page.goto(origin + '/journal.html?lang=en');
     await page.locator('#map canvas.maplibregl-canvas').waitFor();
     assert.equal(await page.locator('#map').getAttribute('data-note'), null);
+    // The credit line is the journal's own text. Text that arrives with the map never becomes page markup.
+    await page.locator('.leaflet-control-attribution').filter({ hasText: 'OpenFreeMap' }).waitFor();
+    await page.waitForTimeout(500);
+    assert.equal(await page.locator('.leaflet-control-attribution img').count(), 0);
+    assert.doesNotMatch(await page.locator('.leaflet-control-attribution').innerText(), /Injected/);
     await page.locator('#languageSwitch').selectOption('he');
     await page.locator('#languageSwitch').selectOption('en');
 

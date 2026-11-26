@@ -65,6 +65,9 @@ declare const L: {
   }): JournalMap;
   maplibreGL(options: {
     style: object;
+    attributionControl: {
+      customAttribution: string;
+    };
   }): StreetMapLayer;
   layerGroup(): LayerGroup;
   latLngBounds(points: Coordinates[]): Bounds;
