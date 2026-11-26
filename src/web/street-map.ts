@@ -41,28 +41,53 @@ export function prepareStyle(style: unknown, language: Language): string[] {
   return names;
 }
 
+// The hosted journal downloads the map library as these files, in this order. The portable journal carries them.
+const libraryFiles = ['vendor/maplibre-gl.js', 'vendor/leaflet-maplibre-gl.js'];
+
+function download(file: string) {
+  return new Promise<void>((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = new URL(file, document.baseURI).href;
+    script.onload = () => resolve();
+    script.onerror = () => {
+      script.remove();
+      reject(Error('Street map library unavailable'));
+    };
+    document.head.append(script);
+  });
+}
+
 /**
  * Draws the street map and reports whether it could. Returns a function that puts the place names
  * in the journal's current language.
  */
 export function addStreetMap(map: JournalMap, language: () => Language, report: (problem: StreetMapProblem) => void) {
-  let street: StreetMap | null = null,
+  let layer: StreetMapLayer | null = null,
+    street: StreetMap | null = null,
     names: string[] = [],
     styled = false,
-    loading = false;
+    loading = false,
+    incomplete = false;
   const relabel = () => {
     if (street && styled) for (const id of names) street.setLayoutProperty(id, 'text-field', nameIn(language()));
   };
   async function load() {
-    if (street || loading) return;
-    const canvas = document.createElement('canvas');
-    if (!canvas.getContext('webgl2') && !canvas.getContext('webgl')) {
+    if (layer || loading) return;
+    // The library draws with the second version of WebGL only.
+    if (!document.createElement('canvas').getContext('webgl2')) {
       report('unsupported');
       return;
     }
     loading = true;
-    let style: object;
+    let style: object,
+      library: MapLibrary,
+      makeLayer: StreetMapLayerFactory;
     try {
+      // Both files run again when either is missing, because the layer keeps the library it was loaded with.
+      if (typeof maplibregl === 'undefined' || !L.maplibreGL) for (const file of libraryFiles) await download(file);
+      if (typeof maplibregl === 'undefined' || !L.maplibreGL) throw Error('Street map library unavailable');
+      library = maplibregl;
+      makeLayer = L.maplibreGL;
       const response = await fetch(styleURL);
       if (!response.ok) throw Error('Street map style unavailable');
       const received: unknown = await response.json();
@@ -76,25 +101,45 @@ export function addStreetMap(map: JournalMap, language: () => Language, report: 
     } finally {
       loading = false;
     }
+    // The portable journal carries the library's worker as text. The hosted journal serves it as a file.
+    const worker = document.querySelector('script[data-part="street-map-worker"]');
+    library.setWorkerUrl(worker
+      ? URL.createObjectURL(new Blob([worker.textContent ?? ''], { type: 'text/javascript' }))
+      : new URL('vendor/maplibre-gl-worker.js', document.baseURI).href);
+    const made = makeLayer({ style, attributionControl: { customAttribution: credit } });
     try {
-      street = L.maplibreGL({ style, attributionControl: { customAttribution: credit } }).addTo(map).getMaplibreMap();
+      made.addTo(map);
     } catch {
+      // A layer that could not start would go on following the map and fail on every move, which misplaces the pins.
+      map.off(made.getEvents(), made);
+      made.getContainer().remove();
       report('unsupported');
       return;
     }
+    layer = made;
+    street = made.getMaplibreMap();
     report(null);
     street.on('style.load', () => {
       styled = true;
       // The traveler may have switched language while the style was loading.
       relabel();
     });
+    // The style can arrive and the streets it points to still fail, all of them or some tiles.
+    street.on('error', event => {
+      if (event.sourceId === undefined) return;
+      incomplete = true;
+      report('unreachable');
+    });
   }
-  // The portable journal carries the library's worker as text. The hosted journal serves it as a file.
-  const worker = document.querySelector('script[data-part="street-map-worker"]');
-  maplibregl.setWorkerUrl(worker
-    ? URL.createObjectURL(new Blob([worker.textContent ?? ''], { type: 'text/javascript' }))
-    : new URL('vendor/maplibre-gl-worker.js', document.baseURI).href);
-  window.addEventListener('online', () => void load());
+  window.addEventListener('online', () => {
+    // Streets that failed to load are drawn again from the start.
+    if (layer && incomplete) {
+      map.removeLayer(layer);
+      layer = street = null;
+      styled = incomplete = false;
+    }
+    void load();
+  });
   void load();
   return relabel;
 }

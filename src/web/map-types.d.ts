@@ -26,6 +26,8 @@ interface JournalMap {
     animate: boolean;
   }): void;
   closePopup(): void;
+  removeLayer(layer: StreetMapLayer): void;
+  off(events: object, context: object): void;
   on(type: 'click', callback: (event: {
     latlng: {
       lat: number;
@@ -46,15 +48,28 @@ interface MapMarker {
 /** The vector street map that the Leaflet layer draws. */
 interface StreetMap {
   on(type: 'style.load', callback: () => void): void;
+  on(type: 'error', callback: (event: {
+    sourceId?: string;
+  }) => void): void;
   setLayoutProperty(layer: string, name: 'text-field', value: unknown): void;
 }
 interface StreetMapLayer {
   addTo(map: JournalMap): StreetMapLayer;
   getMaplibreMap(): StreetMap;
+  getEvents(): object;
+  getContainer(): HTMLElement;
 }
-declare const maplibregl: {
+interface MapLibrary {
   setWorkerUrl(url: string): void;
-};
+}
+type StreetMapLayerFactory = (options: {
+  style: object;
+  attributionControl: {
+    customAttribution: string;
+  };
+}) => StreetMapLayer;
+/** Absent when the hosted journal could not download the library. */
+declare const maplibregl: MapLibrary | undefined;
 declare const L: {
   map(id: string, options: {
     zoomControl: boolean;
@@ -63,12 +78,7 @@ declare const L: {
     zoomSnap: number;
     maxZoom: number;
   }): JournalMap;
-  maplibreGL(options: {
-    style: object;
-    attributionControl: {
-      customAttribution: string;
-    };
-  }): StreetMapLayer;
+  maplibreGL?: StreetMapLayerFactory;
   layerGroup(): LayerGroup;
   latLngBounds(points: Coordinates[]): Bounds;
   divIcon(options: {

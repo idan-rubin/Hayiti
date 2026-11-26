@@ -520,3 +520,123 @@ await test('a browser that cannot draw the street map says so and still shows th
     await browser.close();
   }
 });
+
+// Where each pin of the sample trip is drawn, on load and after zooming in twice.
+async function samplePins(page: Page) {
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await page.route('https://**/*', route => route.abort());
+  await page.route('https://tiles.openfreemap.org/styles/liberty', route => route.fulfill({
+    headers: { 'access-control-allow-origin': '*' },
+    json: { version: 8, sources: {}, layers: [{ id: 'land', type: 'background', paint: { 'background-color': '#e8efe9' } }] }
+  }));
+  await page.goto(new URL('../../dist/web/Hayiti.html?lang=en', import.meta.url).href);
+  await page.getByRole('button', { name: 'Try the sample trip' }).click();
+  await page.locator('#map[data-note]').waitFor();
+  const places = () => page.evaluate(() => Array.from(document.querySelectorAll('.leaflet-marker-icon'), pin => {
+    const box = pin.getBoundingClientRect();
+    return [Math.round(box.x), Math.round(box.y)];
+  }));
+  await page.waitForTimeout(800);
+  const loaded = await places();
+  for (let step = 0; step < 2; step++) {
+    await page.locator('.leaflet-control-zoom-in').click();
+    await page.waitForTimeout(800);
+  }
+  return { note: await page.locator('#map').getAttribute('data-note'), loaded, zoomed: await places(), layers: await page.locator('.leaflet-gl-layer').count() };
+}
+
+await test('a browser whose street map cannot start keeps every pin where a browser without WebGL shows it', async () => {
+  const browser = await chromium.launch();
+  try {
+    // The reference: no WebGL at all, so the street map is never tried.
+    const plain = await browser.newPage();
+    await plain.addInitScript(() => {
+      const getContext = HTMLCanvasElement.prototype.getContext;
+      HTMLCanvasElement.prototype.getContext = function (this: HTMLCanvasElement, kind: string, ...rest: unknown[]) {
+        return kind.startsWith('webgl') ? null : Reflect.apply(getContext, this, [kind, ...rest]);
+      } as typeof getContext;
+    });
+    const expected = await samplePins(plain);
+    assert.equal(expected.loaded.length, 7);
+    assert.notDeepEqual(expected.zoomed, expected.loaded);
+
+    // An older browser has the first version of WebGL only.
+    const older = await browser.newPage(),
+      olderErrors: string[] = [];
+    older.on('pageerror', error => olderErrors.push(error.message));
+    await older.addInitScript(() => {
+      const getContext = HTMLCanvasElement.prototype.getContext;
+      HTMLCanvasElement.prototype.getContext = function (this: HTMLCanvasElement, kind: string, ...rest: unknown[]) {
+        return kind === 'webgl2' ? null : Reflect.apply(getContext, this, [kind, ...rest]);
+      } as typeof getContext;
+    });
+    assert.deepEqual(await samplePins(older), expected);
+    assert.deepEqual(olderErrors, []);
+
+    // A browser can also offer WebGL and then refuse it to the map itself.
+    const refusing = await browser.newPage(),
+      refusingErrors: string[] = [];
+    refusing.on('pageerror', error => refusingErrors.push(error.message));
+    await refusing.addInitScript(() => {
+      const getContext = HTMLCanvasElement.prototype.getContext;
+      HTMLCanvasElement.prototype.getContext = function (this: HTMLCanvasElement, kind: string, ...rest: unknown[]) {
+        return kind.startsWith('webgl') && this.className.includes('maplibregl') ? null : Reflect.apply(getContext, this, [kind, ...rest]);
+      } as typeof getContext;
+    });
+    assert.deepEqual(await samplePins(refusing), expected);
+    assert.deepEqual(refusingErrors, []);
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('streets that fail to load after the style say so and load when the connection returns', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await page.route('https://**/*', route => route.abort());
+    await page.route('https://tiles.openfreemap.org/styles/liberty', route => route.fulfill({
+      headers: { 'access-control-allow-origin': '*' },
+      json: {
+        version: 8,
+        sources: { streets: { type: 'vector', url: 'https://tiles.openfreemap.org/planet' } },
+        layers: [
+          { id: 'land', type: 'background', paint: { 'background-color': '#e8efe9' } },
+          { id: 'roads', type: 'line', source: 'streets', 'source-layer': 'transportation' }
+        ]
+      }
+    }));
+    let connected = false,
+      described = 0,
+      tiles = 0;
+    await page.route('https://tiles.openfreemap.org/planet', route => {
+      if (!connected) return route.abort();
+      described++;
+      return route.fulfill({
+        headers: { 'access-control-allow-origin': '*' },
+        json: { tilejson: '2.2.0', tiles: ['https://tiles.openfreemap.org/planet/{z}/{x}/{y}.pbf'], minzoom: 0, maxzoom: 14 }
+      });
+    });
+    await page.route('https://tiles.openfreemap.org/planet/**', route => {
+      tiles++;
+      return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } });
+    });
+    await page.goto(new URL('../../dist/web/Hayiti.html?lang=en', import.meta.url).href);
+    await page.getByRole('button', { name: 'Try the sample trip' }).click();
+    await page.locator('#map canvas.maplibregl-canvas').waitFor();
+    await page.locator('#map[data-note]').waitFor();
+    assert.equal(await page.locator('#map').getAttribute('data-note'), 'The street map could not load. Pins and routes still appear.');
+    assert.equal(await page.locator('.leaflet-marker-icon').count(), 7);
+
+    connected = true;
+    await page.evaluate(() => window.dispatchEvent(new Event('online')));
+    await page.locator('#map:not([data-note]) canvas.maplibregl-canvas').waitFor();
+    await page.waitForTimeout(1500);
+    assert.equal(described, 1);
+    assert.ok(tiles > 0, 'the street tiles are requested after the connection returns');
+    assert.equal(await page.locator('#map').getAttribute('data-note'), null);
+    assert.equal(await page.locator('#map canvas.maplibregl-canvas').count(), 1);
+  } finally {
+    await browser.close();
+  }
+});

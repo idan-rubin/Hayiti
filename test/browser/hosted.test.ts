@@ -1573,3 +1573,35 @@ await test('the hosted journal draws the street map and makes route files from t
     await browser.close();
   }
 });
+
+await test('the hosted journal opens without the street map library and draws the streets once it downloads', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage(),
+      errors: string[] = [];
+    page.on('pageerror', error => errors.push(error.message));
+    const trip = { id: 'ta', title: 'Tel Aviv', start: '2026-06-14', end: '2026-06-14', stops: [{ id: 'a', date: '2026-06-14', name: 'Dinner', xy: [32.07, 34.78] }] };
+    await hostJournal(page, route => route.fulfill({ json: { trips: [trip], rev: 'r1' } }));
+    await page.route('https://tiles.openfreemap.org/styles/liberty', route => route.fulfill({
+      headers: { 'access-control-allow-origin': '*' },
+      json: { version: 8, sources: {}, layers: [{ id: 'land', type: 'background', paint: { 'background-color': '#e8efe9' } }] }
+    }));
+    let reachable = false;
+    await page.route(origin + '/vendor/maplibre-gl.js', route => reachable ? route.fallback() : route.abort());
+    await page.goto(origin + '/journal.html?lang=en');
+    await page.locator('#title').filter({ hasText: 'Tel Aviv' }).waitFor();
+    await page.locator('#map[data-note]').waitFor();
+    assert.equal(await page.locator('#map').getAttribute('data-note'), 'The street map could not load. Pins and routes still appear.');
+    assert.equal(await page.locator('.leaflet-marker-icon').count(), 1);
+    assert.equal(await page.locator('#newTrip').isEnabled(), true);
+    assert.deepEqual(errors, []);
+
+    reachable = true;
+    await page.evaluate(() => window.dispatchEvent(new Event('online')));
+    await page.locator('#map canvas.maplibregl-canvas').waitFor();
+    assert.equal(await page.locator('#map').getAttribute('data-note'), null);
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+  }
+});
