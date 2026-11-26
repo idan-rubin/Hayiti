@@ -762,3 +762,23 @@ await test('the header lines up with the page on a wide screen and the language 
     await browser.close();
   }
 });
+
+await test('in high-contrast mode the menus keep the arrow the browser draws', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage({ forcedColors: 'active', colorScheme: 'light' });
+    await page.route('https://**/*', route => route.abort());
+    await page.goto(new URL('../../dist/web/Hayiti.html?lang=en', import.meta.url).href);
+    await page.locator('#trySample').click();
+    await page.locator('.leaflet-marker-icon').first().waitFor();
+    // The browser repaints these menus in the traveler's colors, where an arrow drawn in a fixed color can vanish.
+    for (const menu of ['#languageSwitch', '#trips']) {
+      assert.deepEqual(await page.locator(menu).evaluate(element => {
+        const style = getComputedStyle(element);
+        return { appearance: style.appearance, image: style.backgroundImage };
+      }), { appearance: 'auto', image: 'none' }, menu);
+    }
+  } finally {
+    await browser.close();
+  }
+});
