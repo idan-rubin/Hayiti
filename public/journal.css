@@ -122,7 +122,7 @@ header nav {justify-content:flex-end}
 #hostedList li {padding:.65rem 0;border-top:1px solid var(--line);display:flex;gap:.4rem;flex-wrap:wrap;align-items:center}
 #hostedList li span {flex:1 1 100%}#hostedStatus:empty {display:none}
 body.hosted-view header nav > :not(#languageSwitch),body.hosted-view .beta-links,body.hosted-view #other {display:none}
-body.hosted-view:not(.route-ready) main > :not(#status) {display:none}
+
 
 #dayReel .date-full, #dayReel .date-short {font-weight:inherit}
 #dayReel .date-short {display:none}
@@ -147,3 +147,80 @@ body.hosted-view:not(.route-ready) main > :not(#status) {display:none}
   border-inline-start: 3px solid #b77b23;
   padding-inline-start: .75rem;
 }
+
+main {grid-template-columns:minmax(0,1fr)}
+.top > div:first-child {min-width:0;flex:1 1 14rem}
+.top h1 {overflow-wrap:anywhere}
+.top select {min-width:0;max-width:100%}
+.top .actions {max-width:100%;min-width:0}
+@media(max-width:820px){
+  .top {flex-wrap:wrap}
+  .top .actions {justify-content:flex-start}
+}
+@media(pointer:coarse){
+  nav button,nav a,nav select,.top button,.top select,.toolbar button,.viewtabs button,dialog button,dialog .actions a {min-height:2.5rem}
+  .tools {max-width:none;flex-wrap:nowrap}
+  .tools button {min-width:2.5rem;min-height:2.5rem}
+}
+@media(max-height:480px){
+  body {height:auto;min-height:100dvh;overflow:auto}
+  main {display:block}
+  .layout {height:auto}
+  #map {flex:none;height:17rem}
+  .listbody {overflow:visible}
+}
+
+#status[data-tone="warning"],#status[data-tone="error"] {
+  width:fit-content;max-width:100%;margin-top:.35rem;padding:.35rem .7rem;border:1px solid #b77b23;border-radius:.5rem;
+  background:#fff4dc;color:#62400e;font-size:.88rem;white-space:normal;overflow:visible
+}
+#status[data-tone="error"] {border-color:#b4432f;background:#fdece8;color:#7a2416}
+#retryLoad,#discardDraft {justify-self:start;width:fit-content;margin-top:.35rem}
+.form-error {margin:0 0 .8rem;padding:.5rem .75rem;border:1px solid #b4432f;border-radius:.5rem;background:#fdece8;color:#7a2416;font-size:.92rem;line-height:1.4}
+
+.route-state {grid-area:route;align-self:start;justify-self:center;max-width:30rem;margin-top:12vh;padding:1.5rem;text-align:center;background:white;border:1px solid var(--line);border-radius:13px}
+.route-state p {margin:.6rem 0 1.1rem;color:var(--muted);line-height:1.5}
+.route-state a {display:inline-block;padding:9px 14px;border-radius:9px;background:var(--pine);color:white;text-decoration:none;font-weight:560}
+body.hosted-view:not(.route-ready) main > :not(#status,#routeGone) {display:none}
+body.hosted-view:not(.route-ready) #status {justify-self:center;text-align:center;margin-top:12vh;font-size:1rem}
+body.hosted-view:not(.route-ready):has(#routeGone:not([hidden])) #status {display:none}
+
+#welcome {padding:1.4rem 1.25rem}
+#welcome h3 {font-size:1.2rem;letter-spacing:-.02em;line-height:1.25}
+#welcome p {margin:.55rem 0 1rem;color:var(--muted);line-height:1.5}
+@media(max-width:820px){
+  body.no-trip .mapcard {display:none}
+  body.no-trip .listcard {display:flex}
+  body.no-trip .viewtabs {display:none}
+}
+
+button.num {border:0;padding:0;cursor:pointer}
+button.num:hover,.activeStop .num {background:var(--pine);color:white}
+.activeStop {background:#f2f6ef;box-shadow:inset 3px 0 var(--pine)}
+:dir(rtl) .activeStop {box-shadow:inset -3px 0 var(--pine)}
+.stop {padding-inline:.4rem;border-radius:.4rem}
+.leaflet-popup-content button {margin-top:.5rem;padding:4px 10px;font-size:.85rem}
+.pickmode,.pickmode .leaflet-interactive {cursor:crosshair!important}
+
+.more {border:1px solid var(--line);border-radius:10px;padding:.55rem .8rem;margin:.75rem 0}
+.more summary {font-weight:600;font-size:.92rem}
+.more[open] summary {margin-bottom:.35rem}
+.pin-actions .sub {font-size:.85rem}
+.places button {display:block;width:100%;margin:4px 0;text-align:start;font-size:.88rem;font-weight:500;line-height:1.35}
+.form-actions {margin-top:.9rem}
+.form-actions #removeStop,.form-actions #deleteTrip {margin-inline-start:auto;color:#8a2c1c;border-color:#e0bdb5}
+
+#confirmBox {width:min(420px,92vw)}
+#confirmText {white-space:pre-line;font-size:1rem;margin:0 0 1rem}
+
+.tabs [aria-selected="true"] {background:var(--pine);color:white;border-color:var(--pine)}
+.check-row .check {margin:0;font-size:1rem;font-weight:600}
+.check-row > span {font-size:.9rem;color:var(--muted)}
+#hostedSignIn {display:inline-block;padding:9px 14px;border:1px solid var(--pine);border-radius:9px;font-weight:560}
+#createdLink input {width:100%}
+main {grid-template-areas:"trip" "status" "act" "date" "route";grid-template-rows:auto auto auto auto minmax(0,1fr)}
+#retryLoad,#discardDraft {grid-area:act}
+main {grid-template-areas:"trip" "status" "act" "date" "route" "foot";grid-template-rows:auto auto auto auto minmax(0,1fr) auto}
+.beta-links {grid-area:foot;margin:.9rem 0 0}
+body.no-trip #add,body.no-trip #organize,body.no-trip #settings,body.no-trip #dayTitle {display:none}
+@media(max-width:820px){#status {white-space:normal}}

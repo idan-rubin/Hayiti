@@ -62,10 +62,11 @@ export function createDateReel(reel: HTMLElement, menu: HTMLSelectElement, forma
     jump(index);
   });
   menu.addEventListener('change', () => jump(menu.selectedIndex));
-  return (days: string[], selected: string) => {
+  // `notes` adds a short remark to each date in the list, such as how many stops the day holds.
+  return (days: string[], selected: string, notes: string[] = []) => {
     dates = days;
     const labels = days.map(day => format(day, 'full'));
-    menu.replaceChildren(...labels.map((label, i) => new Option(label, days[i])));
+    menu.replaceChildren(...labels.map((label, i) => new Option(notes[i] ? label + ' · ' + notes[i] : label, days[i])));
     reel.replaceChildren(...labels.map((label, index) => {
       const row = document.createElement('div'),
         face = document.createElement('span');

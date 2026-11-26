@@ -4,7 +4,7 @@ import { journalStorage, SaveRejected } from './journal-storage.ts';
 
 type Mode = 'initial' | 'snapshot' | 'portable' | 'memory' | 'guest' | 'account';
 type LoadResult =
-  | { kind: 'portable' | 'guest' | 'signed-out' | 'account' | 'unchanged' | 'merge-conflict' | 'merge-not-sent' | 'unconfirmed' }
+  | { kind: 'portable' | 'guest' | 'signed-out' | 'account' | 'unchanged' | 'merge-conflict' | 'merge-not-sent' | 'unconfirmed' | 'draft-left-out' }
   | { kind: 'merged'; trips: number; copies: number }
   | { kind: 'refused' | 'unreadable-draft'; reason: string };
 type EditResult = 'saved' | 'saved-after-refresh' | 'ignored' | 'loading' | 'superseded' | 'conflict' | 'storage-error';
@@ -24,11 +24,25 @@ export class JournalSession {
   private rev = '';
   private epoch = 0;
   private saving = false;
+  // The guest draft as this tab last read or wrote it, and how many times it took over another tab's version.
+  private draftSeen: string | null = null;
+  private adopted = 0;
   private loading: Promise<LoadResult> | null = null;
   private readonly storage: typeof journalStorage;
 
   constructor(storage = journalStorage) {
     this.storage = storage;
+  }
+
+  /** Identifies the stored journal version this tab last read or wrote. */
+  get revision() {
+    return this.rev + '/' + this.adopted;
+  }
+
+  private readDraft() {
+    const trips = this.storage.readGuest();
+    this.draftSeen = this.storage.guestSnapshot();
+    return trips;
   }
 
   get trip() {
@@ -48,16 +62,35 @@ export class JournalSession {
     this.select(trips.find(trip => trip.id === preferredId) ?? trips[0], this.day);
   }
 
+  /**
+   * Another tab saved or removed the guest draft. Show its version so this tab never writes over it with an
+   * older one. The revision changes, so a form opened on the older version says so before it saves.
+   */
+  adoptGuestDraft() {
+    if (this.mode !== 'guest' || this.saving) return false;
+    this.takeDraft();
+    return true;
+  }
+
+  private takeDraft() {
+    this.replace('guest', this.readDraft());
+    this.adopted++;
+  }
+
   showSnapshot(trip: Trip | null) {
     this.replace('snapshot', trip ? [trip] : []);
     this.select(trip);
   }
 
-  async load(portable: boolean, copyTitle: (title: string) => string, afterConflict = false): Promise<LoadResult> {
+  /**
+   * A draft in this browser may have been made by someone other than the person now signed in,
+   * so `approveMerge` decides whether it joins the account.
+   */
+  async load(portable: boolean, copyTitle: (title: string) => string, approveMerge: (draft: Trip[]) => Promise<boolean>, afterConflict = false): Promise<LoadResult> {
     const revision = this.rev;
     // A read started before the rejected write can still return its old revision.
     if (afterConflict && this.loading) await this.loading.catch(() => {});
-    this.loading ??= this.read(portable, copyTitle).catch((error): LoadResult => {
+    this.loading ??= this.read(portable, copyTitle, approveMerge).catch((error): LoadResult => {
       if (!(error instanceof UnreadableDraft)) throw error;
       this.replace('initial', []);
       return { kind: 'unreadable-draft', reason: error.message };
@@ -67,7 +100,7 @@ export class JournalSession {
     return result;
   }
 
-  private async read(portable: boolean, copyTitle: (title: string) => string): Promise<LoadResult> {
+  private async read(portable: boolean, copyTitle: (title: string) => string, approveMerge: (draft: Trip[]) => Promise<boolean>): Promise<LoadResult> {
     if (portable) {
       if (this.mode !== 'memory') {
         const trips = await this.storage.readPortable();
@@ -77,18 +110,24 @@ export class JournalSession {
       return { kind: 'portable' };
     }
     const revisionAtRead = this.rev;
+    await this.storage.moveTabDraft();
     const account = await this.storage.readAccount();
     if (!account) {
       const expired = this.mode === 'account';
       if (expired) this.replace('guest', []);
-      if (!this.trips.length || this.mode !== 'guest') this.replace('guest', this.storage.readGuest());
+      if (!this.trips.length || this.mode !== 'guest') this.replace('guest', this.readDraft());
       return { kind: expired && !this.trips.length ? 'signed-out' : 'guest' };
     }
 
     if (this.mode === 'account' && (this.rev !== revisionAtRead || (this.saving && account.rev === this.rev))) {
       return { kind: 'unchanged' };
     }
-    const guest = this.storage.readGuest();
+    const guest = this.readDraft();
+    if (guest.length && !await approveMerge(guest)) {
+      // The draft stays in the browser, untouched, and out of this account.
+      this.replace('account', account.trips, account.rev);
+      return { kind: 'draft-left-out' };
+    }
     let started: Trip[] | undefined;
     let copies: number;
     try {
@@ -104,7 +143,8 @@ export class JournalSession {
     const preferred = started.find(trip => trip.id === this.selectedId) ?? started[0];
     this.replace('account', account.trips, account.rev, preferred?.id);
     try {
-      if (guest.length) this.storage.writeGuest([]);
+      // Only the trips that were shown and uploaded leave the browser.
+      if (guest.length) await this.storage.withGuestLock(() => this.storage.retireGuest(guest));
     } catch { /* An already-merged draft is safe to reconcile on the next load. */ }
     return started.length ? { kind: 'merged', trips: started.length, copies } : { kind: 'account' };
   }
@@ -113,6 +153,21 @@ export class JournalSession {
     if (this.saving || this.mode === 'snapshot') return 'ignored';
     if ((this.loading && this.mode !== 'account') || this.mode === 'initial') return 'loading';
     this.saving = true;
+    try {
+      // Tabs of one browser share the guest draft, so they take turns saving it.
+      return this.mode === 'guest' ? await this.storage.withGuestLock(() => this.apply(edit)) : await this.apply(edit);
+    } finally {
+      this.saving = false;
+    }
+  }
+
+  private async apply(edit: () => void): Promise<EditResult> {
+    // Another tab saved since this one last looked. Its version is shown, and the edit is not applied to a
+    // draft the traveler has not seen.
+    if (this.mode === 'guest' && this.storage.guestSnapshot() !== this.draftSeen) {
+      this.takeDraft();
+      return 'conflict';
+    }
     const epoch = this.epoch;
     const previous = structuredClone(this.trips);
     const previousId = this.selectedId;
@@ -125,8 +180,10 @@ export class JournalSession {
         if (epoch === this.epoch) this.rev = rev;
       } else if (this.mode === 'guest' || this.mode === 'portable') {
         try {
-          if (this.mode === 'guest') this.storage.writeGuest(this.trips);
-          else await this.storage.writePortable(this.trips);
+          if (this.mode === 'guest') {
+            this.storage.writeGuest(this.trips);
+            this.draftSeen = this.storage.guestSnapshot();
+          } else await this.storage.writePortable(this.trips);
         } catch {
           throw new LocalSaveFailed();
         }
@@ -141,8 +198,6 @@ export class JournalSession {
       if (error instanceof LocalSaveFailed) return 'storage-error';
       if (error instanceof SaveRejected && error.status === 409) return 'conflict';
       throw error;
-    } finally {
-      this.saving = false;
     }
   }
 }

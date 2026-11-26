@@ -40,6 +40,8 @@ interface LayerGroup {
 interface MapMarker {
   addTo(layer: LayerGroup): MapMarker;
   bindPopup(content: HTMLElement): MapMarker;
+  openPopup(): MapMarker;
+  on(type: 'click', callback: () => void): MapMarker;
 }
 declare const L: {
   map(id: string, options: {
