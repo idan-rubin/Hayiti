@@ -1,7 +1,23 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { chromium } from 'playwright-core';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { strFromU8, unzipSync } from 'fflate';
+import { chromium, type Page } from 'playwright-core';
+
+// Reads the single HTML file out of a ZIP that the Share dialog offers for download.
+async function offeredFile(page: Page, link: string) {
+  await page.waitForFunction(id => document.querySelector<HTMLAnchorElement>(id)?.href.startsWith('blob:'), link);
+  const bytes = await page.evaluate(async id => {
+    const response = await fetch(document.querySelector<HTMLAnchorElement>(id)!.href);
+    return Array.from(new Uint8Array(await response.arrayBuffer()));
+  }, link);
+  const [[name, content]] = Object.entries(unzipSync(Uint8Array.from(bytes)));
+  return { name, html: strFromU8(content) };
+}
 await test('a traveler imports a trip offline, sees its pins, reloads it and exports a shareable route', async () => {
   const browser = await chromium.launch();
   try {
@@ -420,6 +436,292 @@ await test('a journal that lives only in its tab asks before leaving until the t
     await page.locator('#export').click();
     await download;
     assert.equal(await asksBeforeLeaving(), false);
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('a journal file makes an exact copy of the blank app and a route file that opens with its pins', async () => {
+  const browser = await chromium.launch();
+  const folder = await mkdtemp(join(tmpdir(), 'hayiti-route-'));
+  try {
+    const page = await browser.newPage();
+    await page.route('https://**/*', route => route.abort());
+    const built = new URL('../../dist/web/Hayiti.html', import.meta.url);
+    await page.goto(built.href);
+    await page.getByRole('button', { name: 'Try the sample trip' }).click();
+    await page.locator('#share').click();
+
+    // The file stores its code once, and still reproduces itself character for character.
+    const app = await offeredFile(page, '#downloadApp');
+    const original = await readFile(built, 'utf8');
+    assert.equal(app.html.length, original.length);
+    assert.ok(app.html === original, 'the blank app made from a running journal matches the built file');
+    assert.equal(original.split('data-part="street-map">').length, 2);
+
+    const route = await offeredFile(page, '#downloadTrip');
+    const saved = join(folder, route.name);
+    await writeFile(saved, route.html);
+    const viewer = await browser.newPage(),
+      errors: string[] = [];
+    viewer.on('pageerror', error => errors.push(error.message));
+    await viewer.route('https://**/*', request => request.abort());
+    await viewer.goto(pathToFileURL(saved).href);
+    await viewer.locator('#title').filter({ hasText: 'A Thursday in Tel Aviv' }).waitFor();
+    assert.equal(await viewer.locator('.leaflet-marker-icon').count(), 7);
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+    await rm(folder, { recursive: true });
+  }
+});
+
+await test('without a connection the map says the streets could not load and still shows the pins', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await page.route('https://**/*', route => route.abort());
+    await page.goto(new URL('../../dist/web/Hayiti.html?lang=en', import.meta.url).href);
+    await page.getByRole('button', { name: 'Try the sample trip' }).click();
+    await page.locator('#map[data-note]').waitFor();
+    assert.equal(await page.locator('#map').getAttribute('data-note'), 'The street map could not load. Pins and routes still appear.');
+    assert.equal(await page.locator('.leaflet-marker-icon').count(), 7);
+
+    // The streets arrive when the connection returns, drawn by the worker the file carries.
+    await page.route('https://tiles.openfreemap.org/styles/liberty', route => route.fulfill({
+      headers: { 'access-control-allow-origin': '*' },
+      json: { version: 8, sources: {}, layers: [{ id: 'land', type: 'background', paint: { 'background-color': '#e8efe9' } }] }
+    }));
+    await page.evaluate(() => window.dispatchEvent(new Event('online')));
+    await page.locator('#map canvas.maplibregl-canvas').waitFor();
+    assert.equal(await page.locator('#map').getAttribute('data-note'), null);
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('a browser that cannot draw the street map says so and still shows the pins', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await page.route('https://**/*', route => route.abort());
+    await page.addInitScript(() => {
+      const getContext = HTMLCanvasElement.prototype.getContext;
+      HTMLCanvasElement.prototype.getContext = function (this: HTMLCanvasElement, kind: string, ...rest: unknown[]) {
+        return kind.startsWith('webgl') ? null : Reflect.apply(getContext, this, [kind, ...rest]);
+      } as typeof getContext;
+    });
+    await page.goto(new URL('../../dist/web/Hayiti.html?lang=en', import.meta.url).href);
+    await page.getByRole('button', { name: 'Try the sample trip' }).click();
+    await page.locator('#map[data-note]').waitFor();
+    assert.equal(await page.locator('#map').getAttribute('data-note'), 'This browser cannot draw the street map. Pins and routes still appear.');
+    assert.equal(await page.locator('.leaflet-marker-icon').count(), 7);
+  } finally {
+    await browser.close();
+  }
+});
+
+// Where each pin of the sample trip is drawn, on load and after zooming in twice.
+async function samplePins(page: Page) {
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await page.route('https://**/*', route => route.abort());
+  await page.route('https://tiles.openfreemap.org/styles/liberty', route => route.fulfill({
+    headers: { 'access-control-allow-origin': '*' },
+    json: { version: 8, sources: {}, layers: [{ id: 'land', type: 'background', paint: { 'background-color': '#e8efe9' } }] }
+  }));
+  await page.goto(new URL('../../dist/web/Hayiti.html?lang=en', import.meta.url).href);
+  await page.getByRole('button', { name: 'Try the sample trip' }).click();
+  await page.locator('#map[data-note]').waitFor();
+  const places = () => page.evaluate(() => Array.from(document.querySelectorAll('.leaflet-marker-icon'), pin => {
+    const box = pin.getBoundingClientRect();
+    return [Math.round(box.x), Math.round(box.y)];
+  }));
+  await page.waitForTimeout(800);
+  const loaded = await places();
+  for (let step = 0; step < 2; step++) {
+    await page.locator('.leaflet-control-zoom-in').click();
+    await page.waitForTimeout(800);
+  }
+  return { note: await page.locator('#map').getAttribute('data-note'), loaded, zoomed: await places(), layers: await page.locator('.leaflet-gl-layer').count() };
+}
+
+await test('a browser whose street map cannot start keeps every pin where a browser without WebGL shows it', async () => {
+  const browser = await chromium.launch();
+  try {
+    // The reference: no WebGL at all, so the street map is never tried.
+    const plain = await browser.newPage();
+    await plain.addInitScript(() => {
+      const getContext = HTMLCanvasElement.prototype.getContext;
+      HTMLCanvasElement.prototype.getContext = function (this: HTMLCanvasElement, kind: string, ...rest: unknown[]) {
+        return kind.startsWith('webgl') ? null : Reflect.apply(getContext, this, [kind, ...rest]);
+      } as typeof getContext;
+    });
+    const expected = await samplePins(plain);
+    assert.equal(expected.loaded.length, 7);
+    assert.notDeepEqual(expected.zoomed, expected.loaded);
+
+    // An older browser has the first version of WebGL only.
+    const older = await browser.newPage(),
+      olderErrors: string[] = [];
+    older.on('pageerror', error => olderErrors.push(error.message));
+    await older.addInitScript(() => {
+      const getContext = HTMLCanvasElement.prototype.getContext;
+      HTMLCanvasElement.prototype.getContext = function (this: HTMLCanvasElement, kind: string, ...rest: unknown[]) {
+        return kind === 'webgl2' ? null : Reflect.apply(getContext, this, [kind, ...rest]);
+      } as typeof getContext;
+    });
+    assert.deepEqual(await samplePins(older), expected);
+    assert.deepEqual(olderErrors, []);
+
+    // A browser can also offer WebGL and then refuse it to the map itself.
+    const refusing = await browser.newPage(),
+      refusingErrors: string[] = [];
+    refusing.on('pageerror', error => refusingErrors.push(error.message));
+    await refusing.addInitScript(() => {
+      const getContext = HTMLCanvasElement.prototype.getContext;
+      HTMLCanvasElement.prototype.getContext = function (this: HTMLCanvasElement, kind: string, ...rest: unknown[]) {
+        return kind.startsWith('webgl') && this.className.includes('maplibregl') ? null : Reflect.apply(getContext, this, [kind, ...rest]);
+      } as typeof getContext;
+    });
+    assert.deepEqual(await samplePins(refusing), expected);
+    assert.deepEqual(refusingErrors, []);
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('streets that fail to load after the style say so and load when the connection returns', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await page.route('https://**/*', route => route.abort());
+    await page.route('https://tiles.openfreemap.org/styles/liberty', route => route.fulfill({
+      headers: { 'access-control-allow-origin': '*' },
+      json: {
+        version: 8,
+        sources: { streets: { type: 'vector', url: 'https://tiles.openfreemap.org/planet' } },
+        layers: [
+          { id: 'land', type: 'background', paint: { 'background-color': '#e8efe9' } },
+          { id: 'roads', type: 'line', source: 'streets', 'source-layer': 'transportation' }
+        ]
+      }
+    }));
+    let connected = false,
+      described = 0,
+      tiles = 0;
+    await page.route('https://tiles.openfreemap.org/planet', route => {
+      if (!connected) return route.abort();
+      described++;
+      return route.fulfill({
+        headers: { 'access-control-allow-origin': '*' },
+        json: { tilejson: '2.2.0', tiles: ['https://tiles.openfreemap.org/planet/{z}/{x}/{y}.pbf'], minzoom: 0, maxzoom: 14 }
+      });
+    });
+    await page.route('https://tiles.openfreemap.org/planet/**', route => {
+      tiles++;
+      return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } });
+    });
+    await page.goto(new URL('../../dist/web/Hayiti.html?lang=en', import.meta.url).href);
+    await page.getByRole('button', { name: 'Try the sample trip' }).click();
+    await page.locator('#map canvas.maplibregl-canvas').waitFor();
+    await page.locator('#map[data-note]').waitFor();
+    assert.equal(await page.locator('#map').getAttribute('data-note'), 'The street map could not load. Pins and routes still appear.');
+    assert.equal(await page.locator('.leaflet-marker-icon').count(), 7);
+
+    connected = true;
+    await page.evaluate(() => window.dispatchEvent(new Event('online')));
+    await page.locator('#map:not([data-note]) canvas.maplibregl-canvas').waitFor();
+    await page.waitForTimeout(1500);
+    assert.equal(described, 1);
+    assert.ok(tiles > 0, 'the street tiles are requested after the connection returns');
+    assert.equal(await page.locator('#map').getAttribute('data-note'), null);
+    assert.equal(await page.locator('#map canvas.maplibregl-canvas').count(), 1);
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('the street map note goes away once every street tile in view has loaded', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await page.route('https://**/*', route => route.abort());
+    await page.route('https://tiles.openfreemap.org/styles/liberty', route => route.fulfill({
+      headers: { 'access-control-allow-origin': '*' },
+      json: {
+        version: 8,
+        sources: { streets: { type: 'vector', url: 'https://tiles.openfreemap.org/planet' } },
+        layers: [
+          { id: 'land', type: 'background', paint: { 'background-color': '#e8efe9' } },
+          { id: 'roads', type: 'line', source: 'streets', 'source-layer': 'transportation' }
+        ]
+      }
+    }));
+    let described = 0,
+      failing = true;
+    await page.route('https://tiles.openfreemap.org/planet', route => {
+      described++;
+      return route.fulfill({
+        headers: { 'access-control-allow-origin': '*' },
+        json: { tilejson: '2.2.0', tiles: ['https://tiles.openfreemap.org/planet/{z}/{x}/{y}.pbf'], minzoom: 0, maxzoom: 14 }
+      });
+    });
+    await page.route('https://tiles.openfreemap.org/planet/**', route => failing
+      ? route.abort()
+      : route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } }));
+    await page.goto(new URL('../../dist/web/Hayiti.html?lang=en', import.meta.url).href);
+    await page.getByRole('button', { name: 'Try the sample trip' }).click();
+    await page.locator('#map[data-note]').waitFor();
+
+    // The tiles that failed are still in view after a small move, so the note stays.
+    failing = false;
+    await page.mouse.move(400, 400);
+    await page.mouse.down();
+    await page.mouse.move(404, 404, { steps: 2 });
+    await page.mouse.up();
+    await page.waitForTimeout(1200);
+    assert.equal(await page.locator('#map').getAttribute('data-note'), 'The street map could not load. Pins and routes still appear.');
+
+    // A closer view needs other tiles. They load, and nothing in view is missing any more.
+    await page.locator('.leaflet-control-zoom-in').click();
+    await page.locator('.leaflet-control-zoom-in').click();
+    await page.locator('#map:not([data-note]) canvas.maplibregl-canvas').waitFor();
+    assert.equal(described, 1, 'the street map was not drawn again from the start');
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('a terrain image that failed on the overview does not keep the note at street level', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await page.route('https://**/*', route => route.abort());
+    await page.route('https://tiles.openfreemap.org/styles/liberty', route => route.fulfill({
+      headers: { 'access-control-allow-origin': '*' },
+      json: {
+        version: 8,
+        sources: { relief: { type: 'raster', tiles: ['https://tiles.openfreemap.org/natural_earth/{z}/{x}/{y}.png'], tileSize: 256, maxzoom: 6 } },
+        layers: [
+          { id: 'land', type: 'background', paint: { 'background-color': '#e8efe9' } },
+          { id: 'relief', type: 'raster', source: 'relief', maxzoom: 7 }
+        ]
+      }
+    }));
+    let images = 0;
+    await page.route('https://tiles.openfreemap.org/natural_earth/**', route => {
+      images++;
+      return route.abort();
+    });
+    // The empty journal opens on a map of the world, which draws the terrain images.
+    await page.goto(new URL('../../dist/web/Hayiti.html?lang=en', import.meta.url).href);
+    await page.locator('#map[data-note]').waitFor({ state: 'attached' });
+    assert.ok(images > 0);
+
+    // The sample trip is shown at street level, where the terrain images are not part of the map.
+    await page.getByRole('button', { name: 'Try the sample trip' }).click();
+    await page.locator('#map:not([data-note]) canvas.maplibregl-canvas').waitFor();
+    assert.equal(await page.locator('.leaflet-marker-icon').count(), 7);
   } finally {
     await browser.close();
   }

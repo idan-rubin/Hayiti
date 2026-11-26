@@ -61,9 +61,25 @@ export function shareableTrip(trip: Trip, includeOrigin: boolean, day: string | 
     homeXY: includeOrigin ? trip.homeXY : null
   };
 }
+// Code and styles that the portable file holds once. The pristine copy it carries leaves their text out,
+// and a file made from a journal takes that text from the document the journal runs in.
+const part = /(<(script|style) data-part="([\w-]+)"[^>]*>)[\s\S]*?(<\/\2>)/g;
+
+export function withoutParts(source: string) {
+  return source.replace(part, '$1$4');
+}
+
+export function withParts(compact: string, text: (name: string) => string | null | undefined) {
+  return compact.replace(part, (_whole, open: string, _tag: string, name: string, close: string) => {
+    const body = text(name);
+    if (!body) throw Error('Missing part ' + name);
+    return open + body + close;
+  });
+}
+
 export function portableDocument(cleanSource: string, route: ReturnType<typeof shareableTrip> | null = null) {
   const dataElement = (id: string, value: unknown) => '<script type="application/json" id="' + id + '">' + JSON.stringify(value).replaceAll('<', '\\u003c') + '</script>';
   // Carry the pristine build source so even a renamed or forwarded file can make a blank app.
-  const data = dataElement('hayiti-source', cleanSource) + (route ? dataElement('hayiti-route', route) : '');
+  const data = dataElement('hayiti-source', withoutParts(cleanSource)) + (route ? dataElement('hayiti-route', route) : '');
   return cleanSource.replace('</head>', () => data + '</head>');
 }

@@ -22,7 +22,7 @@ The sample trip shows how the pieces fit together. Card receipts put you at Caf�
 
 ![The sample route on the streets of Tel Aviv. An orange dashed line marks the taxi ride from Neve Tzedek to Shaul HaMelech Boulevard.](docs/screenshots/sample-street-map.png)
 
-The orange dashed line shows the taxi ride. The street map in this image uses English labels. [OpenFreeMap](https://openfreemap.org/) · [© OpenMapTiles](https://openmaptiles.org/) · [© OpenStreetMap contributors](https://www.openstreetmap.org/copyright)
+The orange dashed line shows the taxi ride. Place names on the street map follow the journal's language, English or Hebrew, and fall back to the local name. [OpenFreeMap](https://openfreemap.org/) · [© OpenMapTiles](https://openmaptiles.org/) · [© OpenStreetMap contributors](https://www.openstreetmap.org/copyright)
 
 The [downloadable example](https://hayiti-beta.cocoacoati256.chatgpt.site/sample-trip.json) contains all seven stops. Taxi pins show approximate locations. In an empty journal, choose **Try the sample trip**. To add it next to your own trips, open **Sources and import**, choose **Files**, select the JSON and choose **Load trip**.
 
@@ -34,7 +34,7 @@ The [downloadable example](https://hayiti-beta.cocoacoati256.chatgpt.site/sample
 
 To add stops from a file, use **Sources and import** to bring in a transaction CSV or a calendar file.
 
-Without signing in, the web app keeps your trips in that browser. Use **Back up trip** to keep an editable copy or move it to another device. Use **Share** to give someone a read-only route. The portable journal saves edits in browser storage when available. You can import, edit and export offline. Saving a stop with an address and no map pin looks the address up and adds the pin. Loading map tiles and looking up addresses require internet access.
+Without signing in, the web app keeps your trips in that browser. Use **Back up trip** to keep an editable copy or move it to another device. Use **Share** to give someone a read-only route. The portable journal saves edits in browser storage when available. You can import, edit and export offline. Saving a stop with an address and no map pin looks the address up and adds the pin. Loading the street map and looking up addresses require internet access. Offline, pins and routes are drawn without the streets.
 
 On a phone, choose **Stops** to see the day’s visits in order.
 
@@ -102,4 +102,4 @@ npm run test:browser
 
 Use a branch and open a pull request. Describe the user-visible behavior and add a regression test for a bug fix. Use fictional trips in issues, pull requests and fixtures.
 
-hayiti's source is licensed under [MIT](LICENSE). Leaflet retains its [upstream license](public/vendor/leaflet-LICENSE). The map uses OpenStreetMap contributors’ data. See [security reporting](SECURITY.md).
+hayiti's source is licensed under [MIT](LICENSE). Leaflet, MapLibre GL JS and the MapLibre GL Leaflet layer retain their upstream licenses: [Leaflet](public/vendor/leaflet-LICENSE), [MapLibre GL JS](public/vendor/maplibre-gl-LICENSE.txt), [MapLibre GL Leaflet](public/vendor/maplibre-gl-leaflet-LICENSE.txt). The street map comes from [OpenFreeMap](https://openfreemap.org/) and uses OpenMapTiles and OpenStreetMap contributors’ data. See [security reporting](SECURITY.md).

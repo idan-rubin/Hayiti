@@ -224,3 +224,4 @@ main {grid-template-areas:"trip" "status" "act" "date" "route" "foot";grid-templ
 .beta-links {grid-area:foot;margin:.9rem 0 0}
 body.no-trip #add,body.no-trip #organize,body.no-trip #settings,body.no-trip #dayTitle {display:none}
 @media(max-width:820px){#status {white-space:normal}}
+#map[data-note]::after {content:attr(data-note);position:absolute;inset-inline:0;top:42%;z-index:300;padding:0 3.2rem;text-align:center;color:var(--muted);font-size:.9rem;pointer-events:none}

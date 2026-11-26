@@ -27,8 +27,10 @@
     "typescript-native": "npm:typescript@7.0.2"
   },
   "dependencies": {
+    "@maplibre/maplibre-gl-leaflet": "0.1.4",
     "fflate": "0.8.3",
-    "leaflet": "1.9.4"
+    "leaflet": "1.9.4",
+    "maplibre-gl": "6.19.0"
   },
   "allowScripts": {
     "esbuild": true
