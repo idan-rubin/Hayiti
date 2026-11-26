@@ -1,7 +1,23 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { chromium } from 'playwright-core';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { strFromU8, unzipSync } from 'fflate';
+import { chromium, type Page } from 'playwright-core';
+
+// Reads the single HTML file out of a ZIP that the Share dialog offers for download.
+async function offeredFile(page: Page, link: string) {
+  await page.waitForFunction(id => document.querySelector<HTMLAnchorElement>(id)?.href.startsWith('blob:'), link);
+  const bytes = await page.evaluate(async id => {
+    const response = await fetch(document.querySelector<HTMLAnchorElement>(id)!.href);
+    return Array.from(new Uint8Array(await response.arrayBuffer()));
+  }, link);
+  const [[name, content]] = Object.entries(unzipSync(Uint8Array.from(bytes)));
+  return { name, html: strFromU8(content) };
+}
 await test('a traveler imports a trip offline, sees its pins, reloads it and exports a shareable route', async () => {
   const browser = await chromium.launch();
   try {
@@ -420,6 +436,86 @@ await test('a journal that lives only in its tab asks before leaving until the t
     await page.locator('#export').click();
     await download;
     assert.equal(await asksBeforeLeaving(), false);
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('a journal file makes an exact copy of the blank app and a route file that opens with its pins', async () => {
+  const browser = await chromium.launch();
+  const folder = await mkdtemp(join(tmpdir(), 'hayiti-route-'));
+  try {
+    const page = await browser.newPage();
+    await page.route('https://**/*', route => route.abort());
+    const built = new URL('../../dist/web/Hayiti.html', import.meta.url);
+    await page.goto(built.href);
+    await page.getByRole('button', { name: 'Try the sample trip' }).click();
+    await page.locator('#share').click();
+
+    // The file stores its code once, and still reproduces itself character for character.
+    const app = await offeredFile(page, '#downloadApp');
+    const original = await readFile(built, 'utf8');
+    assert.equal(app.html.length, original.length);
+    assert.ok(app.html === original, 'the blank app made from a running journal matches the built file');
+    assert.equal(original.split('data-part="street-map">').length, 2);
+
+    const route = await offeredFile(page, '#downloadTrip');
+    const saved = join(folder, route.name);
+    await writeFile(saved, route.html);
+    const viewer = await browser.newPage(),
+      errors: string[] = [];
+    viewer.on('pageerror', error => errors.push(error.message));
+    await viewer.route('https://**/*', request => request.abort());
+    await viewer.goto(pathToFileURL(saved).href);
+    await viewer.locator('#title').filter({ hasText: 'A Thursday in Tel Aviv' }).waitFor();
+    assert.equal(await viewer.locator('.leaflet-marker-icon').count(), 7);
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+    await rm(folder, { recursive: true });
+  }
+});
+
+await test('without a connection the map says the streets could not load and still shows the pins', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await page.route('https://**/*', route => route.abort());
+    await page.goto(new URL('../../dist/web/Hayiti.html?lang=en', import.meta.url).href);
+    await page.getByRole('button', { name: 'Try the sample trip' }).click();
+    await page.locator('#map[data-note]').waitFor();
+    assert.equal(await page.locator('#map').getAttribute('data-note'), 'The street map could not load. Pins and routes still appear.');
+    assert.equal(await page.locator('.leaflet-marker-icon').count(), 7);
+
+    // The streets arrive when the connection returns, drawn by the worker the file carries.
+    await page.route('https://tiles.openfreemap.org/styles/liberty', route => route.fulfill({
+      headers: { 'access-control-allow-origin': '*' },
+      json: { version: 8, sources: {}, layers: [{ id: 'land', type: 'background', paint: { 'background-color': '#e8efe9' } }] }
+    }));
+    await page.evaluate(() => window.dispatchEvent(new Event('online')));
+    await page.locator('#map canvas.maplibregl-canvas').waitFor();
+    assert.equal(await page.locator('#map').getAttribute('data-note'), null);
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('a browser that cannot draw the street map says so and still shows the pins', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await page.route('https://**/*', route => route.abort());
+    await page.addInitScript(() => {
+      const getContext = HTMLCanvasElement.prototype.getContext;
+      HTMLCanvasElement.prototype.getContext = function (this: HTMLCanvasElement, kind: string, ...rest: unknown[]) {
+        return kind.startsWith('webgl') ? null : Reflect.apply(getContext, this, [kind, ...rest]);
+      } as typeof getContext;
+    });
+    await page.goto(new URL('../../dist/web/Hayiti.html?lang=en', import.meta.url).href);
+    await page.getByRole('button', { name: 'Try the sample trip' }).click();
+    await page.locator('#map[data-note]').waitFor();
+    assert.equal(await page.locator('#map').getAttribute('data-note'), 'This browser cannot draw the street map. Pins and routes still appear.');
+    assert.equal(await page.locator('.leaflet-marker-icon').count(), 7);
   } finally {
     await browser.close();
   }

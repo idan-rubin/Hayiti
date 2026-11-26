@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
+import { strFromU8, unzipSync } from 'fflate';
 import { chromium, type Page, type Route } from 'playwright-core';
 import { journalAPI } from '../../src/server/journal-api.ts';
 import { MemoryBucket } from '../memory-bucket.ts';
@@ -1524,6 +1525,41 @@ await test('a signed-in journal opens in a browser that blocks only tab storage'
     await page.locator('#title').filter({ hasText: 'Saved in the account' }).waitFor();
     await page.locator('#status').filter({ hasText: 'up to date' }).waitFor();
     assert.equal(await page.locator('#retryLoad').isVisible(), false);
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('the hosted journal draws the street map and makes route files from the packaged app', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage(),
+      errors: string[] = [];
+    page.on('pageerror', error => errors.push(error.message));
+    const trip = { id: 'ta', title: 'Tel Aviv', start: '2026-06-14', end: '2026-06-14', stops: [{ id: 'a', date: '2026-06-14', name: 'Dinner', xy: [32.07, 34.78] }] };
+    await hostJournal(page, route => route.fulfill({ json: { trips: [trip], rev: 'r1' } }));
+    await page.route('https://tiles.openfreemap.org/styles/liberty', route => route.fulfill({
+      headers: { 'access-control-allow-origin': '*' },
+      json: { version: 8, sources: {}, layers: [{ id: 'land', type: 'background', paint: { 'background-color': '#e8efe9' } }] }
+    }));
+    await page.goto(origin + '/journal.html?lang=en');
+    await page.locator('#map canvas.maplibregl-canvas').waitFor();
+    assert.equal(await page.locator('#map').getAttribute('data-note'), null);
+    await page.locator('#languageSwitch').selectOption('he');
+    await page.locator('#languageSwitch').selectOption('en');
+
+    // A route file is the packaged app plus the route, with every stored part filled in.
+    await page.locator('#share').click();
+    await page.waitForFunction(() => document.querySelector<HTMLAnchorElement>('#downloadTrip')?.href.startsWith('blob:'));
+    const bytes = await page.evaluate(async () => {
+      const response = await fetch(document.querySelector<HTMLAnchorElement>('#downloadTrip')!.href);
+      return Array.from(new Uint8Array(await response.arrayBuffer()));
+    });
+    const html = strFromU8(Object.values(unzipSync(Uint8Array.from(bytes)))[0]);
+    const packaged = await readFile(new URL('../../dist/web/Hayiti.html', import.meta.url), 'utf8');
+    assert.match(html, /<script type="application\/json" id="hayiti-route">/);
+    assert.ok(html.replace(/<script type="application\/json" id="hayiti-route">.*?<\/script>/, '') === packaged, 'the route file is the packaged app plus its route');
+    assert.deepEqual(errors, []);
   } finally {
     await browser.close();
   }

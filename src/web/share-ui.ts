@@ -1,7 +1,7 @@
 import type { Trip } from '../domain/core.ts';
 import { element as el } from './dom.ts';
 import { displayTripTitle, t } from './journal-messages.ts';
-import { portableDocument, shareableTrip } from '../domain/share-format.ts';
+import { portableDocument, shareableTrip, withParts } from '../domain/share-format.ts';
 import { zipSync, strToU8 } from 'fflate';
 import { enableHostedLinks } from './hosted-links.ts';
 export function enableSharing(getTrip: () => Trip | null, portable: boolean, getDay: () => string, isSigned: () => boolean) {
@@ -10,15 +10,17 @@ export function enableSharing(getTrip: () => Trip | null, portable: boolean, get
   const openHosted = portable ? null : enableHostedLinks(getTrip, getDay, isSigned);
   let sourceRequest: Promise<string> | undefined, source: string, appFile: File | undefined;
   const urls = new Map<string, string>();
+  // The portable file carries its own source with the large parts left out. Their text is in the document.
+  function sourceOf(doc: Document): string {
+    const compact: unknown = JSON.parse(doc.getElementById('hayiti-source')?.textContent || 'null');
+    if (typeof compact !== 'string') throw Error('package');
+    return withParts(compact, name => doc.querySelector('[data-part="' + name + '"]')?.textContent);
+  }
   async function getSource(): Promise<string> {
-    const embedded = document.getElementById('hayiti-source');
-    if (embedded) return JSON.parse(embedded.textContent || 'null');
+    if (document.getElementById('hayiti-source')) return sourceOf(document);
     const response = await fetch('Hayiti.html');
     if (!response.ok) throw Error('download');
-    const doc = new DOMParser().parseFromString(await response.text(), 'text/html');
-    const packaged = doc.getElementById('hayiti-source');
-    if (!packaged) throw Error('package');
-    return JSON.parse(packaged.textContent || 'null');
+    return sourceOf(new DOMParser().parseFromString(await response.text(), 'text/html'));
   }
   function makeFile(name: string, route: ReturnType<typeof shareableTrip> | null) {
     const html = portableDocument(source, route);

@@ -1,4 +1,4 @@
-/** Subset of Leaflet's browser API used by the journal. The build supplies the pinned distribution. */
+/** Subset of the browser APIs of Leaflet and MapLibre GL JS used by the journal. The build supplies the pinned distributions. */
 type Coordinates = import('../domain/core.ts').Point;
 interface MapPoint {
   equals(other: MapPoint): boolean;
@@ -43,20 +43,29 @@ interface MapMarker {
   openPopup(): MapMarker;
   on(type: 'click', callback: () => void): MapMarker;
 }
+/** The vector street map that the Leaflet layer draws. */
+interface StreetMap {
+  on(type: 'style.load', callback: () => void): void;
+  setLayoutProperty(layer: string, name: 'text-field', value: unknown): void;
+}
+interface StreetMapLayer {
+  addTo(map: JournalMap): StreetMapLayer;
+  getMaplibreMap(): StreetMap;
+}
+declare const maplibregl: {
+  setWorkerUrl(url: string): void;
+};
 declare const L: {
   map(id: string, options: {
     zoomControl: boolean;
     scrollWheelZoom: boolean;
     trackResize: boolean;
     zoomSnap: number;
-  }): JournalMap;
-  tileLayer(url: string, options: {
     maxZoom: number;
-    referrerPolicy: string;
-    attribution: string;
-  }): {
-    addTo(map: JournalMap): void;
-  };
+  }): JournalMap;
+  maplibreGL(options: {
+    style: object;
+  }): StreetMapLayer;
   layerGroup(): LayerGroup;
   latLngBounds(points: Coordinates[]): Bounds;
   divIcon(options: {

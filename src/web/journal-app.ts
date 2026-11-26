@@ -13,6 +13,7 @@ import { checkGuestBackup, discardGuest, guestKey, guestMergeRequested, requestG
 import { JournalSession, localToday } from './journal-session.ts';
 import { preparePhoto } from './photos.ts';
 import { ask, clearError, showError } from './confirm.ts';
+import { addStreetMap, type StreetMapProblem } from './street-map.ts';
 import sampleTrip from '../../public/sample-trip.json' with { type: 'json' };
 const hebrewLabels = Object.fromEntries(Object.entries(messages).map(([he, en]) => [en, he]));
 bindLanguageControl(hebrewLabels, refreshLanguage);
@@ -111,13 +112,9 @@ const map = L.map('map', {
   zoomControl: true,
   scrollWheelZoom: true,
   trackResize: false,
-  zoomSnap: .25
+  zoomSnap: .25,
+  maxZoom: 19
 }).setView([30, 15], 2);
-L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  maxZoom: 19,
-  referrerPolicy: 'strict-origin',
-  attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-}).addTo(map);
 const overlay = L.layerGroup().addTo(map);
 const rows = new Map<string, HTMLElement>(),
   marks = new Map<string, MapMarker>();
@@ -179,6 +176,19 @@ function renderSelection() {
   render();
 }
 const ui = (en: string, he: string) => language === 'en' ? en : he;
+// Pins and routes are drawn either way. When the streets under them cannot be, the map says why.
+let streetMapProblem: StreetMapProblem = null;
+function showStreetMapNote() {
+  const container = map.getContainer();
+  if (!streetMapProblem) delete container.dataset.note;
+  else container.dataset.note = streetMapProblem === 'unsupported'
+    ? ui('This browser cannot draw the street map. Pins and routes still appear.', 'הדפדפן הזה אינו יכול לצייר את מפת הרחובות. הסיכות והמסלולים עדיין מוצגים.')
+    : ui('The street map could not load. Pins and routes still appear.', 'מפת הרחובות לא נטענה. הסיכות והמסלולים עדיין מוצגים.');
+}
+const relabelStreetMap = addStreetMap(map, () => language, problem => {
+  streetMapProblem = problem;
+  showStreetMapNote();
+});
 const sourceNames = {
   finances: 'Finances',
   gmail: 'Gmail',
@@ -1369,6 +1379,8 @@ function localizeControls() {
 }
 function refreshLanguage() {
   localizeControls();
+  relabelStreetMap();
+  showStreetMapNote();
   render();
   $('status').textContent = currentStatus();
 }
