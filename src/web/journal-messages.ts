@@ -175,6 +175,7 @@ export const messages: Record<string, string> = {
   "שיתוף": "Share",
   "גיבוי הטיול": "Back up trip",
   "כניסה עם ChatGPT": "Sign in with ChatGPT",
+  "יציאה מהחשבון": "Sign out",
   "בחירת טיול": "Select a trip",
   "הגדרות טיול": "Trip settings",
   "טיול חדש": "New trip",

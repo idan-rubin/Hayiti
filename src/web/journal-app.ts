@@ -547,6 +547,8 @@ async function load(afterConflict = false, quiet = false) {
   $('range').hidden = unreadable;
   $('discardDraft').hidden = !unreadable;
   $('login').hidden = result.kind !== 'guest' && result.kind !== 'signed-out';
+  // Sign out is offered only while the account journal is open, which is also how the traveler sees they are signed in.
+  $('logout').hidden = session.mode !== 'account';
   renderSelection();
   switch (result.kind) {
     case 'unreadable-draft':

@@ -1165,3 +1165,26 @@ await test('a draft found by someone who did not sign in from its tab is shown a
     await browser.close();
   }
 });
+
+await test('Sign out is offered only while the account journal is open', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    let signedIn = true;
+    await hostJournal(page, route => signedIn
+      ? route.fulfill({ json: { trips: [], rev: 'r1' } })
+      : route.fulfill({ status: 401, json: { error: 'Authentication required' } }));
+    await page.goto(origin + '/journal.html?lang=en');
+    const signOut = page.getByRole('link', { name: 'Sign out', exact: true });
+    await signOut.waitFor();
+    assert.equal(await signOut.getAttribute('href'), '/signout-with-chatgpt?return_to=%2Fjournal.html');
+    assert.equal(await page.locator('#login').isVisible(), false);
+
+    signedIn = false;
+    await page.reload();
+    await page.getByRole('link', { name: 'Sign in with ChatGPT', exact: true }).waitFor();
+    assert.equal(await signOut.isVisible(), false);
+  } finally {
+    await browser.close();
+  }
+});
