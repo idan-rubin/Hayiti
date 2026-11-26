@@ -68,9 +68,13 @@ export class JournalSession {
    */
   adoptGuestDraft() {
     if (this.mode !== 'guest' || this.saving) return false;
+    this.takeDraft();
+    return true;
+  }
+
+  private takeDraft() {
     this.replace('guest', this.readDraft());
     this.adopted++;
-    return true;
   }
 
   showSnapshot(trip: Trip | null) {
@@ -139,7 +143,7 @@ export class JournalSession {
     this.replace('account', account.trips, account.rev, preferred?.id);
     try {
       // Only the trips that were shown and uploaded leave the browser.
-      if (guest.length) this.storage.retireGuest(guest);
+      if (guest.length) await this.storage.withGuestLock(() => this.storage.retireGuest(guest));
     } catch { /* An already-merged draft is safe to reconcile on the next load. */ }
     return started.length ? { kind: 'merged', trips: started.length, copies } : { kind: 'account' };
   }
@@ -147,13 +151,22 @@ export class JournalSession {
   async change(edit: () => void): Promise<EditResult> {
     if (this.saving || this.mode === 'snapshot') return 'ignored';
     if ((this.loading && this.mode !== 'account') || this.mode === 'initial') return 'loading';
+    this.saving = true;
+    try {
+      // Tabs of one browser share the guest draft, so they take turns saving it.
+      return this.mode === 'guest' ? await this.storage.withGuestLock(() => this.apply(edit)) : await this.apply(edit);
+    } finally {
+      this.saving = false;
+    }
+  }
+
+  private async apply(edit: () => void): Promise<EditResult> {
     // Another tab saved since this one last looked. Its version is shown, and the edit is not applied to a
     // draft the traveler has not seen.
     if (this.mode === 'guest' && this.storage.guestSnapshot() !== this.draftSeen) {
-      this.adoptGuestDraft();
+      this.takeDraft();
       return 'conflict';
     }
-    this.saving = true;
     const epoch = this.epoch;
     const previous = structuredClone(this.trips);
     const previousId = this.selectedId;
@@ -184,8 +197,6 @@ export class JournalSession {
       if (error instanceof LocalSaveFailed) return 'storage-error';
       if (error instanceof SaveRejected && error.status === 409) return 'conflict';
       throw error;
-    } finally {
-      this.saving = false;
     }
   }
 }

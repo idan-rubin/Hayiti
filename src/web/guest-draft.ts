@@ -40,12 +40,32 @@ function adoptTabDraft() {
   sessionStorage.removeItem(attemptsKey);
 }
 
+/**
+ * How many trips this tab still holds from the earlier version because they do not fit in the browser's
+ * storage next to the trips already there. They stay in the tab, untouched, until there is room.
+ */
+export function tripsWaitingInTab(): number {
+  try {
+    const fromTab = sessionStorage.getItem(guestKey);
+    return fromTab === null ? 0 : parseDraft(fromTab)?.length ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
 export function readGuest(): Trip[] {
   let raw: string | null;
   try {
-    adoptTabDraft();
     raw = localStorage.getItem(guestKey);
   } catch { return []; }
+  if (sessionStorage.getItem(guestKey) !== null) {
+    try {
+      adoptTabDraft();
+    } catch {
+      // The browser has no room for both drafts. Each stays where it is, and the next read tries again.
+    }
+    raw = localStorage.getItem(guestKey);
+  }
   if (raw === null) return [];
   // Keep the original until the traveler explicitly discards it.
   const trips = parseDraft(raw);
@@ -62,6 +82,20 @@ export function guestSnapshot(): string | null {
   }
 }
 
+/**
+ * Runs a save while no other tab of this browser is saving the draft, so one tab's check of the stored draft
+ * and the write that follows are never interleaved with another tab's.
+ */
+export function withGuestLock<T>(save: () => T | Promise<T>): Promise<T> {
+  const locks: LockManager | undefined = navigator.locks;
+  if (!locks) return Promise.resolve().then(save);
+  return locks.request('hayiti-guest-draft', async () => {
+    // A turn of the event loop lets this tab receive what the previous holder of the lock just saved.
+    await new Promise(resolve => setTimeout(resolve));
+    return save();
+  });
+}
+
 /** After sign-in, removes only the trips that were uploaded. One that another tab added or changed meanwhile stays. */
 export function retireGuest(uploaded: Trip[]) {
   const sent = new Set(uploaded.map(trip => JSON.stringify(trip)));
@@ -70,19 +104,23 @@ export function retireGuest(uploaded: Trip[]) {
 
 const requestKey = 'hayiti-guest-merge-requested';
 /**
- * Choosing Sign in from the tab that shows the draft is the traveler's request to keep it in their account.
- * A browser that blocks tab storage has no such request, and the traveler is asked after sign-in instead.
+ * Choosing Sign in from the tab that shows the draft is the traveler's request to keep that draft in their
+ * account. The request records the draft as it was at that moment, so trips added afterwards are not covered.
+ * A browser that blocks or cannot fit the record has no request, and the traveler is asked after sign-in instead.
  */
 export function requestGuestMerge(requested: boolean) {
   try {
-    if (requested) sessionStorage.setItem(requestKey, '1');
-    else sessionStorage.removeItem(requestKey);
+    sessionStorage.removeItem(requestKey);
+    const draft = requested ? localStorage.getItem(guestKey) : null;
+    if (draft !== null) sessionStorage.setItem(requestKey, draft);
   } catch { /* No request is recorded. */ }
 }
 
+/** Whether the traveler asked, by choosing Sign in, to keep exactly the draft that is stored now. */
 export function guestMergeRequested() {
   try {
-    return sessionStorage.getItem(requestKey) === '1';
+    const requested = sessionStorage.getItem(requestKey);
+    return requested !== null && requested === localStorage.getItem(guestKey);
   } catch {
     return false;
   }
@@ -94,8 +132,11 @@ export function discardGuest() {
 }
 
 export function writeGuest(trips: Trip[]) {
+  const covered = guestMergeRequested();
   if (trips.length) localStorage.setItem(guestKey, JSON.stringify({ trips }));
   else discardGuest();
+  // The tab that asked to keep the draft in an account goes on asking as the traveler edits the draft there.
+  if (covered) requestGuestMerge(true);
 }
 
 // Test the extra space the normalized backup needs without replacing the live draft.

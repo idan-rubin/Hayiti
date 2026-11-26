@@ -9,7 +9,7 @@ import { routeStops, indexEdges, offRoute, suggest, walkingStats } from '../doma
 import { createDateReel } from './date-reel.ts';
 import { cleanTrip, cleanStop, mergeStops, combineEvidence, journalCharacterLimit } from '../domain/core.ts';
 import { importCsv, importIcs, pastedStop } from '../domain/importers.ts';
-import { checkGuestBackup, discardGuest, guestKey, guestMergeRequested, requestGuestMerge } from './guest-draft.ts';
+import { checkGuestBackup, discardGuest, guestKey, guestMergeRequested, requestGuestMerge, tripsWaitingInTab } from './guest-draft.ts';
 import { JournalSession, localToday } from './journal-session.ts';
 import { preparePhoto } from './photos.ts';
 import { ask, clearError, showError } from './confirm.ts';
@@ -599,6 +599,11 @@ async function load(afterConflict = false, quiet = false) {
         : result.trips === 1
           ? ui('The trip you started before signing in is now in your journal.', 'הטיול שהתחלת לפני הכניסה נוסף ליומן האישי.')
           : ui('The trips you started before signing in are now in your journal.', 'הטיולים שהתחלת לפני הכניסה נוספו ליומן האישי.'));
+  }
+  // Trips from the earlier version that do not fit next to the ones stored in this browser stay in the tab.
+  if (!portable && !unreadable && tripsWaitingInTab()) {
+    msg(() => ui('This tab still holds trips from before an update, and this browser has no room to store them with your other trips. Keep this tab open. Free space by backing up and deleting a trip or its photos, or sign in, then reload this tab.',
+      'בלשונית הזאת עדיין שמורים טיולים מלפני עדכון, ואין בדפדפן מקום לשמור אותם לצד הטיולים האחרים. השאירו את הלשונית פתוחה. אפשר לפנות מקום על ידי גיבוי ומחיקה של טיול או של תמונות, או להיכנס לחשבון, ואז לטעון מחדש את הלשונית.'), 'warning');
   }
   return result.kind;
 }

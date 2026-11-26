@@ -1372,3 +1372,109 @@ await test('a signed-in journal opens in a browser that blocks storage', async (
     await browser.close();
   }
 });
+
+await test('two guest tabs that save at the same moment both keep their trip', async () => {
+  const browser = await chromium.launch();
+  try {
+    const context = await browser.newContext();
+    const tabs = [await context.newPage(), await context.newPage()];
+    for (const page of tabs) {
+      await hostJournal(page, guestAPI);
+      await page.goto(origin + '/journal.html?lang=en');
+    }
+    const expected: string[] = [];
+    for (let round = 0; round < 6; round++) {
+      // Each tab must have seen the other's last save before the next pair of saves starts.
+      for (const page of tabs) await page.waitForFunction(count => document.querySelectorAll('#trips option').length === count, expected.length);
+      const titles = tabs.map((_, tab) => 'Round ' + round + ' tab ' + tab);
+      for (const [tab, page] of tabs.entries()) {
+        await page.locator('#newTrip').click();
+        await page.locator('#tripForm [name=title]').fill(titles[tab]);
+      }
+      // Both tabs press Save on the same clock tick.
+      const moment = Date.now() + 400;
+      await Promise.all(tabs.map(page => page.evaluate(at => new Promise<void>(resolve => setTimeout(() => {
+        document.querySelector<HTMLButtonElement>('#tripForm .primary')!.click();
+        resolve();
+      }, at - Date.now())), moment)));
+      for (const page of tabs) {
+        const settled = page.locator('#config:not([open]), #config .form-error');
+        await settled.first().waitFor({ state: 'attached' });
+        // The tab that saved second is told the journal changed, and saving again adds its trip.
+        if (await page.locator('#config').getAttribute('open') !== null) await page.locator('#tripForm .primary').click();
+        await page.locator('#config').waitFor({ state: 'hidden' });
+      }
+      expected.push(...titles);
+      assert.deepEqual(await storedTitles(tabs[0]), [...expected].sort());
+    }
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('trips from the earlier version that do not fit in the browser stay in their tab until there is room', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await hostJournal(page, guestAPI);
+    await page.goto(origin + '/journal.html?lang=en');
+    await createTrip(page, 'Already in the browser');
+    const stored = await page.evaluate(key => localStorage.getItem(key), draftKey);
+    const legacy = JSON.stringify({ trips: [{ id: 'old', title: 'Still in its tab', start: '2026-06-14', end: '2026-06-14', stops: [] }] });
+    await page.evaluate(({ key, draft }) => {
+      sessionStorage.setItem(key, draft);
+      // Fill the browser's storage so that the two drafts no longer fit together.
+      let filler = 'x'.repeat(4_000_000);
+      for (let size = filler.length; size >= 1; size = Math.floor(size / 2)) {
+        try {
+          localStorage.setItem('filler', filler + 'x'.repeat(size));
+          filler += 'x'.repeat(size);
+        } catch { /* The next, smaller step is tried. */ }
+      }
+    }, { key: draftKey, draft: legacy });
+
+    await page.reload();
+    await page.locator('#title').filter({ hasText: 'Already in the browser' }).waitFor();
+    await page.locator('#status[data-tone="warning"]').filter({ hasText: 'This tab still holds trips from before an update' }).waitFor();
+    assert.equal(await page.evaluate(key => localStorage.getItem(key), draftKey), stored);
+    assert.equal(await page.evaluate(key => sessionStorage.getItem(key), draftKey), legacy);
+
+    await page.evaluate(() => localStorage.removeItem('filler'));
+    await page.reload();
+    await page.locator('#trips option').filter({ hasText: 'Still in its tab' }).waitFor({ state: 'attached' });
+    assert.deepEqual(await storedTitles(page), ['Already in the browser', 'Still in its tab']);
+    assert.equal(await page.evaluate(key => sessionStorage.getItem(key), draftKey), null);
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('choosing Sign in covers the trips shown then, and a trip added afterwards is asked about', async () => {
+  const browser = await chromium.launch();
+  try {
+    const context = await browser.newContext();
+    const bucket = new MemoryBucket();
+    let signedIn = false,
+      writes = 0;
+    const page = await context.newPage(),
+      other = await context.newPage();
+    await hostBucket(page, bucket, () => signedIn, () => writes++);
+    await hostBucket(other, bucket, () => false);
+    await page.goto(origin + '/journal.html?lang=en');
+    await createTrip(page, 'Shown at sign-in');
+    await other.goto(origin + '/journal.html?lang=en');
+    await other.locator('#title').filter({ hasText: 'Shown at sign-in' }).waitFor();
+
+    await chooseSignIn(page);
+    await createTrip(other, 'Added during sign-in');
+    signedIn = true;
+    await page.reload();
+    await page.locator('#confirmText').filter({ hasText: 'Added during sign-in' }).waitFor();
+    assert.equal(writes, 0);
+    await page.locator('#confirmNo').click();
+    await page.locator('#status').filter({ hasText: 'left out of your journal' }).waitFor();
+    assert.deepEqual(await storedTitles(page), ['Added during sign-in', 'Shown at sign-in']);
+  } finally {
+    await browser.close();
+  }
+});

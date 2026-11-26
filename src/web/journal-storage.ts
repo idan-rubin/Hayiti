@@ -1,6 +1,6 @@
 import { cleanTrip, isRecord, type Journal, type Trip } from '../domain/core.ts';
 import { readPortable, writePortable } from './portable-storage.ts';
-import { guestSnapshot, readGuest, retireGuest, writeGuest } from './guest-draft.ts';
+import { guestSnapshot, readGuest, retireGuest, withGuestLock, writeGuest } from './guest-draft.ts';
 
 function readTrips(value: unknown): Trip[] {
   if (!isRecord(value) || !Array.isArray(value.trips)) throw Error('קריאת היומן נכשלה.');
@@ -50,6 +50,7 @@ export const journalStorage = {
   writeGuest,
   retireGuest,
   guestSnapshot,
+  withGuestLock,
 
   async readPortable(): Promise<Trip[] | null> {
     let raw: string | null;
