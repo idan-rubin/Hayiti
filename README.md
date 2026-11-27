@@ -1,6 +1,6 @@
 <h1><img src="docs/hayiti-logo.png" width="300" alt="hayiti"></h1>
 
-**Reverse-engineer your trip.**
+**Reverse engineer your trip™.**
 
 hayiti rebuilds where you went, one day at a time, from the traces you already leave behind: photos, ride receipts, card purchases, calendar events and saved places. An AI does the work. [ChatGPT](https://chatgpt.com/) reads the sources you choose, works out where you were and proposes each day's stops. You decide what to keep, and hayiti draws the days on a map.
 
