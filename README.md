@@ -14,7 +14,7 @@ An itinerary app keeps the plan. hayiti recovers what happened.
 
 ## The AI does the heavy lifting
 
-Be clear about where the work happens. Gathering the evidence, deciding which café a charge belongs to, stitching a day into order: all of that is the AI. hayiti never connects to your bank, your mailbox or your photo library.
+The ChatGPT app is the conductor. All the rest is tools. Gathering the evidence, deciding which café a charge belongs to, stitching a day into order: all of that is the AI. hayiti never connects to your bank, your mailbox or your photo library.
 
 This repository is the template around that work.
 
@@ -68,7 +68,7 @@ A photo knows the place but not what you did there. A charge knows what you boug
 
 > Map my trip to Tel Aviv last week. I stayed near the market. Use my photos, receipts and calendar to work out where I went each day.
 
-ChatGPT asks for anything missing, such as the dates or where you stayed. It cross-checks the sources you authorize, shows you the stops, and saves the ones you approve. Open the web app with the same account to see your days. ChatGPT reaches your photos through the photo library's app, or through the browser if needed, with your guidance. From a photo, hayiti saves only the capture time and location, not the picture. For purchases, ChatGPT can use its [Finances tab](https://chatgpt.com/finances/).
+ChatGPT asks for anything missing, such as the dates or where you stayed. It cross-checks the sources you authorize, shows you the stops, and saves the ones you approve. Open the web app with the same account to see your days. ChatGPT accesses your photos through its app, or through the browser if needed, with your guidance. From a photo, hayiti saves only the capture time and location, not the picture. For purchases, ChatGPT can use its [Finances tab](https://chatgpt.com/finances/).
 
 **Without an account.** In the web app or the portable journal, open **Sources and import**, copy the sync request into your conversation, and import the file ChatGPT returns under **Files**.
 
