@@ -1195,27 +1195,40 @@ await test('Sign out is offered only while the account journal is open', async (
 await test('the mobile trip toolbar keeps the overview beside the daily actions in either language', async () => {
   const browser = await chromium.launch();
   try {
-    const page = await browser.newPage({ viewport: { width: 375, height: 812 }, hasTouch: true });
+    const page = await browser.newPage({ hasTouch: true });
     const trip = { id: 'toolbar', title: 'Toolbar trip', start: '2026-06-14', end: '2026-06-16', stops: [] };
     await hostJournal(page, route => route.fulfill({ json: { trips: [trip], rev: 'r1' } }));
     for (const lang of ['he', 'en']) {
       await page.goto(origin + '/journal.html?lang=' + lang);
-      const overview = page.locator('.toolbar #wholeTrip');
+      const toolbar = page.locator('.toolbar');
+      const overview = toolbar.locator('#wholeTrip');
       await overview.waitFor();
-      const actions = page.locator('.toolbar button:visible');
-      const boxes = await actions.evaluateAll(buttons => buttons.map(button => {
-        const { top, left, right } = button.getBoundingClientRect();
-        return { top, left, right };
-      }));
-      assert.equal(boxes.length, 4);
-      assert.ok(boxes.every(box => box.top === boxes[0].top));
-      const end = boxes[boxes.length - 1];
-      assert.ok(lang === 'he' ? end.right <= boxes[2].left : end.left >= boxes[2].right);
-      assert.equal(await page.locator('.mapcard #mapStyle').isVisible(), true);
-      await overview.click();
-      assert.equal(await overview.getAttribute('aria-pressed'), 'true');
-      await overview.click();
-      assert.equal(await overview.getAttribute('aria-pressed'), 'false');
+      for (const width of [375, 393]) {
+        await page.setViewportSize({ width, height: 852 });
+        for (const pressed of [false, true]) {
+          assert.equal(await overview.getAttribute('aria-pressed'), String(pressed));
+          const boxes = await toolbar.locator('button:visible').evaluateAll(buttons => buttons.map(button => {
+            const { top, left, right } = button.getBoundingClientRect();
+            return { top, left, right };
+          }));
+          assert.equal(boxes.length, pressed ? 2 : 4);
+          assert.ok(boxes.every(box => box.top === boxes[0].top));
+          const bounds = await toolbar.boundingBox();
+          assert.ok(bounds);
+          const leadingSpace = lang === 'he' ? bounds.x + bounds.width - boxes[0].right : boxes[0].left - bounds.x;
+          assert.ok(Math.abs(leadingSpace) < 1);
+          const gap = await toolbar.evaluate(row => parseFloat(getComputedStyle(row).columnGap));
+          assert.ok(gap > 0 && gap <= 8);
+          for (let i = 1; i < boxes.length; i++) {
+            const previous = boxes[i - 1];
+            const next = boxes[i];
+            const space = lang === 'he' ? previous.left - next.right : next.left - previous.right;
+            assert.ok(Math.abs(space - gap) < 1, `${lang} ${width}px: expected ${gap}px between actions, got ${space}px`);
+          }
+          assert.equal(await page.locator('.mapcard #mapStyle').isVisible(), true);
+          await overview.click();
+        }
+      }
     }
   } finally {
     await browser.close();
