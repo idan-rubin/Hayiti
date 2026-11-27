@@ -132,6 +132,17 @@ await test('owner-only reads, dated source outcomes, and duplicate writes throug
     }
   })).json()).result.isError, true);
 });
+await test('chat returns actionable English validation errors', async () => {
+  const { tool, trip } = fixture();
+  const missing = await (await tool('get_day', { tripId: 'missing', date: trip.start })).json();
+  assert.equal(missing.result.isError, true);
+  assert.match(missing.result.content[0].text, /trip ID.*local date/);
+  const saved = await (await tool('add_trip_stops', { tripId: trip.id, ...trip, stops: [] })).json();
+  assert.ok(!saved.result.isError);
+  const badRoute = await (await tool('set_day_routes', { tripId: trip.id, date: '2000-01-01', routes: [] })).json();
+  assert.equal(badRoute.result.content[0].text, 'The route date falls outside this trip.');
+});
+
 await test('get_day follows route order and keeps off-route evidence', async () => {
   const { env, tool, trip } = fixture();
   const first = trip.stops[0];

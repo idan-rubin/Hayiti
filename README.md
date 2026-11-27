@@ -22,7 +22,7 @@ Ask ChatGPT to add saved places from a Google Maps list it can read. A **Google 
 
 Using the portable journal, or the web app without signing in? The sync request asks ChatGPT for a JSON file. Import that file into your trip under **Sources and import** → **Files**.
 
-Agents connecting over MCP receive the trip-building instructions during initialization. The [Map My Trip skill](skills/map-my-trip/SKILL.md) documents the complete workflow for other agent environments.
+Agents connecting over MCP receive the trip-building instructions during initialization. The [Map My Trip skill](skills/map-my-trip/SKILL.md) covers source checks, identifying the correct venue, resolving visit order, and saving the route. For an untimed purchase the agent checks branch-specific hours and the traveler's account before using distance to break a tie. A booking time or a bank posting can differ from the time of a visit.
 
 ## A Thursday in Tel Aviv
 
@@ -90,7 +90,9 @@ Provide a private R2-compatible `BUCKET` and your HTTPS `PUBLISHER_ORIGIN`. To e
 
 ChatGPT connects to the hosted journal using OAuth and the [MCP connection manifest](directory/mcp.json). With hayiti connected, try asking “Which trips are in my journal?” or “Where did I go on the first day of my trip?” ChatGPT reads trips saved to your hosted account. The portable journal keeps its own copy.
 
-ChatGPT uses `list_trips`, `get_day` and `add_trip_stops` to reconcile approved visits. After those stops are in order, `set_day_routes` saves estimated network paths for adjacent pairs on a specific day.
+ChatGPT uses `list_trips`, `get_day` and `add_trip_stops` to reconcile approved visits. The agent uses `set_day_routes` to save estimated paths for adjacent stops on a day. A proposed order can be saved with the paths in the same operation. Supply the previously read and proposed sequences of visit, pickup and drop-off IDs in `order: {previous, next}`. A mismatch prompts a fresh read before applying changes.
+
+If a traveler identifies a misclassified taxi ride, read `get_day` and pass its `revision` as `expectedRevision` to `set_day_routes`. Set `correctTaxi: true` on that exact leg and supply walking directions or an explicit gap. The former pickup and drop-off become ordinary visits. They can then be reordered independently. Portable route files accept the same correction flag on the leg.
 
 ### Generate directions with OSRM
 

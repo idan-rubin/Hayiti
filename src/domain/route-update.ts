@@ -41,12 +41,133 @@ function sameGeometry(a: Edge, b: Edge): boolean {
     a.line.every(([lat, lon], i) => lat === b.line[i][0] && lon === b.line[i][1]);
 }
 
-/** Replace supplied adjacent legs atomically. Other dates, stops and omitted legs retain their geometry. */
-export function setDayRoutes(trip: Trip, date: unknown, routes: unknown) {
-  if (!safeDate(date) || date < trip.start || date > trip.end) throw Error('תאריך המסלול מחוץ לטיול');
+export interface DayOrder {
+  previous: string[];
+  next: string[];
+}
+
+export function readDayOrder(raw: unknown): DayOrder {
+  function ids(value: unknown): value is string[] {
+    return Array.isArray(value) && value.length <= 6500 &&
+      value.every(id => typeof id === 'string' && id.trim() !== '') && new Set(value).size === value.length;
+  }
+  if (!isRecord(raw) || !ids(raw.previous) || !ids(raw.next)) throw Error('נדרשות שתי רשימות מלאות של מזהי תחנות ללא כפילויות.');
+  const before = new Set(raw.previous);
+  if (before.size !== raw.next.length || raw.next.some(id => !before.has(id))) throw Error('שתי הרשימות צריכות לכלול את אותן תחנות.');
+  return { previous: raw.previous, next: raw.next };
+}
+
+function sameOrder(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((id, index) => id === b[index]);
+}
+
+// Keep each slot's rank and its position in the backing list. Older trips can have equal ranks.
+function orderedTripStops(trip: Trip, today: Stop[], order: DayOrder): Stop[] {
+  const places = today.filter(stop => stop.kind !== 'origin');
+  const current = places.map(stop => stop.id);
+  if (sameOrder(current, order.next)) return trip.stops;
+  if (!sameOrder(current, order.previous)) throw Error('סדר התחנות השתנה. יש לקרוא שוב את נתוני היום.');
+  const byId = new Map(places.map(stop => [stop.id, stop]));
+  const replacements = new Map(places.map((slot, index) => {
+    const stop = byId.get(order.next[index])!;
+    return [slot.id, { ...stop, rank: slot.rank }];
+  }));
+  return trip.stops.map(stop => replacements.get(stop.id) ?? stop);
+}
+
+function nextStops(stops: Stop[]) {
+  return new Map(stops.slice(1).map((stop, index) => [stops[index].id, stop]));
+}
+
+// A real endpoint can move across midnight. Home uses the shared "base" ID, so its destination identifies the day.
+function taxiTouchesDay(edge: Edge, positions: Map<string, number>): boolean {
+  return edge.type === 'taxi' && (positions.has(edge.b) || (edge.a !== 'base' && positions.has(edge.a)));
+}
+
+/** A saved taxi edge identifies a ride even after manual edits separate its endpoints. */
+function checkTaxiOrder(stops: Stop[], before: Map<string, Stop>, after: Map<string, Stop>, rides: Edge[]) {
+  const pickups = new Set<string>(), dropoffs = new Set<string>(), matched = new Set<string>();
+
+  function keepRide(pickup: string, dropoff: string) {
+    pickups.add(pickup);
+    dropoffs.add(dropoff);
+    if (after.get(pickup)?.id === dropoff) matched.add(pickup);
+    else if (before.get(pickup)?.id === dropoff) throw Error('נקודת האיסוף של המונית צריכה להופיע מיד לפני נקודת ההורדה שלה.');
+  }
+
+  for (const ride of rides) keepRide(ride.a, ride.b);
+  // Older trips can identify a ride only by an adjacent pickup and drop-off.
+  for (const stop of stops) {
+    const next = before.get(stop.id);
+    if (stop.kind === 'pickup' && next?.kind === 'dropoff' && !pickups.has(stop.id) && !dropoffs.has(next.id)) {
+      keepRide(stop.id, next.id);
+    }
+  }
+  const loosePickups = stops.filter(s => s.kind === 'pickup' && !pickups.has(s.id));
+  const looseDropoffs = stops.filter(s => s.kind === 'dropoff' && !dropoffs.has(s.id));
+  for (const stop of stops) {
+    const next = after.get(stop.id);
+    if (stop.kind !== 'pickup' || next?.kind !== 'dropoff' || before.get(stop.id)?.id === next.id || matched.has(stop.id)) continue;
+    if (loosePickups.length !== 1 || loosePickups[0].id !== stop.id ||
+        looseDropoffs.length !== 1 || looseDropoffs[0].id !== next.id) {
+      throw Error('אין די מידע לשייך את נקודות האיסוף וההורדה לאותה נסיעת מונית.');
+    }
+  }
+}
+
+// Release only the exact ride the traveler disputed. All other rides still go through the ordinary guards.
+function prepareTaxiCorrections(trip: Trip, date: string, routes: unknown[]) {
+  const corrections = routes.filter(isRecord).filter(route => route.correctTaxi !== undefined && route.correctTaxi !== false);
+  let correctedRides = 0;
+  if (!corrections.length) return { trip, correctedRides };
+  const before = routeStops(trip, date);
+  const stops = new Map(before.map(stop => [stop.id, stop]));
+  const next = nextStops(before);
+  const rides = trip.edges.filter(edge => edge.type === 'taxi');
+  const removed = new Set<Edge>(), visits = new Set<Stop>();
+  for (const raw of corrections) {
+    if (raw.correctTaxi !== true || (raw.type !== 'walk' && raw.type !== 'gap')) {
+      throw Error('תיקון נסיעת מונית דורש מסלול הליכה או פער מפורש.');
+    }
+    const from = typeof raw.a === 'string' && stops.get(raw.a), to = typeof raw.b === 'string' && stops.get(raw.b);
+    if (!from || !to || from.id === to.id) throw Error('מזהי התחנות במקטע אינם תקינים');
+    const matches = trip.edges.filter(edge => edge.a === from.id && edge.b === to.id);
+    const wasTaxi = matches.some(edge => edge.type === 'taxi');
+    const legacyPair = from.kind === 'pickup' && to.kind === 'dropoff' && next.get(from.id)?.id === to.id;
+    if (!wasTaxi && !legacyPair) {
+      const current = matches.at(-1);
+      if (current && sameGeometry(current, readRoute(raw, from, to))) continue;
+      throw Error('המקטע שנבחר אינו נסיעת המונית שנקראה. יש לבדוק שוב את נתוני היום.');
+    }
+    if (rides.some(edge => (from.kind === 'pickup' && edge.a === from.id && edge.b !== to.id) ||
+        (to.kind === 'dropoff' && edge.b === to.id && edge.a !== from.id))) {
+      throw Error('אין די מידע לשייך את נקודות האיסוף וההורדה לאותה נסיעת מונית.');
+    }
+    correctedRides++;
+    for (const edge of matches) removed.add(edge);
+    if (from.kind === 'pickup') visits.add(from);
+    if (to.kind === 'dropoff') visits.add(to);
+  }
+  if (!correctedRides) return { trip, correctedRides };
+  const stopsAfter = visits.size ? trip.stops.map(stop => visits.has(stop) ? { ...stop, kind: 'visit' as const } : stop) : trip.stops;
+  return { trip: { ...trip, stops: stopsAfter, edges: trip.edges.filter(edge => !removed.has(edge)) }, correctedRides };
+}
+
+/** Write an agent-supplied order and routes together after checking them against the stored day. */
+export function setDayRoutes(target: Trip, date: unknown, routes: unknown, order?: unknown) {
+  if (!safeDate(date) || date < target.start || date > target.end) throw Error('תאריך המסלול מחוץ לטיול');
   if (!Array.isArray(routes) || routes.length > 200) throw Error('ניתן לייבא עד 200 מקטעים ביום');
-  const stops = routeStops(trip, date);
+  const { trip, correctedRides } = prepareTaxiCorrections(target, date, routes);
+  const before = routeStops(trip, date);
+  const ordered = order === undefined ? trip.stops : orderedTripStops(trip, before, readDayOrder(order));
+  const reordered = ordered !== trip.stops;
+  const stops = reordered ? routeStops({ ...trip, stops: ordered }, date) : before;
+  const after = nextStops(stops);
+  const oldNext = nextStops(before);
   const positions = new Map(stops.map((stop, index) => [stop.id, index]));
+  if (reordered) {
+    checkTaxiOrder(stops, oldNext, after, trip.edges.filter(edge => taxiTouchesDay(edge, positions)));
+  }
   const replacements = new Map<string, Edge>();
   for (const raw of routes) {
     if (!isRecord(raw) || typeof raw.a !== 'string' || typeof raw.b !== 'string') throw Error('מזהי התחנות במקטע אינם תקינים');
@@ -56,11 +177,20 @@ export function setDayRoutes(trip: Trip, date: unknown, routes: unknown) {
     replacements.set(raw.a, readRoute(raw, stops[start], stops[start + 1]));
   }
 
+  const taxiOrigins = new Map([...replacements.values()].filter(edge => edge.type === 'taxi').map(edge => [edge.b, edge.a]));
   const edges: Edge[] = [];
   const seen = new Set<string>();
   const unchangedKeys = new Set<string>();
   for (const old of trip.edges) {
     const replacement = replacements.get(old.a);
+    if (taxiTouchesDay(old, positions)) {
+      const origin = taxiOrigins.get(old.b);
+      if ((replacement?.b === old.b && replacement.type !== 'taxi') ||
+          (replacement?.type === 'taxi' && replacement.b !== old.b) || (origin !== undefined && origin !== old.a)) {
+        throw Error('יש לשמור על נקודות המוצא והיעד של נסיעת המונית ועל סוג הנסיעה.');
+      }
+    }
+    if (reordered && positions.has(old.a) && positions.has(old.b) && old.type !== 'taxi' && after.get(old.a)?.id !== old.b) continue;
     if (replacement?.b !== old.b) {
       edges.push(old);
     } else if (seen.has(old.a)) {
@@ -76,25 +206,28 @@ export function setDayRoutes(trip: Trip, date: unknown, routes: unknown) {
   const unchanged = unchangedKeys.size;
   if (edges.length > 8000) throw Error('מספר המקטעים גדול מדי ליומן');
   const updated = routes.length - unchanged;
-  if (updated) trip.edges = edges;
-  return { updated, unchanged };
+  if (updated || reordered) target.edges = edges;
+  if (reordered || trip.stops !== target.stops) target.stops = ordered;
+  return { updated, unchanged, ...(reordered ? { reordered: true } : {}), ...(correctedRides ? { correctedRides } : {}) };
 }
 
-/** Prepare a whole file before replacing any of the current journal's edges. */
+/** Preview every day before committing any stop order or geometry from a file. */
 export function prepareRouteImport(trip: Trip, file: Record<string, unknown>) {
   if (file.tripId !== trip.id) throw Error('קובץ המסלולים שייך לטיול אחר');
   if (!Array.isArray(file.days) || file.days.length === 0 || file.days.length > 731) throw Error('רשימת ימי המסלול אינה תקינה');
   const draft = { ...trip };
   const dates = new Set<string>();
-  let updated = 0, unchanged = 0;
+  let updated = 0, unchanged = 0, reorderedDays = 0, correctedRides = 0;
   for (const day of file.days) {
     if (!isRecord(day) || !safeDate(day.date) || dates.has(day.date)) throw Error('ימי המסלול חייבים להיות תקינים וייחודיים');
     dates.add(day.date);
-    const counts = setDayRoutes(draft, day.date, day.routes);
+    const counts = setDayRoutes(draft, day.date, day.routes, day.order);
+    if (counts.reordered) reorderedDays++;
+    correctedRides += counts.correctedRides ?? 0;
     updated += counts.updated;
     unchanged += counts.unchanged;
   }
-  return { edges: draft.edges, updated, unchanged };
+  return { stops: draft.stops, edges: draft.edges, updated, unchanged, reorderedDays, correctedRides };
 }
 
 function adjacentByDestination(trip: Trip) {

@@ -32,7 +32,8 @@ await test('route adapter defaults to walking, reuses equivalent explicit walks,
   const leg = { a: 'a', b: 'b', from: [51, 4], to: [51.001, 4.001] };
   async function run(drivePath: string) {
     const days = [{ date: '2026-07-01', legs: [leg, { ...leg, a: 'b', b: 'c', type: 'taxi' }] },
-      { date: '2026-07-02', legs: [{ ...leg, a: 'd', b: 'e', type: 'walk' }] }];
+      { date: '2026-07-02', legs: [{ ...leg, a: 'd', b: 'e', type: 'walk' }] },
+      { date: '2026-07-03', order: { previous: ['x', 'y'], next: ['y', 'x'] }, legs: [] }];
     const child = spawn(process.execPath, ['scripts/route-trip.ts'], {
       env: { ...process.env, HAYITI_WALK_ROUTE_URL: root + '/foot', HAYITI_DRIVE_ROUTE_URL: root + drivePath }
     });
@@ -46,7 +47,10 @@ await test('route adapter defaults to walking, reuses equivalent explicit walks,
     const pkg = JSON.parse(out);
     assert.equal(pkg.format, 'hayiti-routes/1');
     assert.equal(pkg.tripId, 'test-trip');
-    assert.equal(pkg.days.length, 2);
+    assert.equal(pkg.days.length, 3);
+    assert.deepEqual(pkg.days[2], {
+      date: '2026-07-03', order: { previous: ['x', 'y'], next: ['y', 'x'] }, routes: []
+    });
     assert.equal(pkg.days[0].routes.length, 1);
     assert.equal(pkg.days[0].routes[0].type, 'walk');
     assert.deepEqual(pkg.days[1].routes[0], {
