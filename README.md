@@ -14,6 +14,8 @@ With hayiti connected, start in chat. For example:
 
 ChatGPT can ask for missing dates or a home base, then cross-check the sources you authorize. A Gett receipt can put a pickup and drop-off on the map where a card charge alone only shows a fare. A photo you share can help identify a place when its location is known. Only the local capture time and GPS coordinates are needed. On each day, photo locations within 100 metres of a saved photo pin share that pin. The earliest known capture supplies the displayed pin. The grouping radius stays fixed, so a walk across several blocks can still add new stops.
 
+Every numbered stop has a map pin. When a receipt omits the branch, the purchase stays under **More about this day** with the reason and an **Add address** action. This panel starts collapsed when the day has numbered stops, and opens automatically when it only has additional entries. Once the location is pinned, the same purchase joins the route. You can choose a general place, such as a market, and use an approximate pin on the shared map. The share keeps your chosen place name and omits its street address.
+
 Review the suggested stops in chat and tell ChatGPT which to save. Open the journal with the same account to see your daily routes, change the home base, edit stops or share a read-only map. To add evidence later, use **Sources and import** in that trip.
 
 Each trip opens on a day. Choose **Whole trip** to see all its days on one map. Each day's route is drawn separately. Choose streets, satellite imagery or a topographic map in either view.
@@ -50,7 +52,7 @@ On a phone, choose **Stops** to see the day’s visits in order.
 
 ## How it finds a route
 
-- **Imports.** Create or select a trip before importing transactions (`.csv`), calendar events (`.ics`) or email (`.eml`). A transaction CSV needs a date and merchant name. A trip backup (`.json`) can open a trip in an empty journal. You can also place a pin by hand.
+- **Imports.** Create or select a trip before importing transactions (`.csv`), calendar events (`.ics`) or email (`.eml`). Include a transaction date. A payment channel such as `in store` or `online` identifies the type of purchase even when the merchant name is missing. A trip backup (`.json`) can open a trip in an empty journal. You can also place a pin by hand.
 - **Matching.** hayiti checks the day and source reference before adding a stop. Independent records with matching places, compatible times and compatible addresses can corroborate one visit. Ambiguous matches stay separate for review.
 - **Order and distance.** Date, time, ordering rules and location inform the suggested order. Each adjacent pair can carry its own route. Walking is the estimate for each pair unless evidence identifies a different mode. This includes longer walks and crossings between cities. A taxi ride matched to the pair follows the driving network. When directions are unavailable, the journal keeps its existing route or estimated connector. Walking totals use recorded walking segments.
 - **Source status.** Each requested source has a dated status. Finances distinguishes a disconnected source, missing credit or debit accounts, zero transactions and purchases without a mappable place. Gmail and Calendar can contribute independently.
@@ -90,7 +92,7 @@ Provide a private R2-compatible `BUCKET` and your HTTPS `PUBLISHER_ORIGIN`. To e
 
 ChatGPT connects to the hosted journal using OAuth and the [MCP connection manifest](directory/mcp.json). With hayiti connected, try asking “Which trips are in my journal?” or “Where did I go on the first day of my trip?” ChatGPT reads trips saved to your hosted account. The portable journal keeps its own copy.
 
-ChatGPT uses `list_trips`, `get_day` and `add_trip_stops` to reconcile approved visits. The agent uses `set_day_routes` to save estimated paths for adjacent stops on a day. A proposed order can be saved with the paths in the same operation. Supply the previously read and proposed sequences of visit, pickup and drop-off IDs in `order: {previous, next}`. A mismatch prompts a fresh read before applying changes.
+ChatGPT uses `list_trips`, `get_day` and `add_trip_stops` to reconcile approved visits. When the traveler supplies a missing branch or chooses a general place label, `correct_stop_location` updates the existing stop using the revision from `get_day`. The agent uses `set_day_routes` to save estimated paths for adjacent stops on a day. A proposed order can be saved with the paths in the same operation. Supply the previously read and proposed sequences of mapped visit, pickup and drop-off IDs in `order: {previous, next}`. A mismatch prompts a fresh read before applying changes.
 
 If a traveler identifies a misclassified taxi ride, read `get_day` and pass its `revision` as `expectedRevision` to `set_day_routes`. Set `correctTaxi: true` on that exact leg and supply walking directions or an explicit gap. The former pickup and drop-off become ordinary visits. They can then be reordered independently. Portable route files accept the same correction flag on the leg.
 

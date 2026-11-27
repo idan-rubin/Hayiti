@@ -182,6 +182,21 @@ await test('a new order retains the taxi ride and other days, dropping precisely
   assert.deepEqual(trip, saved);
 });
 
+await test('mapped orders accept legacy pinless placeholders without moving them or splitting known geometry', () => {
+  const trip = example();
+  const purchase = { ...trip.stops[0], id: 'unlocated', rank: 3.5, xy: null };
+  trip.stops.push(purchase);
+  setDayRoutes(trip, date, [cab]);
+  assert.deepEqual(routeStops(trip, date).map(stop => stop.id), ['base', ...order.previous]);
+  assert.throws(() => setDayRoutes(trip, date, [{ ...cab, b: purchase.id }]));
+  const legacy = { previous: ['cafe', 'pickup', purchase.id, 'dropoff'], next: ['pickup', 'dropoff', purchase.id, 'cafe'] };
+  setDayRoutes(trip, date, [], legacy);
+  assert.deepEqual(routeStops(trip, date).map(stop => stop.id), ['base', ...order.next]);
+  assert.deepEqual(trip.stops.find(stop => stop.id === purchase.id), purchase);
+  assert.deepEqual(trip.edges.map(({ a, b }) => [a, b]), [['pickup', 'dropoff']]);
+  assert.deepEqual(setDayRoutes(trip, date, [], legacy), { updated: 0, unchanged: 0 });
+});
+
 await test('each order must match a complete day snapshot and keep adjacent taxi endpoints together', () => {
   const trip = example();
   const origin = { ...trip.stops[0], id: 'hotel', kind: 'origin' as const, rank: 0 };

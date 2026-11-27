@@ -5,11 +5,12 @@ import type { ImportResult } from '../domain/importers.ts';
 import { language, locale, bindLanguageControl } from './language.ts';
 import { displayTripTitle, messages, t, quantity } from './journal-messages.ts';
 import { enableSharing } from './share-ui.ts';
-import { routeStops, indexEdges, offRoute, suggest, walkingStats } from '../domain/daily-route.ts';
+import { routeStops, dayDetails, isMappedStop, indexEdges, suggest, walkingStats } from '../domain/daily-route.ts';
 import { createDateReel } from './date-reel.ts';
-import { cleanTrip, cleanStop, mergeGooglePins, removeGooglePin, restoreGooglePin, mergeStops, combineEvidence, journalCharacterLimit } from '../domain/core.ts';
+import { cleanTrip, cleanStop, mergeGooglePins, removeGooglePin, restoreGooglePin, mergeStops, combineEvidence, journalCharacterLimit, unidentifiedMerchant } from '../domain/core.ts';
 import { importEvidencePackage, prepareTripBackup, importCsv, importIcs, pastedStop } from '../domain/importers.ts';
 import { checkGuestBackup, discardGuest, guestKey, guestMergeRequested, requestGuestMerge, tripsWaitingInTab } from './guest-draft.ts';
+import { prepareApproximateLocation, updateRoutesForStopEdit } from '../domain/stop-location.ts';
 import { prepareRouteImport } from '../domain/route-update.ts';
 import { JournalSession, localToday } from './journal-session.ts';
 import { preparePhoto } from './photos.ts';
@@ -314,8 +315,9 @@ function render() {
   for (const id of ['add', 'export', 'settings', 'organize'] as const) $(id).disabled = !trip;
   const days = trip ? dateRange(trip) : [];
   setDates(days, day, days.map(date => {
-    const count = trip?.stops.filter(stop => stop.date === date && stop.kind !== 'origin' && !offRoute(stop)).length ?? 0;
-    return count ? stopCount(count) : '';
+    const count = trip?.stops.filter(stop => stop.date === date && stop.kind !== 'origin' && isMappedStop(stop)).length ?? 0;
+    const details = dayDetails(trip, date).length;
+    return [count ? stopCount(count) : '', details ? quantity(details, details === 1 ? ' רשומה' : ' רשומות', 'entry', 'entries') : ''].filter(Boolean).join(' · ');
   }));
   document.body.classList.toggle('no-trip', !trip);
   $('welcome').hidden = !!trip || !!sharedRoute || !journalReady;
@@ -354,7 +356,7 @@ function showDailyStats(stats: ReturnType<typeof walkingStats>) {
   if (excluded) coverage.push(excluded === 1 ? t('מקטע אחד הושמט בגלל מידע חסר על ההליכה') : excluded + t(' מקטעים הושמטו בגלל מידע חסר על ההליכה'));
   $('walkCoverage').textContent = coverage.join(' · ') || t('נדרשים לפחות שני מקומות ומקטע הליכה ביניהם כדי לחשב מרחק.');
   const leg = stats.longest;
-  $('longestWalk').textContent = stats.walkingLegs > 1 && leg ? t('מקטע ההליכה הארוך במסלול המשוער הוא מ') + leg.from + t(' ל') + leg.to + t(', כ־') + distanceLabel(leg.meters) + '.' : '';
+  $('longestWalk').textContent = stats.walkingLegs > 1 && leg ? t('מקטע ההליכה הארוך במסלול המשוער הוא מ') + displayStopName(leg.from) + t(' ל') + displayStopName(leg.to) + t(', כ־') + distanceLabel(leg.meters) + '.' : '';
 }
 function openMapDay(date: string) {
   overviewTripId = '';
@@ -369,18 +371,18 @@ $('wholeTrip').onclick = () => {
   endHint();
   renderSelection();
 };
+const displayStopName = (name: string) => name === unidentifiedMerchant ? ui('Purchase', 'קנייה') : name;
 function appendStopRow(s: Stop, i: number, list: Stop[], number: string) {
+  const name = displayStopName(s.name);
   const li = dom('li', undefined, 'stop');
   li.classList.toggle('activeStop', selected === s.id);
   rows.set(s.id, li);
-  if (s.xy) {
-    const locate = button(number, () => reveal(s.id, 'pin'));
-    locate.className = 'num';
-    locate.setAttribute('aria-label', ui('Show on map: ', 'הצגה במפה: ') + s.name);
-    li.append(locate);
-  } else li.append(dom('span', number, 'num'));
+  const locate = button(number, () => reveal(s.id, 'pin'));
+  locate.className = 'num';
+  locate.setAttribute('aria-label', ui('Show on map: ', 'הצגה במפה: ') + name);
+  li.append(locate);
   const col = dom('div');
-  const open = sharedRoute ? dom('strong', s.name) : button(s.name, () => {
+  const open = sharedRoute ? dom('strong', name) : button(name, () => {
     if (s.id === 'base') {
       openSettings(false);
       return;
@@ -389,7 +391,7 @@ function appendStopRow(s: Stop, i: number, list: Stop[], number: string) {
   });
   open.className = 'stopname';
   col.append(open);
-  const hints = [s.time, s.address, s.band, s.approx ? t('מיקום משוער') : '', s.xy ? '' : t('ללא סיכה')].filter(Boolean);
+  const hints = [s.time, s.address, s.band, s.approx ? t('מיקום משוער') : ''].filter(Boolean);
   col.append(dom('div', hints.join(' · '), 'meta'));
   const evidence = [...(s.sources || []).map(k => t(label[k])), s.count ? quantity(s.count, ' חיובים', 'charge', 'charges') : '', s.photos?.length ? quantity(s.photos.length, ' תמונות', 'photo', 'photos') : ''].filter(Boolean).join(' · ');
   if (evidence) col.append(dom('span', evidence, 'src'));
@@ -398,7 +400,7 @@ function appendStopRow(s: Stop, i: number, list: Stop[], number: string) {
   if (s.kind !== 'origin') {
     for (const [sign, delta] of [['↑', -1], ['↓', 1]] as const) {
       const b = button(sign, () => void move(s, delta));
-      b.setAttribute('aria-label', delta < 0 ? t('הקדמת ') + s.name : t('דחיית ') + s.name);
+      b.setAttribute('aria-label', delta < 0 ? t('הקדמת ') + name : t('דחיית ') + name);
       b.disabled = !list[i + delta] || list[i + delta].kind === 'origin';
       actions.append(b);
     }
@@ -407,10 +409,11 @@ function appendStopRow(s: Stop, i: number, list: Stop[], number: string) {
   $('stops').append(li);
 }
 function addStopMarker(s: Stop, xy: Point, number: string, overview: boolean) {
+  const name = displayStopName(s.name);
   const keys = (s.sources || []).filter(k => Object.hasOwn(types, k));
   const primary = keys[0];
   const badge = s.kind !== 'origin' && primary ? '<span class="pin-source" style="background:' + types[primary][1] + '">' + pinSymbol(primary) + '</span>' : '';
-  const description = [s.name, ...(overview ? [dateLabel(s.date)] : []), ...keys.map(k => k === 'card' ? ui('Transaction', 'עסקה') : t(label[k]))].join(' · ');
+  const description = [name, ...(overview ? [dateLabel(s.date)] : []), ...keys.map(k => k === 'card' ? ui('Transaction', 'עסקה') : t(label[k]))].join(' · ');
   const icon = L.divIcon({
     className: 'pin ' + (s.kind === 'origin' ? 'home ' : '') + (s.approx ? 'soft' : ''),
     html: s.kind === 'origin' ? '⌂' : number + badge,
@@ -424,7 +427,7 @@ function addStopMarker(s: Stop, xy: Point, number: string, overview: boolean) {
   }).addTo(overlay);
   mark.bindPopup(() => {
     const content = dom('div');
-    content.append(dom('strong', s.name), dom('div', [s.time, s.address].filter(Boolean).join(' · ')));
+    content.append(dom('strong', name), dom('div', [s.time, s.address].filter(Boolean).join(' · ')));
     if (keys.length) content.append(dom('div', keys.map(k => types[k][0] + ' ' + (k === 'card' ? ui('Transaction', 'עסקה') : t(label[k]))).join(' · '), 'popup-sources'));
     if (overview) content.append(button(dateLabel(s.date), () => openMapDay(s.date)));
     else if (!sharedRoute) content.append(button(ui('Edit details', 'עריכת הפרטים'), () => {
@@ -483,12 +486,13 @@ function draw() {
   const { trip, day } = session;
   const overview = !!trip && overviewTripId === trip.id;
   const edges = indexEdges(trip);
+  const details = !overview && !sharedRoute && trip ? dayDetails(trip, day) : [];
   const pins = (trip?.googlePins ?? []).filter(pin => overview || pin.date === day);
   const pinsPerDay = new Map<string, number>();
   for (const pin of pins) if (pin.date) pinsPerDay.set(pin.date, (pinsPerDay.get(pin.date) ?? 0) + 1);
 
   const days = overview
-    ? [...new Set([...trip.stops.filter(stop => !offRoute(stop)).map(stop => stop.date), ...pinsPerDay.keys()])].sort()
+    ? [...new Set([...trip.stops.filter(isMappedStop).map(stop => stop.date), ...pinsPerDay.keys()])].sort()
     : [day];
   const routes = days.map(date => {
     const stops = routeStops(trip, date, t('נקודת מוצא'));
@@ -507,7 +511,7 @@ function draw() {
   }
   // Empty days keep the rest of the trip in view.
   if (!visiblePoints.length && trip) {
-    for (const stop of trip.stops) if (stop.xy) visiblePoints.push(stop.xy);
+    for (const stop of trip.stops) if (isMappedStop(stop) && stop.xy) visiblePoints.push(stop.xy);
     if (trip.homeXY) visiblePoints.push(trip.homeXY);
   }
   const locate = projectMapPoints(visiblePoints);
@@ -567,16 +571,99 @@ function draw() {
   fitRoute();
   if (!$('stops').childElementCount && $('welcome').hidden) {
     const empty = overview ? ui('No days with stops yet.', 'עדיין אין ימים עם תחנות.') :
+      details.length ? ui('No stops with a map pin for this day.', 'אין תחנות עם סיכה ביום הזה.') :
       pins.length ? ui('No route stops for this day.', 'אין תחנות במסלול של היום הזה.') :
       trip ? t('עדיין אין תחנות ליום הזה.') : t('כאן יופיעו תחנות הטיול לפי יום.');
     $('stops').append(dom('li', empty, 'empty'));
   }
   $('dayNote').textContent = overview ? '' : trip?.dayNotes?.[day] || '';
   $('dayNote').hidden = !$('dayNote').textContent;
-  const other = overview ? [] : trip?.stops.filter(s => s.date === day && offRoute(s)) || [];
-  $('other').hidden = !other.length;
-  $('otherList').replaceChildren(...other.map(s => button(s.name + (s.kind === 'remote' ? t(' · מרחוק') : t(' · לבירור')), () => openStop(s))));
+  renderDayDetails(details);
 }
+
+function reviewExplanation(stop: Stop) {
+  if (stop.reviewReason) return stop.reviewReason;
+  if (stop.sources.length === 1 && stop.sources[0] === 'card') {
+    return ui('Charge recorded, in-person purchase unconfirmed', 'קיים חיוב, אך הרכישה במקום לא אושרה');
+  }
+  if (!stop.address && !stop.xy) {
+    if (stop.sources.includes('calendar')) return ui('No location was recorded for this calendar event.', 'לא תועד מיקום לאירוע שבלוח השנה.');
+    return ui('No location was recorded.', 'מיקום הביקור לא תועד.');
+  }
+  return ui('This entry was flagged for review without a recorded reason.', 'הרשומה סומנה לבירור בלי פירוט הסיבה.');
+}
+
+function missingLocationReason(stop: Stop) {
+  if (stop.address) return ui('Address has no map pin', 'הכתובת טרם סומנה במפה');
+  if (stop.sources.includes('card')) return ui('Purchase location missing', 'חסר מיקום לסיכה');
+  return ui('Visit address missing', 'כתובת הביקור חסרה');
+}
+function dayDetailRow(stop: Stop) {
+  const remote = stop.kind === 'remote';
+  const unlocated = !remote && stop.kind !== 'uncertain';
+  const label = displayStopName(stop.name);
+  // Older remote entries sometimes include a secondary note after a spaced bullet.
+  const parts = remote ? label.split(/\s+[·•]\s+/u) : [label];
+  const reason = remote ? parts.slice(1).join(' · ') || ui('No visit recorded', 'לא תועד ביקור במקום')
+    : unlocated ? missingLocationReason(stop) : reviewExplanation(stop);
+  const item = dom('li', undefined, 'detail-row');
+  const content = dom('div', undefined, 'detail-info');
+  content.append(dom('bdi', parts[0], 'detail-name'));
+  if (stop.time) content.append(dom('bdi', stop.time, 'detail-time'));
+  content.append(dom('bdi', reason, 'detail-reason'));
+  const actionLabel = unlocated
+    ? stop.address ? ui('Locate address', 'איתור הכתובת') : ui('Add address', 'הוספת כתובת')
+    : ui('Edit details', 'עריכת פרטים');
+  const action = button(actionLabel, () => {
+    openStop(stop);
+    if (unlocated && stop.address) $('findPlace').click();
+    else if (unlocated) ef.address.focus();
+  });
+  action.className = 'detail-action';
+  action.setAttribute('aria-label', actionLabel + ' · ' + parts[0]);
+  item.append(content, action);
+  return item;
+}
+function renderDayDetails(entries: Stop[]) {
+  const unlocated = entries.filter(s => s.kind !== 'uncertain' && s.kind !== 'remote');
+  const pending = entries.filter(s => s.kind === 'uncertain');
+  const remote = entries.filter(s => s.kind === 'remote');
+  const groups = [
+    [unlocated, $('unlocatedEntries'), $('unlocatedHeading'), $('unlocatedList'), ui('Places without a pin', 'מקומות ללא סיכה')],
+    [pending, $('reviewEntries'), $('reviewHeading'), $('reviewList'), ui('Visits to confirm', 'ביקורים לבירור')],
+    [remote, $('remoteEntries'), $('remoteHeading'), $('otherList'), ui('Remote activity', 'פעילות מרחוק')]
+  ] as const;
+  for (const [records, section, heading, list, label] of groups) {
+    section.hidden = !records.length;
+    heading.textContent = label + ' (' + records.length + ')';
+    list.replaceChildren(...records.map(dayDetailRow));
+  }
+  const details = $('other');
+  const currentDay = JSON.stringify([session.trip?.id, session.day]);
+  if (details.dataset.day !== currentDay) {
+    details.dataset.day = currentDay;
+    delete details.dataset.choice;
+  }
+  if (!details.dataset.choice) {
+    const mappedVisits = session.trip?.stops.some(stop => stop.date === session.day && stop.kind !== 'origin' && isMappedStop(stop));
+    details.open = !!entries.length && !mappedVisits;
+  }
+  details.hidden = !entries.length;
+  const title = t('מידע נוסף לאותו יום') + ' (' + entries.length + ')';
+  $('otherSummary').textContent = title;
+  $('reviewDay').hidden = !entries.length;
+  $('reviewDay').textContent = title;
+}
+$('otherSummary').onclick = () => {
+  const details = $('other');
+  details.dataset.choice = details.open ? 'closed' : 'open';
+};
+$('reviewDay').onclick = () => {
+  viewList(true);
+  $('other').dataset.choice = 'open';
+  $('other').open = true;
+  $('otherSummary').focus();
+};
 // Connects a stop's row with its pin: choosing one points at the other.
 function reveal(id: string, target: 'row' | 'pin') {
   selected = id;
@@ -870,7 +957,7 @@ $('organize').onclick = async () => {
       hint(() => ui('These stops are already in the suggested order.', 'התחנות כבר מסודרות לפי הסדר המוצע.'));
       return;
     }
-    if (await ask(t('לשמור את הסדר המוצע?\n') + proposed.map(s => s.name).join(language === 'he' ? ' ← ' : ' → '), ui('Save order', 'שמירת הסדר'))) await change(() => {
+    if (await ask(t('לשמור את הסדר המוצע?\n') + proposed.map(s => displayStopName(s.name)).join(language === 'he' ? ' ← ' : ' → '), ui('Save order', 'שמירת הסדר'))) await change(() => {
       if (!trip) return;
       proposed.forEach((s, i) => s.rank = i);
       delete trip.dayNotes[day];
@@ -892,9 +979,11 @@ const ef = {
   address: field(editForm, 'address', 'input'),
   time: field(editForm, 'time', 'input'),
   coords: field(editForm, 'coords', 'input'),
+  approx: field(editForm, 'approx', 'input'),
   source: field(editForm, 'source', 'select'),
   slot: field(editForm, 'slot', 'select'),
   kind: field(editForm, 'kind', 'select'),
+  reviewReason: field(editForm, 'reviewReason', 'input'),
   linkStop: field(editForm, 'linkStop', 'select'),
   notes: field(editForm, 'notes', 'textarea')
 };
@@ -1028,7 +1117,7 @@ function relatedStops() {
   select.replaceChildren(new Option(t('תחנה עצמאית'), ''));
   if (!trip) return;
   for (const s of trip.stops.filter(s => s.date === ef.date.value && s.id !== draftId && s.kind === 'visit').sort((a, b) => a.rank - b.rank)) {
-    select.add(new Option(s.name + (s.time ? ' · ' + s.time : ''), s.id));
+    select.add(new Option(displayStopName(s.name) + (s.time ? ' · ' + s.time : ''), s.id));
   }
 }
 async function addPhoto(file: File | undefined) {
@@ -1058,6 +1147,12 @@ async function addPhoto(file: File | undefined) {
 }
 $('photo').onchange = () => addPhoto($('photo').files?.[0]);
 ef.date.onchange = relatedStops;
+function syncNameField() {
+  const purchase = ef.source.value === 'card' && ['visit', 'uncertain', 'remote'].includes(ef.kind.value);
+  ef.name.required = !purchase;
+  ef.name.placeholder = purchase ? displayStopName(unidentifiedMerchant) : '';
+}
+ef.source.onchange = ef.kind.onchange = syncNameField;
 const primarySource = (sources: Source[]) => sources.find(source => source !== 'photo') ?? sources[0];
 function openStop(s: Partial<Stop> = {}) {
   const { trip, day } = session;
@@ -1068,7 +1163,7 @@ function openStop(s: Partial<Stop> = {}) {
   draftPhotos = [...(s.photos || [])];
   draftId = s.id || '';
   updatePhotos();
-  ef.name.value = s.name || '';
+  ef.name.value = s.name === unidentifiedMerchant ? '' : s.name || '';
   ef.date.value = s.date || day;
   ef.date.min = trip.start;
   ef.date.max = trip.end;
@@ -1077,7 +1172,10 @@ function openStop(s: Partial<Stop> = {}) {
   ef.source.value = primarySource(s.sources ?? []) ?? (s.id ? '' : 'manual');
   ef.slot.value = s.slot || '';
   ef.kind.value = s.kind || 'visit';
+  ef.reviewReason.value = s.reviewReason || '';
+  syncNameField();
   ef.coords.value = s.xy?.join(', ') || '';
+  ef.approx.checked = !!s.xy && s.approx === true;
   ef.notes.value = s.notes || '';
   $('georesults').replaceChildren();
   $('removeStop').hidden = !draftId;
@@ -1118,7 +1216,7 @@ $('editForm').onsubmit = async e => {
     fail(t('התמונה עדיין בעיבוד'));
     return;
   }
-  if (!await pinBeforeSave(stopPin, session.trip?.stops.find(x => x.id === draftId)?.address ?? '', session.trip)) return;
+  if (!ef.approx.checked && !await pinBeforeSave(stopPin, session.trip?.stops.find(x => x.id === draftId)?.address ?? '', session.trip)) return;
   try {
     const xy = points(ef.coords.value);
     const ok = await change(() => {
@@ -1148,18 +1246,21 @@ $('editForm').onsubmit = async e => {
         address: ef.address.value,
         time: ef.time.value,
         xy,
+        approx: xy !== null && ef.approx.checked,
         slot: ef.slot.value,
         kind: ef.kind.value,
+        reviewReason: ef.reviewReason.value,
         notes: ef.notes.value,
         sources: evidence,
         rank: old?.date === ef.date.value ? old.rank : 1 + Math.max(0, ...trip.stops.filter(s => s.date === ef.date.value).map(s => s.rank))
       });
+      prepareApproximateLocation(old, s);
       if (ef.linkStop.value) {
         const target = trip.stops.find(x => x.id === ef.linkStop.value && x.date === s.date);
         if (!target) throw Error(t('התחנה שנבחרה אינה זמינה'));
         combineEvidence(target, s);
         if (s.name !== target.name) {
-          const note = t('אירוע מקושר: ') + s.name;
+          const note = t('אירוע מקושר: ') + displayStopName(s.name);
           if (!target.notes.includes(note)) target.notes = [target.notes, note].filter(Boolean).join(' · ');
         }
         if (old) {
@@ -1168,14 +1269,13 @@ $('editForm').onsubmit = async e => {
           delete trip.dayNotes[old.date];
         }
       } else if (old) {
-        if (JSON.stringify(old.xy) !== JSON.stringify(s.xy) || old.date !== s.date) {
-          trip.edges = trip.edges.filter(edge => edge.a !== s.id && edge.b !== s.id);
-          delete trip.dayNotes[old.date];
-        }
+        updateRoutesForStopEdit(trip, old, s);
+        if (old.xy?.toString() !== s.xy?.toString() || old.date !== s.date) delete trip.dayNotes[old.date];
         Object.assign(old, s);
         // Assigning keeps what the edit left out. A capture time or anchor the edit dropped goes with it.
         if (!s.captureTime) delete old.captureTime;
         if (!s.photoAnchor) delete old.photoAnchor;
+        if (!s.reviewReason) delete old.reviewReason;
       } else {
         mergeStops(trip, [s]);
       }
@@ -1393,6 +1493,8 @@ $('copyPrompt').onclick = async () => {
   let prompt = t('שחזר את המסלול שלי מ־') + trip.start + t(' עד ') + trip.end + t(' לפי ') + checks + t('. הצלֵב מקומות ותאריכי אירועים, שמור בנפרד רכישות מרחוק וסמן אי־ודאות. השתמש בכללי הטיול שלי. באמצעות אפליקציית ״הייתי״ קרא תחילה list_trips ו-get_day והצג לי תחנות מוצעות לאישור. רק אחרי שאאשר, שמור את התחנות שבחרתי באמצעות add_trip_stops בטיול ') + trip.id + t('. העבר רק את פרטי המסלול הנחוצים, ללא מספרי חשבון, קודי כרטיס או גוף המייל. אם החיבור לאפליקציית ״הייתי״ אינו זמין, החזר קובץ JSON לייבוא במבנה {"format":"hayiti-stops/1","stops":[{"name":"שם","date":"YYYY-MM-DD","sources":["email"],"refs":["מזהה מקור יציב"]}]}.');
   if (portable || session.mode !== 'account') prompt = t('לפי ') + checks + t(' חשב את תחנות הטיול שלי מ־') + trip.start + t(' עד ') + trip.end + t('. החזר קובץ JSON במבנה {"format":"hayiti-stops/1","stops":[{"name":"שם","date":"YYYY-MM-DD","address":"","sources":["email"],"refs":["מזהה יציב"]}]}. לכל תחנה צרף רק מקור משלה (card/email/calendar/ticket/whatsapp) ומיקום מאומת במערך xy בסדר קו רוחב, קו אורך. הימנע מקודי כרטיס ומספרי חשבונות.');
   prompt += ui(' Report the actual outcome for each requested source over these dates. For Finances, check for linked credit or debit purchase accounts before searching transactions. Distinguish missing access, no accounts, syncing, incomplete searches, errors, zero transactions, and purchases without a place. Never infer disconnection from missing results.', ' יש לדווח מה נבדק בכל מקור ובאילו תאריכים. ב־Finances יש לבדוק תחילה אם קיים חשבון מקושר לרכישות באשראי או בדביט. יש להבחין בין מקור מנותק, חוסר בחשבונות, סנכרון, חיפוש חלקי, שגיאה, אפס עסקאות ורכישות ללא מקום מזוהה.');
+  if (requested.includes('finances')) prompt += ui(' Record confirmed in-person purchases as visits, even without a branch or merchant name. Use the approved public place label or omit the name. Leave unverified coordinates empty.',
+    ' רכישה שבוצעה במקום היא ביקור גם אם הסניף או שם העסק אינם ידועים. יש להשתמש בשם המקום שאישרתי לשיתוף או להשאיר את השם ריק. אם המיקום לא אומת, יש להשאיר את הקואורדינטות ריקות.');
   const outcomes = requested.map(source => source + ' (' + statesBySource[source].join(', ') + ')').join(', ');
   prompt += ui(' Include start, end, and sourceChecks in add_trip_stops or the import JSON, even when stops is empty. Report only sources you checked. Use these values for each source. ',
     ' יש לכלול start, end ו־sourceChecks בקריאה ל־add_trip_stops או בקובץ הייבוא, גם כאשר stops ריק. יש לדווח רק על מקורות שנבדקו. אלה הערכים המותרים לכל מקור. ') + outcomes + '.';

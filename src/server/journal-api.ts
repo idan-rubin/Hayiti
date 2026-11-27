@@ -2,6 +2,7 @@ import { journalErrors } from '../domain/journal-errors.ts';
 import { cleanTrip, cleanStop, isRecord, member, mergeGooglePins, mergeStops, point, reportSources, restoreGooglePin, safeDate, validOutcome, type Trip } from '../domain/core.ts';
 import { dayStops, indexEdges, routeStops, walkingStats } from '../domain/daily-route.ts';
 import { loadState, storeState, type Bucket } from './storage.ts';
+import { correctStopLocation } from '../domain/stop-location.ts';
 import { setDayRoutes } from '../domain/route-update.ts';
 import { dailyGooglePinPreviewLimit, tools } from './tools.ts';
 const json = (data: unknown, status = 200) => Response.json(data, {
@@ -61,6 +62,7 @@ async function callTool(bucket: Bucket, owner: string, name: unknown, args: Reco
     return {
       revision: journal.rev,
       stops,
+      routeStopIds: route.filter(stop => stop.kind !== 'origin').map(stop => stop.id),
       googlePins: pins.slice(0, dailyGooglePinPreviewLimit),
       googlePinCount: pins.length,
       home: trip.home,
@@ -74,6 +76,12 @@ async function callTool(bucket: Bucket, owner: string, name: unknown, args: Reco
       }),
       walking: walkingStats(route, edges)
     };
+  }
+  if (name === 'correct_stop_location') {
+    if (!trip) throw Error('טיול לא נמצא');
+    const updated = correctStopLocation(trip, args, journal.rev);
+    const revision = updated ? await storeState(bucket, owner, journal.trips, journal.rev) : journal.rev;
+    return { stopId: args.stopId, updated, revision };
   }
   if (name === 'set_day_routes') {
     if (!trip) throw Error('טיול לא נמצא');
@@ -179,7 +187,7 @@ export async function journalAPI(req: Request, bucket: Bucket, mode: 'web' | 'mc
             'Read get_day for affected dates before writing. Count Live Photo pairs once. Group photo-only locations within 100 metres of a fixed pin on the same local day, even across separate bursts. Use the earliest capture for the pin coordinates and include captureTime when available. Compare against existing stops. Preserve distinct venues and revisit times. Use stable opaque refs so retries are safe.',
             'Work out the order before drawing paths. Preserve stated corrections and before/after rules. The journal does not record which stops the traveler ordered by hand: treat a saved order as possibly theirs, show a proposed order and write it only after they approve. Distinguish a local purchase, photo, or ride time from a posting date or an unconfirmed reservation. For untimed venue visits, check opening hours for that branch, weekday and trip date, including holiday exceptions. Treat current hours as a clue for a historical date. Overlapping windows leave the order uncertain. Give the traveler’s recollection and timed evidence priority over proximity. Do not turn opening times into visit times.',
             'Infer the order in chat from trip evidence and traveler rules. Read get_day, keep confirmed taxi pairs together, and pass previous and next stop IDs in set_day_routes.order together with verified directions for the new adjacent pairs. Honor travel modes tied to a specific leg and use road directions for known taxi rides. A day-level fare alone does not identify a leg. Call set_day_routes with verified network geometry and omit unavailable directions or unsupported travel modes.',
-            'Save approved stops to the owned trip. Keep remote purchases and uncertain venues off the route. Re-read changed days to verify the result. After appending stops, use set_day_routes for approved changes to the order and check the stored result. Show what changed and open the private journal for review.'
+            'Save confirmed in-store purchases as visits even when the branch or merchant name is missing. Use the traveler’s chosen display label, or omit the name for a card purchase. For a market or neighborhood, use a representative approximate point. Leave xy empty for an unknown location. Such entries appear in More about this day and are excluded from numbered stops and distance. Keep remote purchases separate and explain the missing evidence for each record that still needs review. Re-read changed days to verify the result. After appending stops, use set_day_routes for approved changes to the order and check the stored result. Show what changed and open the private journal for review.'
           ].join(' '),
           capabilities: {
             tools: {}

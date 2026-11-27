@@ -4,6 +4,8 @@ import { test } from 'node:test';
 import { strFromU8, unzipSync } from 'fflate';
 import { chromium, type Page, type Route } from 'playwright-core';
 import { journalAPI } from '../../src/server/journal-api.ts';
+import { cleanTrip } from '../../src/domain/core.ts';
+import { loadState, storeState } from '../../src/server/storage.ts';
 import { MemoryBucket } from '../memory-bucket.ts';
 
 // An https origin keeps the page a secure context, as the hosted journal is.
@@ -11,6 +13,13 @@ const origin = 'https://hayiti.test';
 const types: Record<string, string> = {
   html: 'text/html', js: 'text/javascript', css: 'text/css', png: 'image/png', ico: 'image/x-icon', json: 'application/json'
 };
+
+async function showDayDetails(page: Page) {
+  await page.locator('#otherSummary').waitFor();
+  if (!await page.locator('#other').evaluate(element => (element as HTMLDetailsElement).open)) {
+    await page.locator('#otherSummary').click();
+  }
+}
 
 // Serves the built hosted journal from a fictional origin and lets each test answer the API calls.
 async function hostJournal(page: Page, api: (route: Route) => Promise<void> | void) {
@@ -338,7 +347,8 @@ await test('refreshing after signing in elsewhere adds the guest trip with its s
     await refreshJournal(page);
     await page.locator('#status').filter({ hasText: 'is now in your journal' }).waitFor();
     assert.deepEqual(saved.map(body => body.trips.map(trip => trip.stops.map(stop => stop.name))), [[['Ferry Terminal']]]);
-    await page.getByRole('button', { name: 'Ferry Terminal', exact: true }).waitFor();
+    await showDayDetails(page);
+    await page.locator('#unlocatedList').getByText('Ferry Terminal', { exact: true }).waitFor();
   } finally {
     await browser.close();
   }
@@ -636,7 +646,7 @@ await test('an import acknowledged after refresh closes the dialog and reports i
     await posted;
     await page.locator('[data-tab="connected"]').click();
     await page.locator('#reload').click();
-    await page.getByRole('button', { name: 'Cafe', exact: true, includeHidden: true }).waitFor({ state: 'attached' });
+    await page.locator('#unlocatedList').getByText('Cafe', { exact: true }).waitFor({ state: 'attached' });
     release();
     await page.locator('#sources').waitFor({ state: 'hidden', timeout: 4000 });
     assert.match(await page.locator('#status').innerText(), /Added: 1/);
@@ -863,7 +873,42 @@ await test('a places CSV uses Name for stops when the traveler chooses the date 
     const preview = page.locator('#preview');
     await preview.getByRole('button', { name: 'Month / day / year' }).click();
     await preview.locator('button').click();
-    await page.getByRole('button', { name: 'Beach', exact: true }).waitFor();
+    await page.locator('#sources').waitFor({ state: 'hidden' });
+    await showDayDetails(page);
+    await page.locator('#unlocatedList').getByText('Beach', { exact: true }).waitFor();
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('a bank CSV without map pins shows its named purchases immediately without adding route stops', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await hostJournal(page, route => route.fulfill({ status: 401 }));
+    await page.goto(origin + '/journal.html?lang=en');
+    await createTrip(page, 'Card purchases', '2026-06-14');
+    await page.locator('#import').click();
+    await page.locator('[data-tab="files"]').click();
+    await page.locator('#file').setInputFiles({ name: 'chase.csv', mimeType: 'text/csv', buffer: Buffer.from([
+      'Transaction Date,Post Date,Description,Amount',
+      '06/14/2026,06/15/2026,Riverside Cafe,-12.50',
+      '06/14/2026,06/15/2026,City Museum,-18.00',
+      '06/14/2026,06/15/2026,Market Hall,-9.25'
+    ].join('\n')) });
+    await page.locator('#preview button').click();
+    await page.locator('#sources').waitFor({ state: 'hidden' });
+    assert.equal(await page.locator('#other').evaluate(element => (element as HTMLDetailsElement).open), true);
+    assert.equal(await page.locator('#reviewList').isVisible(), true);
+    assert.deepEqual(await page.locator('#reviewList .detail-name').allTextContents(), ['Riverside Cafe', 'City Museum', 'Market Hall']);
+    assert.equal(await page.locator('#count').innerText(), '0 stops');
+    assert.equal(await page.locator('#stops li.stop').count(), 0);
+    assert.equal(await page.locator('#map .pin').count(), 0);
+    assert.match(await page.locator('#tripDate option:checked').textContent() ?? '', /3 entries/);
+    await page.locator('#otherSummary').click();
+    await page.locator('#languageSwitch').selectOption('he');
+    assert.equal(await page.locator('#other').evaluate(element => (element as HTMLDetailsElement).open), false);
+    assert.match(await page.locator('#tripDate option:checked').textContent() ?? '', /3 רשומות/);
   } finally {
     await browser.close();
   }
@@ -1013,8 +1058,10 @@ await test('saving an address without a pin finds the pin, and says so when it c
     await page.locator('#editForm .form-actions .primary').click();
     await page.locator('#edit').waitFor({ state: 'hidden' });
     assert.equal(asked.length, 2);
-    assert.equal(await page.locator('#stops .stopname').count(), 2);
+    assert.equal(await page.locator('#stops .stopname').count(), 1);
     assert.equal(await page.locator('.leaflet-marker-icon').count(), 1);
+    await showDayDetails(page);
+    await page.locator('#unlocatedList').getByText('Somewhere', { exact: true }).waitFor();
   } finally {
     await browser.close();
   }
@@ -1095,7 +1142,7 @@ await test('a form whose trip changed elsewhere says so before it saves over the
     await page.locator('#settings').click();
     release();
     await read;
-    await page.getByRole('button', { name: 'Added in ChatGPT', exact: true }).waitFor();
+    await page.locator('#unlocatedList').getByText('Added in ChatGPT', { exact: true }).waitFor({ state: 'attached' });
 
     await page.locator('#tripForm [name=title]').fill('Trip A renamed');
     await page.locator('#tripForm .primary').click();
@@ -1881,6 +1928,124 @@ await test('taxi dashes and the walking path are both visible on a shared street
         return visible.size === 2;
       }, undefined, { timeout: 5000 });
     }
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('an unlocated in-person purchase shows its address action in daily details in both languages', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    const date = '2026-06-14';
+    const trip = {
+      id: 'purchases', title: 'Purchases', start: date, end: date,
+      stops: [
+        { id: 'in-store', date, kind: 'visit', sources: ['card'] },
+        { id: 'online', name: 'Online order', date, kind: 'remote', sources: ['card'] }
+      ]
+    };
+    await hostJournal(page, route => route.fulfill({ json: { trips: [trip], rev: 'r1' } }));
+    for (const [lang, name] of [['he', 'קנייה'], ['en', 'Purchase']]) {
+      await page.goto(origin + '/journal.html?lang=' + lang);
+      await showDayDetails(page);
+      const row = page.locator('#unlocatedList .detail-row');
+      await row.getByText(name, { exact: true }).waitFor();
+      assert.equal(await row.count(), 1);
+      assert.equal(await page.locator('#stops li.stop').count(), 0);
+      assert.equal(await page.locator('#map .pin').count(), 0);
+      assert.match(await row.innerText(), lang === 'he' ? /חסר מיקום לסיכה/ : /Purchase location missing/);
+      await row.getByRole('button', { name: lang === 'he' ? 'הוספת כתובת · קנייה' : 'Add address · Purchase', exact: true }).click();
+      assert.equal(await page.locator('#editForm input[name=address]').evaluate(field => field === document.activeElement), true);
+      const label = page.locator('#editForm input[name=name]');
+      assert.equal(await label.inputValue(), '');
+      assert.equal(await label.getAttribute('placeholder'), name);
+      assert.equal(await label.getAttribute('required'), null);
+    }
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('approximating a hosted pin requires an area point and clears its street address', async () => {
+  const browser = await chromium.launch();
+  try {
+    for (const lang of ['en', 'he']) {
+      const page = await browser.newPage();
+      const date = '2026-06-14';
+      const trip = cleanTrip({
+        id: 'private-purchase', title: 'Private purchase', start: date, end: date,
+        stops: [
+          { id: 'shop', date, name: 'Canal Street Shop', address: '17 Canal Street', xy: [51.922, 4.481] },
+          { id: 'museum', date, name: 'Museum', xy: [51.924, 4.484], rank: 1 }
+        ],
+        edges: [{ a: 'shop', b: 'museum', type: 'walk', line: [[51.922, 4.481], [51.924, 4.484]], m: 350 }]
+      });
+      const bucket = new MemoryBucket();
+      const revision = await storeState(bucket, 'traveler', [trip], '');
+      await hostJournal(page, async route => {
+        const request = route.request();
+        const response = await journalAPI(new Request(request.url(), {
+          method: request.method(), headers: await request.allHeaders(), body: request.postData()
+        }), bucket, 'web', 'traveler');
+        await route.fulfill({ status: response.status, contentType: 'application/json', body: await response.text() });
+      });
+      await page.goto(origin + '/journal.html?lang=' + lang);
+      await page.getByRole('button', { name: 'Canal Street Shop', exact: true }).click();
+      await page.locator('#editForm input[name=approx]').check();
+      await page.locator('#editForm .primary').click();
+      await page.locator('#edit .form-error').filter({ hasText: lang === 'en' ? 'Choose a different point' : 'יש לבחור נקודה אחרת' }).waitFor();
+      assert.deepEqual(await loadState(bucket, 'traveler'), { trips: [trip], rev: revision });
+
+      await page.locator('#editForm input[name=coords]').fill('51.923, 4.482');
+      await page.locator('#editForm .primary').click();
+      await page.locator('#edit').waitFor({ state: 'hidden' });
+      const saved = await loadState(bucket, 'traveler');
+      assert.equal(saved.trips[0].stops[0].address, '');
+      assert.equal(saved.trips[0].stops[0].name, 'Canal Street Shop');
+      assert.equal(saved.trips[0].stops[0].approx, true);
+      assert.deepEqual(saved.trips[0].stops[0].xy, [51.923, 4.482]);
+      assert.deepEqual(saved.trips[0].edges, []);
+      await page.reload();
+      await page.getByRole('button', { name: 'Canal Street Shop', exact: true }).click();
+      assert.equal(await page.locator('#editForm input[name=address]').inputValue(), '');
+      assert.equal(await page.locator('#editForm input[name=approx]').isChecked(), true);
+      await page.close();
+    }
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('editing private notes on an already approximate hosted stop keeps its saved name and address', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    const date = '2026-06-14';
+    const trip = cleanTrip({
+      id: 'approximate-visit', title: 'Market day', start: date, end: date,
+      stops: [{ id: 'market', date, name: 'Carmel Market', address: 'Market neighborhood', xy: [32.068, 34.769], approx: true }]
+    });
+    const bucket = new MemoryBucket();
+    await storeState(bucket, 'traveler', [trip], '');
+    await hostJournal(page, async route => {
+      const request = route.request();
+      const response = await journalAPI(new Request(request.url(), {
+        method: request.method(), headers: await request.allHeaders(), body: request.postData()
+      }), bucket, 'web', 'traveler');
+      await route.fulfill({ status: response.status, contentType: 'application/json', body: await response.text() });
+    });
+    await page.goto(origin + '/journal.html?lang=en');
+    await page.getByRole('button', { name: 'Carmel Market', exact: true }).click();
+    await page.locator('#editForm textarea[name=notes]').fill('Lunch with friends');
+    await page.locator('#editForm .primary').click();
+    await page.locator('#edit').waitFor({ state: 'hidden' });
+    const saved = (await loadState(bucket, 'traveler')).trips[0].stops[0];
+    assert.equal(saved.name, 'Carmel Market');
+    assert.equal(saved.address, 'Market neighborhood');
+    assert.equal(saved.notes, 'Lunch with friends');
+    assert.deepEqual(saved.xy, trip.stops[0].xy);
+    assert.equal(saved.approx, true);
   } finally {
     await browser.close();
   }

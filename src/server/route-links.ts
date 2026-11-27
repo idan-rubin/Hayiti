@@ -14,7 +14,7 @@ type Action = {
   label: string;
   includeOrigin: boolean;
 };
-import { shareableTrip } from '../domain/share-format.ts';
+import { readSharedRoute, shareableTrip } from '../domain/share-format.ts';
 import { loadState } from './storage.ts';
 import { safeDate } from '../domain/core.ts';
 const namespacePattern = /^[a-f0-9]{64}$/;
@@ -126,14 +126,7 @@ async function view(request: Request, bucket: Bucket) {
   }
   const object = await bucket.get(key);
   if (!object?.customMetadata?.created) return missing();
-  return new Response(await object.text(), {
-    headers: {
-      'Content-Type': 'application/json; charset=utf-8',
-      'Cache-Control': 'private, no-store, max-age=0',
-      'X-Robots-Tag': 'noindex, nofollow',
-      'Referrer-Policy': 'no-referrer'
-    }
-  });
+  return response(readSharedRoute(JSON.parse(await object.text()), object.customMetadata.origin === 'yes'));
 }
 async function ownerAction(request: Request, env: Bindings, isPublisher: boolean, user: string | null) {
   if (!user) return bad('יש להיכנס עם ChatGPT כדי לנהל קישורים.', 401);
