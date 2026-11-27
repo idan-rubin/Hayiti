@@ -6,13 +6,15 @@ After a long trip, whole days blur together. A friend asks where you ate, and yo
 
 [Open the web app](https://hayiti-beta.cocoacoati256.chatgpt.site) · [Download the portable journal](https://hayiti-beta.cocoacoati256.chatgpt.site/Hayiti.zip) · [Read the story: “Hey Dot, Can You Map Where I Went?”](https://mrrubin.substack.com/p/hey-dot-can-you-map-where-i-went)
 
-## Rebuild a trip with ChatGPT Finances
+## Build a trip in ChatGPT
 
-1. Connect hayiti in ChatGPT. In the Finances tab, link the credit card or checking account you used for purchases on the trip.
-2. Open the hayiti web app and choose **Sign in with ChatGPT**. Select a trip or choose **New trip** and enter its dates.
-3. In **Sources and import**, open **Connected accounts**. **Finances transactions** is already selected. Select **Gmail** or **Google Calendar** too if you want ChatGPT to include receipts, reservations or events.
-4. Choose **Copy sync request**, then **Open ChatGPT**. Paste the request into a chat with hayiti connected. ChatGPT suggests stops for your trip dates. If a restaurant charge and an emailed receipt point to the same meal, they can describe a single stop. Uncertain matches stay separate for review.
-5. Tell ChatGPT which stops to save. The journal picks up the new stops when you return to its tab. Select a day to see its route.
+With hayiti connected, start in chat. For example:
+
+> Map my trip to Tel Aviv last week. I stayed near the market. Use my receipts and calendar to work out where I went each day.
+
+ChatGPT can ask for missing dates or a home base, then cross-check the sources you authorize. A Gett receipt can put a pickup and drop-off on the map where a card charge alone only shows a fare. A photo you share can help identify a place when its location is known. Sharing a photo is optional.
+
+Review the suggested stops in chat and tell ChatGPT which to save. Open the journal with the same account to see your daily routes, change the home base, edit stops or share a read-only map. To add evidence later, use **Sources and import** in that trip.
 
 Using the portable journal, or the web app without signing in? The sync request asks ChatGPT for a JSON file. Import that file into your trip under **Sources and import** → **Files**.
 
@@ -103,5 +105,3 @@ npm run test:browser
 Use a branch and open a pull request. Describe the user-visible behavior and add a regression test for a bug fix. Use fictional trips in issues, pull requests and fixtures.
 
 hayiti's source is licensed under [MIT](LICENSE). Leaflet, MapLibre GL JS and the MapLibre GL Leaflet layer retain their upstream licenses: [Leaflet](public/vendor/leaflet-LICENSE), [MapLibre GL JS](public/vendor/maplibre-gl-LICENSE.txt), [MapLibre GL Leaflet](public/vendor/maplibre-gl-leaflet-LICENSE.txt). The street map comes from [OpenFreeMap](https://openfreemap.org/) and uses OpenMapTiles and OpenStreetMap contributors’ data. See [security reporting](SECURITY.md).
-
-To map places from an iPhone photo library by trip date, see [Photo locations with Apple Shortcuts](docs/photo-shortcut.md).
