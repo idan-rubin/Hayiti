@@ -1,5 +1,5 @@
 import { type Trip, isRecord } from '../domain/core.ts';
-import { GuestConflict, discardUnreadableGuest, guestPersistence, readGuest, readGuestRecord, updateGuest } from './guest-storage.ts';
+import { GuestConflict, discardUnreadableGuest, guestKey, guestPersistence, readGuest, readGuestRecord, updateGuest } from './guest-storage.ts';
 import type { LoadedGuestDraft } from './guest-storage.ts';
 export { guestKey, readGuest, onGuestChange, UnreadableDraft, GuestConflict } from './guest-storage.ts';
 
@@ -50,15 +50,13 @@ export async function retireGuest(uploaded: Trip[]) {
   });
 }
 
-export function tripsWaitingInTab(): number {
+export function hasLegacyGuestTrips(source: 'local' | 'tab'): boolean {
   try {
-    const raw = sessionStorage.getItem('hayiti-unsigned-journal');
-    if (raw === null) return 0;
-    try {
-      const value: unknown = JSON.parse(raw);
-      return isRecord(value) && Array.isArray(value.trips) ? value.trips.length : 0;
-    } catch { return 0; }
-  } catch { return 0; }
+    const raw = (source === 'local' ? localStorage : sessionStorage).getItem(guestKey);
+    if (raw === null) return false;
+    const value: unknown = JSON.parse(raw);
+    return isRecord(value) && Array.isArray(value.trips) && value.trips.length > 0;
+  } catch { return false; }
 }
 
 export async function checkGuestBackup() {

@@ -15,12 +15,16 @@ export interface PortableRecord extends PortableDraft {
   schemaVersion: typeof journalSchemaVersion;
   imported: string[];
 }
+export interface LoadedPortableDraft extends PortableDraft {
+  recoveredTripIds?: ReadonlySet<string>;
+}
 export class PortableStorageUnavailable extends Error {
   constructor() { super('Browser storage is unavailable. Keep this file open and download a backup to keep your changes.'); }
 }
+export class PortableRecordMissing extends Error {}
 export class PortableConflict extends Error {
-  readonly draft: PortableDraft;
-  constructor(draft: PortableDraft) {
+  readonly draft: LoadedPortableDraft;
+  constructor(draft: LoadedPortableDraft) {
     super('The portable journal changed. Reload its latest version before saving again.');
     this.draft = draft;
   }
@@ -126,7 +130,7 @@ function blockLegacyReader(expected: string | null) {
 }
 
 // Old files know only the legacy key and record. Their writes are imports, never canonical saves.
-async function updatePortable<T>(operation: (record: PortableRecord) => { result: T; write?: boolean }): Promise<T> {
+async function updatePortable<T>(operation: (record: PortableRecord) => { result: T; write?: boolean }, recovery?: Trip[]): Promise<T> {
   const database = await openDatabase();
   try {
     for (let retry = 0; retry < 3; retry++) {
@@ -153,8 +157,14 @@ async function updatePortable<T>(operation: (record: PortableRecord) => { result
                   ? { schemaVersion: journalSchemaVersion, version: crypto.randomUUID(), trips: [], imported: [] }
                   : currentRecord(request.result);
                 if (localStorage.getItem(legacyKey) !== localRaw || (old.result ?? null) !== databaseRaw) throw new MigrationChanged();
-                if (request.result === undefined && (isUpgradeMarker(localRaw) || (localRaw === legacyDatabaseMarker && databaseRaw === null))) {
-                  throw Error('The saved portable journal is missing. Keep the original file and restore its backup.');
+                const missing = request.result === undefined && (isUpgradeMarker(localRaw) || (localRaw === legacyDatabaseMarker && databaseRaw === null));
+                if (missing && !recovery) throw new PortableRecordMissing();
+                if (recovery) {
+                  if (!missing) {
+                    if (request.result === undefined) throw new PortableRecordMissing();
+                    throw new PortableConflict(portableDraft(record));
+                  }
+                  record.trips = recovery.map(cleanTrip);
                 }
                 const migrated = migrate(record, sources);
                 const next = operation(record);
@@ -180,16 +190,28 @@ async function updatePortable<T>(operation: (record: PortableRecord) => { result
   } finally { database.close(); }
 }
 
-export function readPortable(): Promise<PortableDraft> {
-  return updatePortable(record => ({ result: { version: record.version, trips: record.trips } }));
+function portableDraft(record: PortableRecord): LoadedPortableDraft {
+  const receipts = new Set(record.imported);
+  const recoveredTripIds = new Set(record.trips.flatMap(({ id }) =>
+    id.startsWith('legacy-') && receipts.has('trip:' + id.slice('legacy-'.length)) ? [id] : []));
+  return { version: record.version, trips: record.trips, recoveredTripIds };
 }
-export async function writePortable(trips: Trip[], expectedVersion: string): Promise<PortableDraft> {
+
+export function readPortable(): Promise<LoadedPortableDraft> {
+  return updatePortable(record => ({ result: portableDraft(record) }));
+}
+export async function writePortable(trips: Trip[], expectedVersion: string): Promise<LoadedPortableDraft> {
   const result = await updatePortable(record => {
-    if (record.version !== expectedVersion) return { result: { conflict: true, draft: { version: record.version, trips: record.trips } } };
+    if (record.version !== expectedVersion) return { result: { conflict: true, draft: portableDraft(record) } };
     record.trips = trips.map(cleanTrip);
     record.version = crypto.randomUUID();
-    return { write: true, result: { conflict: false, draft: { version: record.version, trips: record.trips } } };
+    return { write: true, result: { conflict: false, draft: portableDraft(record) } };
   });
   if (result.conflict) throw new PortableConflict(result.draft);
   return result.draft;
+}
+
+export function recoverPortable(trips: Trip[]) {
+  if (!trips.length) throw Error('Choose a trip to recover.');
+  return updatePortable(record => ({ result: portableDraft(record) }), trips);
 }

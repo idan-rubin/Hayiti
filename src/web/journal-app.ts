@@ -9,7 +9,7 @@ import { routeStops, dayDetails, isMappedStop, indexEdges, suggest, walkingStats
 import { createDateReel } from './date-reel.ts';
 import { cleanTrip, cleanStop, mergeGooglePins, removeGooglePin, restoreGooglePin, mergeStops, combineEvidence, journalCharacterLimit, unidentifiedMerchant } from '../domain/core.ts';
 import { importEvidencePackage, prepareTripBackup, importCsv, importIcs, pastedStop } from '../domain/importers.ts';
-import { checkGuestBackup, discardGuest, onGuestChange, guestMergeRequested, requestGuestMerge, tripsWaitingInTab } from './guest-draft.ts';
+import { checkGuestBackup, discardGuest, onGuestChange, guestMergeRequested, requestGuestMerge, hasLegacyGuestTrips } from './guest-draft.ts';
 import { prepareApproximateLocation, updateRoutesForStopEdit } from '../domain/stop-location.ts';
 import { prepareRouteImport } from '../domain/route-update.ts';
 import { JournalSession, localToday } from './journal-session.ts';
@@ -305,10 +305,18 @@ function render() {
   const { trip, day } = session;
   if (trip?.id !== overviewTripId) overviewTripId = '';
   showConnections();
-  $('title').textContent = trip ? displayTripTitle(trip.title) : t('הטיולים שלי');
   $('range').textContent = trip ? rangeDate(trip.start) + t(' עד ') + rangeDate(trip.end) + (trip.home ? t(' · יציאה מ') + trip.home : '') : t('אפשר להתחיל מטיול חדש או לייבא טיול קיים.');
-  $('trips').replaceChildren(...session.trips.map(t => new Option(displayTripTitle(t.title), t.id)));
+  const copiesByTitle = new Map<string, number>();
+  $('trips').replaceChildren(...session.trips.map(item => {
+    const title = displayTripTitle(item.title);
+    if (!session.recoveredTripIds?.has(item.id)) return new Option(title, item.id);
+    const copy = (copiesByTitle.get(title) ?? 0) + 1;
+    copiesByTitle.set(title, copy);
+    const label = ui('Recovered copy', 'עותק משוחזר');
+    return new Option(title + ' (' + label + (copy > 1 ? ' ' + copy : '') + ')', item.id);
+  }));
   if (trip) $('trips').value = trip.id;
+  $('title').textContent = $('trips').selectedOptions[0]?.text ?? t('הטיולים שלי');
   $('trips').hidden = session.trips.length < 2;
   for (const id of ['add', 'export', 'settings', 'organize'] as const) $(id).disabled = !trip;
   const days = trip ? dateRange(trip) : [];
@@ -318,7 +326,7 @@ function render() {
     return [count ? stopCount(count) : '', details ? quantity(details, details === 1 ? ' רשומה' : ' רשומות', 'entry', 'entries') : ''].filter(Boolean).join(' · ');
   }));
   document.body.classList.toggle('no-trip', !trip);
-  $('welcome').hidden = !!trip || !!sharedRoute || !journalReady;
+  $('welcome').hidden = !!trip || !!sharedRoute || !journalReady || session.mode === 'portable-recovery';
   draw();
 }
 const stopCount = (count: number) => count === 1 ? t('תחנה אחת') : count + t(' תחנות');
@@ -679,16 +687,31 @@ function reveal(id: string, target: 'row' | 'pin') {
 }
 // Temporary memory edits need a backup before leaving this document.
 const tabOnly = () => session.mode === 'memory' || (session.mode === 'guest' && session.guestPersistence === 'memory');
-const saveTone = (): Tone => (tabOnly() || (session.mode === 'guest' && session.guestPersistence !== 'shared')) && session.trips.length ? 'warning' : '';
+const isolatedGuest = () => session.mode === 'guest' && session.guestPersistence !== 'shared';
+let earlierGuestDraft: 'local' | 'tab' | undefined;
+const saveTone = (): Tone => isolatedGuest() || (tabOnly() && session.trips.length) ? 'warning' : '';
 function noTimeCopy() {
-  if (session.mode === 'guest' && session.guestPersistence !== 'shared') {
-    return session.guestPersistence === 'tab'
-      ? ui('This temporary trip is saved only in this tab. Other saved drafts are unchanged. Back it up or sign in to keep it.',
-        'הטיול הזמני נשמר רק בלשונית הזאת. הטיוטות השמורות האחרות לא השתנו. גבו אותו או היכנסו לחשבון כדי לשמור אותו.')
-      : ui('This temporary trip is only in memory. Other saved drafts are unchanged. Back it up before reloading, closing this tab or signing in.',
-        'הטיול הזמני נשמר רק בזיכרון. הטיוטות השמורות האחרות לא השתנו. גבו אותו לפני רענון, סגירת הלשונית או כניסה לחשבון.');
+  if (isolatedGuest()) {
+    const temporary = session.guestPersistence === 'tab'
+      ? ui('Temporary trips are saved only in this tab. Back them up or sign in to keep them.',
+        'טיולים זמניים נשמרים רק בלשונית הזאת. גבו אותם או היכנסו לחשבון כדי לשמור אותם.')
+      : ui('Temporary trips are only in memory. Back them up before reloading, closing this tab or signing in.',
+        'טיולים זמניים נשמרים רק בזיכרון. גבו אותם לפני רענון, סגירת הלשונית או כניסה לחשבון.');
+    if (earlierGuestDraft === 'tab') {
+      const recovery = session.guestPersistence === 'tab' && session.trips.length
+        ? ui('Allow site storage, back up and delete the temporary trips here, then reload this tab to open the earlier draft.',
+          'אפשרו לאתר לשמור נתונים, גבו את הטיולים הזמניים ומחקו אותם. לאחר מכן רעננו את הלשונית כדי לפתוח את הטיוטה הקודמת.')
+        : ui('Allow site storage and reload this tab to open the earlier draft.',
+          'אפשרו לאתר לשמור נתונים ורעננו את הלשונית כדי לפתוח את הטיוטה הקודמת.');
+      return ui('An earlier draft is still saved in this tab.', 'טיוטה קודמת עדיין שמורה בלשונית הזאת.') + ' ' + temporary + ' ' + recovery;
+    }
+    const notice = earlierGuestDraft === 'local'
+      ? ui('An earlier draft is still saved in this browser.', 'טיוטה קודמת עדיין שמורה בדפדפן הזה.')
+      : ui('This tab can’t access the browser’s saved journal.', 'אין ללשונית הזאת גישה ליומן השמור בדפדפן.');
+    return notice + ' ' + ui('Allow site storage and open Hayiti in a new tab to check for saved trips.',
+      'אפשרו לאתר לשמור נתונים ופתחו את Hayiti בלשונית חדשה כדי לראות אילו טיולים שמורים.') + ' ' + temporary;
   }
-  return portable ? session.mode === 'portable' ? 'נשמר בדפדפן הזה.' : 'השינויים בזיכרון הלשונית. לשמירה יש להוריד גיבוי.' : session.mode === 'account' ? 'השינויים נשמרו ביומן האישי.' : 'השינויים נשמרו בדפדפן הזה. כדי לשמור אותם בין מכשירים נכנסים עם ChatGPT.';
+  return t(portable ? session.mode === 'portable' ? 'נשמר בדפדפן הזה.' : 'השינויים בזיכרון הלשונית. לשמירה יש להוריד גיבוי.' : session.mode === 'account' ? 'השינויים נשמרו ביומן האישי.' : 'השינויים נשמרו בדפדפן הזה. כדי לשמור אותם בין מכשירים נכנסים עם ChatGPT.');
 }
 let viewRequest = 0,
   loadedHosted = false;
@@ -783,8 +806,10 @@ async function load(afterConflict = false, quiet = false) {
   if (result.kind === 'merged' || result.kind === 'account' || result.kind === 'guest') requestGuestMerge(false);
   const unreadable = result.kind === 'unreadable-draft';
   const unavailable = result.kind === 'guest-unavailable';
+  const waitingInTab = !portable && !unreadable && !unavailable && hasLegacyGuestTrips('tab');
+  if (isolatedGuest()) earlierGuestDraft = waitingInTab ? 'tab' : hasLegacyGuestTrips('local') ? 'local' : undefined;
   journalReady = !unreadable && !unavailable;
-  $('retryLoad').hidden = !unavailable;
+  $('retryLoad').hidden = !unavailable && result.kind !== 'portable-missing';
   for (const control of document.querySelectorAll<HTMLButtonElement>('[data-requires-journal]')) control.disabled = unreadable || unavailable;
   if (unreadable) tab('connected');
   $('range').hidden = unreadable || unavailable;
@@ -805,14 +830,22 @@ async function load(afterConflict = false, quiet = false) {
       msg(() => t(result.reason) + ui(' Choose Discard unreadable draft to continue.',
         ' כדי להמשיך, בחרו ב״מחיקת טיוטה שלא ניתן לקרוא״.'));
       break;
+    case 'portable-missing':
+      msg(() => session.trips.length
+        ? ui('The saved portable journal is missing. Back up the trips still open in this tab. Saving a trip will restore the journal.',
+          'היומן השמור בדפדפן חסר. גבו את הטיולים שעדיין פתוחים בלשונית הזאת. שמירת טיול תשחזר את היומן.')
+        : ui('The saved portable journal is missing. Import a trip backup through Sources, or choose New trip to start again.',
+          'היומן השמור בדפדפן חסר. אפשר לייבא גיבוי דרך ״מקורות״ או לבחור ב״טיול חדש״ כדי להתחיל מחדש.'), 'warning');
+      break;
     case 'portable':
       msg(session.mode === 'portable' ? 'עותק אישי בדפדפן הזה' : 'אפשר ליצור טיול. לשמירה בדפדפן זה יש להוריד גיבוי.', saveTone());
       break;
     case 'signed-out':
-      msg(() => ui('You are signed out. Sign in with ChatGPT to open your journal.', 'יצאת מהחשבון. כדי לפתוח את היומן נכנסים שוב עם ChatGPT.'));
+      if (isolatedGuest()) msg(noTimeCopy, saveTone());
+      else msg(() => ui('You are signed out. Sign in with ChatGPT to open your journal.', 'יצאת מהחשבון. כדי לפתוח את היומן נכנסים שוב עם ChatGPT.'));
       break;
     case 'guest':
-      msg(session.trips.length || session.guestPersistence !== 'shared' ? noTimeCopy() : 'אפשר להתנסות כאן. לשמירה בין מכשירים נכנסים עם ChatGPT.', saveTone());
+      msg(session.trips.length || session.guestPersistence !== 'shared' ? noTimeCopy : 'אפשר להתנסות כאן. לשמירה בין מכשירים נכנסים עם ChatGPT.', saveTone());
       break;
     case 'account':
       msg('היומן האישי מעודכן.');
@@ -847,7 +880,7 @@ async function load(afterConflict = false, quiet = false) {
           ? ui('The trip you started before signing in is now in your journal.', 'הטיול שהתחלת לפני הכניסה נוסף ליומן האישי.')
           : ui('The trips you started before signing in are now in your journal.', 'הטיולים שהתחלת לפני הכניסה נוספו ליומן האישי.'));
   }
-  if (!portable && !unreadable && !unavailable && tripsWaitingInTab()) {
+  if (waitingInTab && !isolatedGuest()) {
     msg(() => ui('This tab still has trips from an earlier version waiting to be imported. Keep it open and choose Refresh journal to finish importing them.',
       'בלשונית הזאת עדיין יש טיולים מגרסה קודמת שממתינים לייבוא. השאירו אותה פתוחה ובחרו ברענון היומן כדי להשלים את הייבוא.'), 'warning');
   }
@@ -877,6 +910,7 @@ const unbacked = new Set<string>();
 async function change(edit: () => void, fromFile = false) {
   for (const dialog of document.querySelectorAll<HTMLElement>('dialog[open]')) clearError(dialog);
   try {
+    const recovering = session.mode === 'portable-recovery';
     const result = await session.change(edit);
     if (result === 'ignored') return false;
     if (result === 'loading') {
@@ -888,6 +922,7 @@ async function change(edit: () => void, fromFile = false) {
       return false;
     }
     if (result === 'saved-after-refresh') return true;
+    if (recovering && result === 'saved') $('retryLoad').hidden = true;
     renderSelection();
     if (result === 'conflict') {
       const loaded = await load(true);
@@ -904,7 +939,7 @@ async function change(edit: () => void, fromFile = false) {
     }
     if (tabOnly() && !fromFile && session.trip) unbacked.add(session.trip.id);
     for (const id of unbacked) if (!session.trips.some(trip => trip.id === id)) unbacked.delete(id);
-    msg(noTimeCopy(), saveTone());
+    msg(noTimeCopy, saveTone());
     return true;
   } catch (error) {
     renderSelection();

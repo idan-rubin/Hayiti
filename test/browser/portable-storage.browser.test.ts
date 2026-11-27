@@ -141,6 +141,36 @@ await test('historical readers cannot see canonical pins and cached old writes b
   } finally { await browser.close(); }
 });
 
+await test('the trip picker distinguishes recovered copies that have the same title in either language', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await host(page);
+    await page.goto(origin + '/old.html');
+    const original = { ...seedTrip(), title: 'Tel Aviv' };
+    const ordinary = { ...original, id: 'legacy-' + '0'.repeat(64), title: 'Haifa' };
+    await seedLegacy(page, JSON.stringify({ trips: [original, ordinary] }), 'local');
+    await page.goto(origin + '/new.html?lang=en');
+    await page.locator('#title').filter({ hasText: 'Tel Aviv' }).waitFor();
+    for (const home of ['Hotel', 'Apartment']) {
+      await seedLegacy(page, JSON.stringify({ trips: [{ ...original, home }] }), 'local');
+      await page.reload();
+      const copyLabel = home === 'Hotel' ? 'Recovered copy' : 'Recovered copy 2';
+      await page.locator('#trips option').filter({ hasText: 'Tel Aviv (' + copyLabel + ')' }).waitFor({ state: 'attached' });
+    }
+    const options = page.locator('#trips option');
+    assert.deepEqual(await options.allTextContents(), ['Tel Aviv', 'Haifa', 'Tel Aviv (Recovered copy)', 'Tel Aviv (Recovered copy 2)']);
+    await page.locator('#languageSwitch').selectOption('he');
+    await page.reload();
+    await options.filter({ hasText: 'Tel Aviv (עותק משוחזר 2)' }).waitFor({ state: 'attached' });
+    assert.deepEqual(await options.allTextContents(), ['Tel Aviv', 'Haifa', 'Tel Aviv (עותק משוחזר)', 'Tel Aviv (עותק משוחזר 2)']);
+    await page.locator('#trips').selectOption({ label: 'Tel Aviv (עותק משוחזר)' });
+    assert.equal(await page.locator('#title').textContent(), 'Tel Aviv (עותק משוחזר)');
+    await page.locator('#settings').click();
+    assert.equal(await page.locator('#tripForm [name=title]').inputValue(), 'Tel Aviv');
+  } finally { await browser.close(); }
+});
+
 await test('a legacy write arriving during a modern edit causes a visible conflict and preserves both versions on retry', async () => {
   const browser = await chromium.launch();
   try {
@@ -269,34 +299,69 @@ await test('simultaneous local and database legacy writes retain stable copies b
   } finally { await browser.close(); }
 });
 
-await test('an upgrade marker with a missing canonical record reports recovery instead of saving an empty journal', async () => {
+await test('an explicit backup restore recovers the missing journal and keeps surviving legacy trips', async () => {
+  const browser = await chromium.launch();
+  try {
+    const context = await browser.newContext();
+    const page = await context.newPage(), stale = await context.newPage();
+    for (const tab of [page, stale]) await host(tab);
+    await page.goto(origin + '/old.html');
+    const trip = seedTrip();
+    const original = JSON.stringify({ trips: [trip, { ...trip, id: 'other', title: 'Only in the old file' }] });
+    const marker = JSON.stringify({ hayitiUpgradeRequired: true });
+    await seedLegacy(page, original, 'database');
+    await page.evaluate(({ key, marker }) => localStorage.setItem(key, marker), { key: legacyKey, marker });
+    for (const tab of [page, stale]) {
+      await tab.goto(origin + '/new.html?lang=en');
+      await tab.locator('#status').filter({ hasText: 'saved portable journal is missing' }).waitFor();
+    }
+    await stale.locator('#newTrip').click();
+    await stale.locator('#tripForm [name=title]').fill('Stale save');
+    await page.locator('#import').click();
+    const upload = (contents: string) => page.locator('#file').setInputFiles({
+      name: 'backup.json', mimeType: 'application/json', buffer: Buffer.from(contents)
+    });
+    await upload('{');
+    await page.locator('#preview').filter({ hasText: /./ }).waitFor();
+    assert.equal(await page.locator('#preview button').count(), 0);
+    const backup = { ...trip, title: 'Restored backup', googlePins: [] };
+    await upload(JSON.stringify({ format: 'hayiti/1', trip: backup }));
+    await page.getByRole('button', { name: 'Load trip' }).waitFor();
+    assert.equal(await readPortableRecord(page), null);
+    assert.equal(await legacyRecord(page), original);
+    assert.equal(await page.evaluate(key => localStorage.getItem(key), legacyKey), marker);
+    await page.getByRole('button', { name: 'Load trip' }).click();
+    await page.locator('#sources').waitFor({ state: 'hidden' });
+    await page.reload();
+    await page.locator('#title').filter({ hasText: backup.title }).waitFor();
+    const saved = await readPortableRecord(page);
+    assert.deepEqual(saved?.trips.map(t => t.title).sort(), ['Only in the old file', 'Original journal', 'Restored backup']);
+    assert.equal(saved?.trips.find(t => t.id === trip.id)?.title, backup.title);
+    assert.deepEqual(saved?.trips.find(t => t.title === trip.title)?.googlePins, trip.googlePins);
+    assert.equal(await legacyRecord(page), null);
+
+    await stale.locator('#tripForm .primary').click();
+    await stale.locator('#config .form-error').filter({ hasText: /changed/ }).waitFor();
+    assert.deepEqual(await readPortableRecord(page), saved);
+  } finally { await browser.close(); }
+});
+
+await test('a missing portable journal can start a new trip without a backup', async () => {
   const browser = await chromium.launch();
   try {
     const page = await browser.newPage();
     await host(page);
     await page.goto(origin + '/old.html');
-    const original = JSON.stringify({ trips: [seedTrip()] });
-    await seedLegacy(page, original, 'local');
-    await page.goto(origin + '/new.html?lang=en');
-    await page.locator('#title').filter({ hasText: 'Original journal' }).waitFor();
-    await page.evaluate(raw => new Promise<void>((resolve, reject) => {
-      const open = indexedDB.open('hayiti-portable', 1);
-      open.onerror = () => reject(open.error);
-      open.onsuccess = () => {
-        const database = open.result;
-        const transaction = database.transaction('journal', 'readwrite');
-        const store = transaction.objectStore('journal');
-        store.delete('current-v3');
-        store.put(raw, 'current');
-        transaction.oncomplete = () => { database.close(); resolve(); };
-        transaction.onabort = () => { database.close(); reject(transaction.error); };
-      };
-    }), original);
-    await page.reload();
-    await page.locator('#retryLoad').waitFor();
-    assert.equal(await page.locator('#newTrip').isDisabled(), true);
+    await page.evaluate(key => localStorage.setItem(key, 'hayiti:indexeddb:1'), legacyKey);
+    await page.goto(origin + '/new.html?lang=he');
+    await page.locator('#status').filter({ hasText: 'היומן השמור בדפדפן חסר' }).waitFor();
+    await page.locator('#newTrip').click();
     assert.equal(await readPortableRecord(page), null);
-    assert.equal(await legacyRecord(page), original);
-    assert.deepEqual(await page.evaluate(key => JSON.parse(localStorage.getItem(key)!), legacyKey), { hayitiUpgradeRequired: true });
+    await page.locator('#tripForm [name=title]').fill('Starting again');
+    await page.locator('#tripForm .primary').click();
+    await page.locator('#config').waitFor({ state: 'hidden' });
+    await page.reload();
+    await page.locator('#title').filter({ hasText: 'Starting again' }).waitFor();
+    assert.deepEqual((await readPortableRecord(page))?.trips.map(t => t.title), ['Starting again']);
   } finally { await browser.close(); }
 });

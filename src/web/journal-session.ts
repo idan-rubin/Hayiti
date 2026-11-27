@@ -2,12 +2,12 @@ import { cleanTrip, type Trip } from '../domain/core.ts';
 import { GuestConflict, prepareGuestMerge, UnreadableDraft } from './guest-draft.ts';
 import type { LoadedGuestDraft as GuestDraft } from './guest-storage.ts';
 import { journalStorage, SaveRejected } from './journal-storage.ts';
-import { PortableConflict } from './portable-storage.ts';
+import { PortableConflict, PortableRecordMissing, type LoadedPortableDraft } from './portable-storage.ts';
 import { JournalSchemaError } from '../domain/journal-schema.ts';
 
-type Mode = 'initial' | 'snapshot' | 'portable' | 'memory' | 'guest' | 'account';
+type Mode = 'initial' | 'snapshot' | 'portable-recovery' | 'portable' | 'memory' | 'guest' | 'account';
 type LoadResult =
-  | { kind: 'portable' | 'guest' | 'signed-out' | 'account' | 'unchanged' | 'merge-conflict' | 'merge-not-sent' | 'unconfirmed' | 'draft-left-out' }
+  | { kind: 'portable-missing' | 'portable' | 'guest' | 'signed-out' | 'account' | 'unchanged' | 'merge-conflict' | 'merge-not-sent' | 'unconfirmed' | 'draft-left-out' }
   | { kind: 'merged'; trips: number; copies: number }
   | { kind: 'refused' | 'unreadable-draft' | 'draft-unavailable' | 'guest-unavailable'; reason: string };
 type EditResult = 'saved' | 'saved-after-refresh' | 'ignored' | 'loading' | 'superseded' | 'conflict' | 'storage-error';
@@ -21,6 +21,7 @@ export function localToday() {
 
 export class JournalSession {
   trips: Trip[] = [];
+  recoveredTripIds?: ReadonlySet<string>;
   day = localToday();
   mode: Mode = 'initial';
   guestPersistence: 'shared' | 'tab' | 'memory' = 'shared';
@@ -77,6 +78,11 @@ export class JournalSession {
     this.adopted++;
   }
 
+  private takePortable(draft: LoadedPortableDraft) {
+    this.replace('portable', draft.trips, draft.version);
+    this.recoveredTripIds = draft.recoveredTripIds;
+  }
+
   showSnapshot(trip: Trip | null) {
     this.replace('snapshot', trip ? [trip] : []);
     this.select(trip);
@@ -91,6 +97,10 @@ export class JournalSession {
     // A read started before the rejected write can still return its old revision.
     if (afterConflict && this.loading) await this.loading.catch(() => {});
     this.loading ??= this.read(portable, copyTitle, approveMerge).catch((error): LoadResult => {
+      if (portable && error instanceof PortableRecordMissing) {
+        this.replace('portable-recovery', this.trips, this.rev);
+        return { kind: 'portable-missing' };
+      }
       if (!(error instanceof UnreadableDraft)) throw error;
       this.replace('initial', []);
       return { kind: 'unreadable-draft', reason: error.message };
@@ -102,9 +112,10 @@ export class JournalSession {
 
   private async read(portable: boolean, copyTitle: (title: string) => string, approveMerge: (draft: Trip[]) => Promise<boolean>): Promise<LoadResult> {
     if (portable) {
+      if (this.saving && this.mode === 'portable-recovery') return { kind: 'unchanged' };
       if (this.mode !== 'memory') {
         const draft = await this.storage.readPortable();
-        if (draft) this.replace('portable', draft.trips, draft.version);
+        if (draft) this.takePortable(draft);
         else this.mode = 'memory';
       }
       return { kind: 'portable' };
@@ -201,18 +212,26 @@ export class JournalSession {
       if (this.mode === 'account') {
         const rev = await this.storage.writeAccount({ trips: this.trips, rev: this.rev });
         if (epoch === this.epoch) this.rev = rev;
-      } else if (this.mode === 'guest' || this.mode === 'portable') {
+      } else if (this.mode === 'guest' || this.mode === 'portable' || this.mode === 'portable-recovery') {
         try {
           if (this.mode === 'guest') {
             const saved = await this.storage.writeGuest(this.trips, this.draftSeen);
             this.draftSeen = saved.version;
             this.guestPersistence = saved.persistence ?? 'shared';
+          } else if (this.mode === 'portable-recovery') {
+            const saved = await this.storage.recoverPortable(this.trips);
+            if (epoch !== this.epoch) return 'saved-after-refresh';
+            this.takePortable(saved);
+            return 'saved';
           } else {
             const saved = await this.storage.writePortable(this.trips, this.rev);
-            if (epoch === this.epoch) this.rev = saved.version;
+            if (epoch === this.epoch) {
+              this.rev = saved.version;
+              this.recoveredTripIds = saved.recoveredTripIds;
+            }
           }
         } catch (error) {
-          if (error instanceof GuestConflict || error instanceof PortableConflict || error instanceof JournalSchemaError) throw error;
+          if (error instanceof GuestConflict || error instanceof PortableConflict || error instanceof PortableRecordMissing || error instanceof JournalSchemaError) throw error;
           throw new LocalSaveFailed();
         }
       }
@@ -226,11 +245,12 @@ export class JournalSession {
         return 'conflict';
       }
       if (error instanceof PortableConflict) {
-        this.replace('portable', error.draft.trips, error.draft.version);
+        this.takePortable(error.draft);
         return 'conflict';
       }
       this.trips = previous;
       this.select(previous.find(trip => trip.id === previousId), previousDay);
+      if (error instanceof PortableRecordMissing) return 'conflict';
       if (error instanceof LocalSaveFailed) return 'storage-error';
       if (error instanceof SaveRejected && error.status === 409) return 'conflict';
       throw error;

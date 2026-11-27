@@ -463,6 +463,7 @@ await test('unavailable IndexedDB permits isolated temporary drafts without chan
     for (const missing of [false, true]) {
       const context = await browser.newContext();
       await context.addInitScript(absent => {
+        if (localStorage.getItem('allow-site-storage')) return;
         if (absent) Object.defineProperty(window, 'indexedDB', { value: undefined });
         else IDBFactory.prototype.open = () => { throw new DOMException('Storage blocked', 'SecurityError'); };
       }, missing);
@@ -472,7 +473,13 @@ await test('unavailable IndexedDB permits isolated temporary drafts without chan
       await hostGuest(page);
       await page.goto(origin + '/journal.html?lang=en');
       await page.locator('#newTrip:not([disabled])').waitFor();
-      assert.match(await page.locator('#status').innerText(), /temporary|this tab/i);
+      const status = page.locator('#status[data-tone="warning"]');
+      await status.filter({ hasText: 'An earlier draft is still saved in this browser.' }).waitFor();
+      assert.match(await status.innerText(), /new tab/);
+      assert.match(await status.innerText(), /temporary/i);
+      await page.locator('#languageSwitch').selectOption('he');
+      await status.filter({ hasText: 'טיוטה קודמת עדיין שמורה בדפדפן הזה' }).waitFor();
+      await page.locator('#languageSwitch').selectOption('en');
       assert.equal(await page.locator('#import').isEnabled(), true);
       await createTemporaryTrip(page, 'First temporary trip');
       assert.match(await page.locator('#status[data-tone="warning"]').innerText(), /this tab|back up/i);
@@ -481,6 +488,8 @@ await test('unavailable IndexedDB permits isolated temporary drafts without chan
       assert.deepEqual(saved.map((entry: { title: string }) => entry.title), ['First temporary trip']);
       await page.reload();
       await page.locator('#title').filter({ hasText: 'First temporary trip' }).waitFor();
+
+      await status.filter({ hasText: 'An earlier draft is still saved in this browser.' }).waitFor();
 
       const second = await context.newPage();
       await hostGuest(second);
@@ -499,8 +508,57 @@ await test('unavailable IndexedDB permits isolated temporary drafts without chan
       const path = await (await download).path();
       assert.ok(path);
       assert.equal(JSON.parse(await readFile(path, 'utf8')).trip.title, 'First temporary trip');
+      await page.evaluate(() => localStorage.setItem('allow-site-storage', 'yes'));
+      const restored = await context.newPage();
+      await hostGuest(restored);
+      await restored.goto(origin + '/journal.html?lang=en');
+      await restored.locator('#title').filter({ hasText: 'Retained saved trip' }).waitFor();
+      assert.deepEqual(await guestTitles(restored), ['Retained saved trip']);
+      await page.reload();
+      await page.locator('#title').filter({ hasText: 'First temporary trip' }).waitFor();
+      assert.doesNotMatch(await status.innerText(), /An earlier draft is still saved/);
       await context.close();
     }
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('the earlier tab draft can be opened after backing up the separate temporary trip', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await page.addInitScript(() => {
+      if (!sessionStorage.getItem('allow-site-storage')) Object.defineProperty(window, 'indexedDB', { value: undefined });
+    });
+    const earlier = JSON.stringify({ trips: [trip('older', 'Earlier tab draft')] });
+    await seedLegacyGuestOnce(page, { tab: earlier });
+    await hostGuest(page);
+    await page.goto(origin + '/journal.html?lang=en');
+    const status = page.locator('#status[data-tone="warning"]');
+    await status.filter({ hasText: 'An earlier draft is still saved in this tab.' }).waitFor();
+    assert.match(await status.innerText(), /reload this tab/);
+    await createTemporaryTrip(page, 'Separate temporary trip');
+    await status.filter({ hasText: 'back up and delete the temporary trips here' }).waitFor();
+    await page.evaluate(() => sessionStorage.setItem('allow-site-storage', 'yes'));
+    await page.reload();
+    await page.locator('#title').filter({ hasText: 'Separate temporary trip' }).waitFor();
+    await status.filter({ hasText: 'back up and delete the temporary trips here' }).waitFor();
+
+    const download = page.waitForEvent('download');
+    await page.locator('#export').click();
+    const path = await (await download).path();
+    assert.ok(path);
+    assert.equal(JSON.parse(await readFile(path, 'utf8')).trip.title, 'Separate temporary trip');
+    await page.locator('#settings').click();
+    await page.locator('#deleteTrip').click();
+    await page.locator('#confirmYes').click();
+    await page.locator('#config').waitFor({ state: 'hidden' });
+    assert.equal(await page.evaluate(key => sessionStorage.getItem(key), legacyKey), earlier);
+    await page.reload();
+    await page.locator('#title').filter({ hasText: 'Earlier tab draft' }).waitFor();
+    assert.deepEqual(await guestTitles(page), ['Earlier tab draft']);
+    assert.equal(await page.evaluate(key => sessionStorage.getItem(key), legacyKey), null);
   } finally {
     await browser.close();
   }
