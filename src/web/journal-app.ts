@@ -10,6 +10,7 @@ import { createDateReel } from './date-reel.ts';
 import { cleanTrip, cleanStop, mergeStops, combineEvidence, journalCharacterLimit } from '../domain/core.ts';
 import { importCsv, importIcs, pastedStop } from '../domain/importers.ts';
 import { checkGuestBackup, discardGuest, guestKey, guestMergeRequested, requestGuestMerge, tripsWaitingInTab } from './guest-draft.ts';
+import { prepareRouteImport } from '../domain/route-update.ts';
 import { JournalSession, localToday } from './journal-session.ts';
 import { preparePhoto } from './photos.ts';
 import { ask, clearError, showError } from './confirm.ts';
@@ -1296,6 +1297,23 @@ async function previewFile(f: File, order?: 'day-first' | 'month-first') {
       backup: Trip | undefined;
     if (/\.json$/i.test(f.name)) {
       const o = JSON.parse(raw);
+      if (isRecord(o) && o.format === 'hayiti-routes/1') {
+        const active = session.trip;
+        if (!active) throw Error(t('יש לבחור טיול תחילה'));
+        const revision = session.revision;
+        const plan = prepareRouteImport(active, o);
+        target.append(dom('p', quantity(plan.updated, ' מקטעים לעדכון', 'route segment to update', 'route segments to update') +
+          ' · ' + quantity(plan.unchanged, ' מקטעים כבר שמורים', 'segment already saved', 'segments already saved')));
+        if (plan.updated) target.append(button(ui('Save routes', 'שמירת מסלולים'), async () => {
+          const ok = await change(() => {
+            const trip = session.trip;
+            if (!trip || trip !== active || session.revision !== revision) throw Error(t('הטיול השתנה. יש לבחור את קובץ הייבוא מחדש.'));
+            trip.edges = plan.edges;
+          });
+          if (ok) $('sources').close();
+        }));
+        return;
+      }
       if (['hayiti/1', 'masluli/1'].includes(o.format)) backup = cleanTrip(o.trip);else if (['hayiti-stops/1', 'masluli-stops/1'].includes(o.format) && Array.isArray(o.stops)) result = {
         stops: o.stops.map(cleanStop),
         omitted: 0,
