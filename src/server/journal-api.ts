@@ -1,8 +1,8 @@
-import { cleanTrip, cleanStop, isRecord, member, mergeGooglePins, mergeStops, point, reportSources, safeDate, validOutcome } from '../domain/core.ts';
+import { cleanTrip, cleanStop, isRecord, member, mergeGooglePins, mergeStops, point, reportSources, safeDate, validOutcome, type Trip } from '../domain/core.ts';
 import { dayStops, indexEdges, routeStops, walkingStats } from '../domain/daily-route.ts';
 import { loadState, storeState, type Bucket } from './storage.ts';
 import { setDayRoutes } from '../domain/route-update.ts';
-import { tools } from './tools.ts';
+import { dailyGooglePinPreviewLimit, tools } from './tools.ts';
 const json = (data: unknown, status = 200) => Response.json(data, {
   status,
   headers: {
@@ -14,6 +14,10 @@ const serverInfo = {
   name: 'Hayiti',
   version: '1.0.0'
 };
+function googlePinsForDate(trip: Trip, date?: string) {
+  const pins = trip.googlePins ?? [];
+  return date === undefined ? pins : pins.filter(pin => pin.date === date);
+}
 async function callTool(bucket: Bucket, owner: string, name: unknown, args: Record<string, unknown>): Promise<unknown> {
   const journal = await loadState(bucket, owner);
   if (name === 'list_trips') return journal.trips.map(({ id, title, start, end }) => ({
@@ -24,8 +28,9 @@ async function callTool(bucket: Bucket, owner: string, name: unknown, args: Reco
     if (!trip) throw Error('טיול לא נמצא');
     const offset = args.offset ?? 0;
     if (typeof offset !== 'number' || !Number.isInteger(offset) || offset < 0) throw Error('Supply offset as a whole number of pins to skip');
-    // A long saved list is read a page at a time, so one reply stays small enough for a conversation.
-    const pins = trip.googlePins ?? [];
+    const date = args.date;
+    if (date !== undefined && !safeDate(date)) throw Error('Supply date as a valid local YYYY-MM-DD');
+    const pins = googlePinsForDate(trip, date);
     return { total: pins.length, offset, pins: pins.slice(offset, offset + 200) };
   }
   if (name === 'get_day') {
@@ -39,9 +44,11 @@ async function callTool(bucket: Bucket, owner: string, name: unknown, args: Reco
     }));
     const route = routeStops(trip, args.date);
     const edges = indexEdges(trip);
+    const pins = googlePinsForDate(trip, args.date);
     return {
       stops,
-      googlePins: trip.googlePins?.filter(pin => pin.date === args.date) ?? [],
+      googlePins: pins.slice(0, dailyGooglePinPreviewLimit),
+      googlePinCount: pins.length,
       home: trip.home,
       rules: trip.rules,
       homeXY: trip.homeXY,

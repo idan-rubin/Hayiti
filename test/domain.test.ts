@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { cleanTrip, mergeGooglePins, mergeStops, safeDate } from '../src/domain/core.ts';
 import { shareableTrip } from '../src/domain/share-format.ts';
-import { importCsv, importEvidencePackage, importIcs } from '../src/domain/importers.ts';
+import { importCsv, importEvidencePackage, importIcs, prepareTripBackup } from '../src/domain/importers.ts';
 import { indexEdges, routeStops, suggest, walkingStats } from '../src/domain/daily-route.ts';
 import { readFileSync } from 'node:fs';
 export const sample = () => cleanTrip(JSON.parse(readFileSync(new URL('./fixtures/rotterdam.json', import.meta.url), 'utf8')).trip);
@@ -295,6 +295,33 @@ await test('near-home photo pins and their routes stay private after attaching a
   const withHome = shareableTrip(trip, true);
   assert.equal(withHome.stops.length, 4);
   assert.equal(withHome.edges.length, 3);
+});
+
+await test('a backup restores valid stops and pins without undoing newer place or day edits', () => {
+  const existing = sample();
+  const current = { id: 'park', name: 'Correct park', xy: [52, 4], date: existing.end, dayEdited: true };
+  const cleared = { id: 'tower', name: 'Tower', xy: [52, 4.1], dayEdited: true };
+  mergeGooglePins(existing, [current, cleared]);
+  const before = structuredClone(existing);
+  const extra = { id: 'extra', name: 'Garden', date: existing.start, xy: [52, 4.2], sources: ['manual'], refs: ['garden'] };
+  const backup = { ...existing, stops: [extra], googlePins: [
+    { ...current, name: 'Old park', xy: [51, 4.6], savedAt: existing.start, date: existing.start },
+    { ...cleared, date: existing.start },
+    { id: 'unlocated', name: 'Unknown', xy: [0, 0] },
+    { id: 'outside', name: 'Coast', xy: [52, 4.3], date: '2019-01-01' }
+  ] };
+  const merged = prepareTripBackup(backup, [existing]);
+  assert.deepEqual(existing, before, 'preview must not modify the live journal');
+  assert.deepEqual(merged.pins, { added: 1, linked: 1, skipped: 1, unresolved: 1, datesOutsideTrip: 1 });
+  assert.equal(merged.stops.added, 1);
+  assert.deepEqual(merged.trip.googlePins, [{ ...current, savedAt: existing.start }, cleared,
+    { id: 'outside', name: 'Coast', xy: [52, 4.3] }]);
+  const fresh = prepareTripBackup(backup, []);
+  assert.deepEqual(fresh.pins, { added: 3, linked: 0, skipped: 0, unresolved: 1, datesOutsideTrip: 1 });
+  assert.equal(fresh.trip.stops[0].id, extra.id);
+  assert.equal(fresh.trip.googlePins?.[0].name, 'Old park');
+  assert.deepEqual(prepareTripBackup(backup, [merged.trip]).pins,
+    { added: 0, linked: 0, skipped: 3, unresolved: 1, datesOutsideTrip: 1 });
 });
 
 await test('Google Pins preserve source precision and only infer a verified local trip day', () => {

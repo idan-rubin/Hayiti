@@ -25,6 +25,7 @@ const tags = {
   'count': 'span',
   'createdLink': 'div',
   'dayNote': 'p',
+  'dayProgress': 'span',
   'dayReel': 'div',
   'dayStats': 'details',
   'dayTitle': 'h2',
