@@ -11,7 +11,6 @@ import { cleanTrip, cleanStop, mergeStops, combineEvidence, journalCharacterLimi
 import { importCsv, importIcs, pastedStop } from '../domain/importers.ts';
 import { checkGuestBackup, discardGuest, guestKey, guestMergeRequested, requestGuestMerge, tripsWaitingInTab } from './guest-draft.ts';
 import { JournalSession, localToday } from './journal-session.ts';
-import { matchingVisit, photoHeader, photoVisits, savePhotoVisit } from '../domain/photo-locations.ts';
 import { preparePhoto } from './photos.ts';
 import { ask, clearError, showError } from './confirm.ts';
 import { addStreetMap, type StreetMapProblem } from './street-map.ts';
@@ -242,13 +241,6 @@ function showConnections() {
       ? ui('You are not signed in, so ChatGPT cannot add stops to this trip directly. Copy the sync request into your conversation, then import the stops file it returns under Files. Sign in with ChatGPT to have stops added for you.',
         'לא נכנסת לחשבון, ולכן ChatGPT לא יכול להוסיף תחנות לטיול הזה ישירות. אפשר להעתיק את בקשת הסנכרון לשיחה ולייבא את קובץ התחנות שמתקבל בלשונית ״קבצים״. אחרי כניסה עם ChatGPT התחנות יתווספו עבורך.')
       : t('עם חיבור ״הייתי״ בשיחה, ChatGPT יכול לקרוא את המקורות שאישרת ולהוסיף את התחנות לטיול הזה. בחר אילו מקורות לכלול בבקשה. לפני שמירה, אשר רק מקומות ופרטי ביקור שברצונך להעביר ליומן.');
-  const shortcut = $('photoShortcut');
-  shortcut.hidden = !trip;
-  if (trip) {
-    shortcut.textContent = ui('Find places from my photos', 'מציאת מקומות מהתמונות שלי');
-    const input = JSON.stringify({ start: trip.start, end: trip.end });
-    shortcut.href = 'shortcuts://run-shortcut?' + new URLSearchParams({ name: 'hayiti photo locations', input: 'text', text: input }).toString();
-  }
   const controls = [...$('connected').querySelectorAll('label.check')];
   rows.replaceChildren();
   let disconnected = 0,
@@ -393,7 +385,7 @@ function draw() {
     if (s.xy) {
       routeBounds.extend(s.xy);
       const keys = (s.sources || []).filter(k => Object.hasOwn(types, k));
-      const primary = keys.includes('photo') ? 'photo' : keys[0];
+      const primary = keys[0];
       const badge = s.kind !== 'origin' && primary ? '<span class="pin-source" style="background:' + types[primary][1] + '">' + pinSymbol(primary) + '</span>' : '';
       const description = [s.name, ...keys.map(k => k === 'card' ? ui('Transaction', 'עסקה') : t(label[k]))].join(' · ');
       const icon = L.divIcon({
@@ -1295,37 +1287,6 @@ async function previewFile(f: File, order?: 'day-first' | 'month-first') {
     }
     if (f.size > 7500000 && !(portable && /\.json$/i.test(f.name))) throw Error(t('הקובץ גדול מדי'));
     const raw = await f.text();
-    if (raw.startsWith(photoHeader) && /\.txt$/i.test(f.name)) {
-      const trip = session.trip;
-      if (!trip) throw Error(t('יש לבחור טיול תחילה'));
-      const { visits, omitted } = photoVisits(raw, trip, ui('Photo location', 'מיקום מצילום'));
-      target.append(dom('p', ui('Skipped records: ', 'רשומות שדולגו: ') + omitted));
-      const selected = new Set(visits);
-      for (const visit of visits) {
-        const match = matchingVisit(trip, visit);
-        const row = dom('label', '', 'check');
-        const checkbox = dom('input');
-        checkbox.type = 'checkbox';
-        checkbox.checked = true;
-        checkbox.onchange = () => {
-          if (checkbox.checked) selected.add(visit);
-          else selected.delete(visit);
-        };
-        row.append(checkbox, visit.date + ' · ' + visit.time + ' · ' + (match?.name ?? visit.xy?.join(', ')));
-        target.append(row);
-      }
-      if (visits.length) target.append(button(ui('Save selected places', 'שמירת המקומות שנבחרו'), async () => {
-        const ok = await change(() => {
-          const current = session.trip;
-          if (!current || current.id !== trip.id || current.start !== trip.start || current.end !== trip.end) {
-            throw Error(t('הטיול השתנה. יש לבחור את קובץ הייבוא מחדש.'));
-          }
-          for (const visit of selected) savePhotoVisit(current, visit);
-        });
-        if (ok) $('sources').close();
-      }));
-      return;
-    }
     let result: ImportResult = {
         stops: [],
         omitted: 0
