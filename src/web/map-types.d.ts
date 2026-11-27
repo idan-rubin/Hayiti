@@ -11,6 +11,7 @@ interface Bounds {
   getCenter(): MapPoint;
 }
 interface JournalMap {
+  createPane(name: string): HTMLElement;
   setView(position: Coordinates | MapPoint, zoom: number, options?: {
     animate: boolean;
   }): JournalMap;
@@ -100,6 +101,7 @@ declare const L: {
     alt: string;
   }): MapMarker;
   polyline(points: Coordinates[], options: {
+    pane: string;
     color: string;
     weight: number;
     dashArray: string | null;

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { cleanTrip, mergeStops, safeDate } from '../src/domain/core.ts';
+import { shareableTrip } from '../src/domain/share-format.ts';
 import { importCsv, importIcs } from '../src/domain/importers.ts';
 import { indexEdges, routeStops, suggest, walkingStats } from '../src/domain/daily-route.ts';
 import { readFileSync } from 'node:fs';
@@ -144,4 +145,164 @@ await test('one column names the stops in a CSV, rows without it are skipped, an
   assert.equal(places.omitted, 1);
   assert.equal((await importCsv('Date,Name\n2026-06-14,Markthal')).stops[0].name, 'Markthal');
   assert.equal((await importCsv('Date,Transaction Date,Merchant\n2026-06-16,2026-06-14,Markthal')).stops[0].date, '2026-06-14');
+});
+
+await test('photo metadata imports reuse fixed daily pins across batches and retries', () => {
+  const trip = sample();
+  trip.stops = [];
+  const photo = (ref: string, northMeters: number, date = trip.start) => ({
+    name: 'Photo location', date, xy: [northMeters / 111195, 4], sources: ['photo'], refs: [ref]
+  });
+  const first = photo('p1', 0);
+  const nearby = photo('p2', 95);
+  assert.deepEqual(mergeStops(trip, [first, nearby]), { added: 1, linked: 1, skipped: 0 });
+  assert.deepEqual(trip.stops[0].xy, first.xy);
+  assert.equal(mergeStops(trip, [nearby]).skipped, 1);
+  assert.equal(mergeStops(trip, [{ ...nearby, refs: ['p2', 'p3'] }]).linked, 1);
+  assert.deepEqual(trip.stops[0].refs, ['p1', 'p2', 'p3']);
+  assert.equal(mergeStops(trip, [photo('beyond-anchor', 105), photo('far', 500)]).added, 2);
+  assert.equal(mergeStops(trip, [photo('another-day', 0, trip.end)]).added, 1);
+});
+
+await test('earliest capture wins for an unsorted batch and for a later import within the same minute', () => {
+  const trip = sample();
+  trip.stops = [];
+  const photo = (ref: string, seconds: number, northMeters: number) => ({
+    date: trip.start, name: 'Camera pin', captureTime: '14:00:' + String(seconds),
+    xy: [northMeters / 111195, 4], refs: [ref], sources: ['photo']
+  });
+  const early = photo('early', 20, 0);
+  const late = photo('late', 50, 70);
+  mergeStops(trip, [late, early]);
+  assert.deepEqual(trip.stops[0].xy, early.xy);
+  const earliest = photo('earliest', 10, -80);
+  assert.equal(mergeStops(trip, [earliest]).linked, 1);
+  const restored = cleanTrip(trip);
+  assert.equal(restored.stops[0].captureTime, '14:00:10');
+  assert.deepEqual(restored.stops[0].xy, earliest.xy);
+  assert.equal(mergeStops(restored, [earliest]).skipped, 1);
+  assert.equal(mergeStops(restored, [photo('outside-original-radius', 30, -160)]).added, 1);
+});
+
+await test('synthetic home routes survive a backup and are shared only when the home base is included', () => {
+  const trip = sample();
+  const destination = trip.stops[0].id;
+  trip.homeXY = [51.92, 4.48];
+  const homeEdge = { a: 'base', b: destination, type: 'walk' as const, m: 120, line: [trip.homeXY, [51.921, 4.48]] };
+  const restored = cleanTrip({ ...trip, edges: [homeEdge, { ...homeEdge, a: 'missing' }, { ...homeEdge, b: 'missing' }] });
+  assert.deepEqual(restored.edges, [homeEdge]);
+  assert.equal(cleanTrip(shareableTrip(restored, true)).edges.length, 1);
+  assert.equal(cleanTrip(shareableTrip(restored, false)).edges.length, 0);
+  assert.equal(cleanTrip({ ...restored, homeXY: null }).edges.length, 0);
+});
+
+await test('a pin the traveler timed or placed keeps collecting photos and stays where they put it', () => {
+  const trip = sample();
+  trip.stops = [];
+  const photo = (ref: string, time: string, northMeters: number) => ({
+    date: trip.start, name: 'Camera pin', time, xy: [northMeters / 111195, 4], refs: [ref], sources: ['photo']
+  });
+  const first = photo('first', '14:00', 0);
+  mergeStops(trip, [first]);
+  // What the stop form saves when the traveler changes the time and moves the pin.
+  const placed = [30 / 111195, 4.0001];
+  Object.assign(trip.stops[0], { time: '14:30', xy: placed, edited: true });
+  assert.equal(mergeStops(trip, [first]).skipped, 1);
+  assert.equal(mergeStops(trip, [photo('earlier', '13:50', 60)]).linked, 1);
+  const saved = cleanTrip(trip).stops[0];
+  assert.deepEqual([saved.time, saved.xy, saved.refs, saved.edited], ['14:30', placed, ['first', 'earlier'], true]);
+});
+
+await test('a photo retry follows its stable reference to the corrected day', () => {
+  const trip = sample();
+  trip.stops = [];
+  const photo = { date: trip.start, name: 'Camera pin', time: '10:00', xy: [0, 4], sources: ['photo'], refs: ['asset'] };
+  mergeStops(trip, [photo]);
+  const corrected = trip.stops[0];
+  Object.assign(corrected, { date: trip.end, time: '12:00', xy: [0.001, 4], edited: true });
+  const batch = [{ ...photo, refs: ['related', 'asset'] }, { ...photo, refs: ['related'] }];
+  assert.deepEqual(mergeStops(trip, batch), { added: 0, linked: 1, skipped: 1 });
+  assert.deepEqual(mergeStops(trip, batch), { added: 0, linked: 0, skipped: 2 });
+  const attached = { ...photo, photos: ['data:image/jpeg;base64,/9j/AAAA'], refs: ['asset', 'attachment-ref'] };
+  assert.deepEqual(mergeStops(trip, [attached, { ...photo, xy: null, refs: ['attachment-ref'] }]), { added: 0, linked: 1, skipped: 1 });
+  assert.equal(trip.stops.length, 1);
+  assert.deepEqual([corrected.date, corrected.time, corrected.xy, corrected.refs], [trip.end, '12:00', [0.001, 4], ['asset', 'related', 'attachment-ref']]);
+  assert.equal(mergeStops(trip, [{ ...photo, xy: corrected.xy, refs: ['different-asset'] }]).added, 1);
+});
+
+await test('a time without seconds never displaces a capture recorded to the second', () => {
+  const trip = sample();
+  trip.stops = [];
+  const pin = { date: trip.start, name: 'Camera pin', sources: ['photo'] };
+  const precise = { ...pin, captureTime: '14:00:10', xy: [0, 4], refs: ['precise'] };
+  const nearby = [50 / 111195, 4];
+  mergeStops(trip, [precise]);
+  assert.equal(mergeStops(trip, [{ ...pin, time: '14:00', xy: nearby, refs: ['same-minute'] }]).linked, 1);
+  assert.deepEqual([trip.stops[0].captureTime, trip.stops[0].xy], ['14:00:10', precise.xy]);
+  assert.equal(mergeStops(trip, [{ ...pin, time: '13:59', xy: nearby, refs: ['minute-before'] }]).linked, 1);
+  assert.deepEqual([trip.stops[0].time, trip.stops[0].captureTime, trip.stops[0].xy], ['13:59', undefined, nearby]);
+});
+
+await test('a pin that an earlier photo moves gives up the routes saved to its old place', () => {
+  const trip = sample();
+  trip.stops = [];
+  const photo = (ref: string, seconds: number, northMeters: number) => ({
+    date: trip.start, name: 'Camera pin', captureTime: '14:00:' + String(seconds),
+    xy: [northMeters / 111195, 4], refs: [ref], sources: ['photo']
+  });
+  mergeStops(trip, [{ id: 'pin', ...photo('late', 50, 0) }, { id: 'far', ...photo('far', 55, 900) }]);
+  trip.edges = [{ a: 'pin', b: 'far', type: 'walk', m: 900, line: [[0, 4], [900 / 111195, 4]] }];
+  assert.equal(mergeStops(trip, [photo('earlier-same-spot', 40, 0)]).linked, 1);
+  assert.equal(trip.edges.length, 1);
+  assert.equal(mergeStops(trip, [photo('earliest', 30, 90)]).linked, 1);
+  assert.deepEqual(trip.edges, []);
+});
+
+await test('a shared route that hides the home base also hides photos taken around it', () => {
+  const trip = sample();
+  trip.stops = [];
+  trip.homeXY = [51.92, 4.48];
+  const around = (northMeters: number) => [51.92 + northMeters / 111195, 4.48];
+  const photo = (ref: string, northMeters: number) => ({
+    date: trip.start, name: 'Camera pin', xy: around(northMeters), refs: [ref], sources: ['photo']
+  });
+  mergeStops(trip, [photo('by-the-door', 50), photo('down-the-road', 400)]);
+  assert.equal(shareableTrip(trip, true).stops.length, 2);
+  assert.deepEqual(shareableTrip(trip, false).stops.map(stop => stop.xy), [around(400)]);
+});
+
+await test('near-home photo pins and their routes stay private after attaching an image or linking a purchase', () => {
+  const date = '2026-07-01';
+  const nearHome = { date, xy: [51.9205, 4.48] };
+  const trip = cleanTrip({
+    start: date, end: date, homeXY: [51.92, 4.48],
+    stops: [
+      { ...nearHome, id: 'photo', name: 'Camera pin', sources: ['photo'], refs: ['capture'], photos: ['data:image/jpeg;base64,/9j/AAAA'] },
+      { ...nearHome, id: 'purchase', name: 'Photo and purchase', sources: ['card', 'photo'], refs: ['charge', 'capture-2'], count: 1 },
+      { ...nearHome, id: 'cafe', name: 'Café', sources: ['card'] },
+      { date, id: 'museum', name: 'Museum', xy: [51.93, 4.48], sources: ['photo'] }
+    ],
+    edges: [
+      { a: 'cafe', b: 'photo', type: 'walk' },
+      { a: 'purchase', b: 'museum', type: 'walk' },
+      { a: 'cafe', b: 'museum', type: 'walk' }
+    ]
+  });
+  const shared = shareableTrip(trip, false);
+  assert.deepEqual(shared.stops.map(stop => stop.name), ['Café', 'Museum']);
+  const [cafe, museum] = shared.stops;
+  assert.deepEqual(shared.edges.map(edge => [edge.a, edge.b]), [[cafe.id, museum.id]]);
+  const withHome = shareableTrip(trip, true);
+  assert.equal(withHome.stops.length, 4);
+  assert.equal(withHome.edges.length, 3);
+});
+
+await test('two photos on different days that share a reference stay separate stops', () => {
+  const trip = sample();
+  trip.stops = [];
+  // Two phones can produce the same file name. Only a stop the traveler moved is followed to another day.
+  const photo = (date: string, xy: number[]) => ({ date, name: 'Camera pin', time: '10:00', xy, sources: ['photo'], refs: ['IMG_0001'] });
+  mergeStops(trip, [photo(trip.start, [0, 4])]);
+  assert.deepEqual(mergeStops(trip, [photo(trip.end, [0.5, 4])]), { added: 1, linked: 0, skipped: 0 });
+  assert.deepEqual(trip.stops.map(stop => [stop.date, stop.xy]), [[trip.start, [0, 4]], [trip.end, [0.5, 4]]]);
 });

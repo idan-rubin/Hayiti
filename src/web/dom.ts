@@ -53,7 +53,7 @@ const tags = {
   'linksHeading': 'h4',
   'listTab': 'button',
   'login': 'a',
-  'logout': 'a',
+  'logout': 'button',
   'longestWalk': 'p',
   'map': 'div',
   'mapTab': 'button',

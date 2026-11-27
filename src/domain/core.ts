@@ -23,6 +23,10 @@ export interface Stop {
   address: string;
   time: string;
   xy: Point | null;
+  photoAnchor?: Point;
+  captureTime?: string;
+  /** The traveler set this stop's time or place by hand. An import adds its evidence and leaves both alone. */
+  edited?: true;
   notes: string;
   band: string;
   sources: Source[];
@@ -86,6 +90,66 @@ export function point(value: unknown): Point | null {
   const [lat, lon] = value;
   return Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 85 && Math.abs(lon) <= 180 ? [lat, lon] : null;
 }
+export function distanceMeters([lat, lon]: Point, [nextLat, nextLon]: Point): number {
+  const rad = Math.PI / 180;
+  const a = Math.sin((nextLat - lat) * rad / 2) ** 2 +
+    Math.cos(lat * rad) * Math.cos(nextLat * rad) * Math.sin((nextLon - lon) * rad / 2) ** 2;
+  return 12742000 * Math.asin(Math.sqrt(Math.min(1, a)));
+}
+
+export const photoPinRadiusMeters = 100;
+
+function hasPhotoAssetRefs(stop: Stop): boolean {
+  return stop.sources.length === 1 && stop.sources[0] === 'photo' && stop.refs.length > 0;
+}
+
+export function photoLocation(stop: Stop): stop is Stop & { xy: Point } {
+  return stop.kind === 'visit' && stop.xy !== null && hasPhotoAssetRefs(stop) && !stop.photos.length && !stop.count;
+}
+
+// Whether one local time is known to come before another. A time without seconds says nothing about the
+// order inside its own minute, so it never displaces a capture recorded to the second.
+function knownEarlier(time: string, than: string): boolean {
+  if (time.length === 5 || than.length === 5) return time.slice(0, 5) < than.slice(0, 5);
+  const precise = (value: string) => value.length === 8 ? value + '.000' : value.padEnd(12, '0');
+  return precise(time) < precise(than);
+}
+
+function linkPhotoReferences(pin: Stop, incoming: Stop): 'linked' | 'skipped' {
+  // Follow the journal's persisted reference limit. Spatial deduplication still works at capacity.
+  const refs = [...new Set([...pin.refs, ...incoming.refs])].slice(0, 100);
+  const time = incoming.captureTime || incoming.time;
+  const current = pin.captureTime || pin.time;
+  // A pin the traveler placed or timed by hand keeps collecting references and stays where they put it.
+  const earlier = !pin.edited && pin.date === incoming.date && photoLocation(pin) && photoLocation(incoming) && time &&
+    (!current || knownEarlier(time, current)) &&
+    distanceMeters(pin.photoAnchor ?? pin.xy, incoming.xy) <= photoPinRadiusMeters;
+  if (!earlier && refs.length === pin.refs.length) return 'skipped';
+  if (earlier && pin.xy) {
+    pin.photoAnchor ??= pin.xy;
+    pin.xy = incoming.xy;
+    pin.time = incoming.time;
+    if (incoming.captureTime) pin.captureTime = incoming.captureTime;
+    else delete pin.captureTime;
+  }
+  pin.refs = refs;
+  return 'linked';
+}
+
+function closestPhotoPin(day: Stop[], incoming: Stop & { xy: Point }) {
+  let nearest: Stop | undefined;
+  let limit = photoPinRadiusMeters;
+  for (const candidate of day) {
+    if (!photoLocation(candidate)) continue;
+    const distance = distanceMeters(candidate.photoAnchor ?? candidate.xy, incoming.xy);
+    if (distance <= limit) {
+      nearest = candidate;
+      limit = distance;
+    }
+  }
+  return nearest;
+}
+
 export function photosOf(value: unknown): string[] {
   if (value == null) return [];
   if (!Array.isArray(value) || value.length > 3 || value.some(photo => typeof photo !== 'string' || photo.length > 335000 || !/^data:image\/jpeg;base64,\/9j\/[A-Za-z0-9+/]+=*$/.test(photo))) throw Error('תמונה לא תקינה או גדולה מדי');
@@ -93,13 +157,20 @@ export function photosOf(value: unknown): string[] {
 }
 export function cleanStop(value: unknown): Stop {
   if (!isRecord(value) || !safeDate(value.date) || !text(value.name, 160)) throw Error('נדרשים תאריך תקין ושם תחנה');
-  const time = text(value.time, 5);
+  const captureTime = text(value.captureTime, 16);
+  if (captureTime && !/^([01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,3})?$/.test(captureTime)) throw Error('Invalid local capture time');
+  const time = text(value.time, 5) || captureTime.slice(0, 5);
+  if (captureTime && captureTime.slice(0, 5) !== time) throw Error('Capture time must match the local stop time');
+  const anchor = point(value.photoAnchor);
   if (time && !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) throw Error('שעה לא תקינה');
   return {
     id: text(value.id, 140) || crypto.randomUUID(),
     name: text(value.name, 160),
     date: value.date,
     time,
+    ...(captureTime ? { captureTime } : {}),
+    ...(anchor ? { photoAnchor: anchor } : {}),
+    ...(value.edited === true ? { edited: true as const } : {}),
     address: text(value.address),
     xy: point(value.xy),
     notes: text(value.notes, 1200),
@@ -141,9 +212,10 @@ export function cleanTrip(value: unknown): Trip {
   const stops = value.stops.map(cleanStop),
     ids = new Set(stops.map(s => s.id));
   if (ids.size !== stops.length || stops.some(s => s.date < start || s.date > end)) throw Error('תחנה כפולה או תאריך מחוץ לטווח');
+  const homeXY = point(value.homeXY);
   const edges: Edge[] = [];
   if (Array.isArray(value.edges)) for (const e of value.edges) {
-    if (!isRecord(e) || typeof e.a !== 'string' || typeof e.b !== 'string' || !ids.has(e.a) || !ids.has(e.b)) continue;
+    if (!isRecord(e) || typeof e.a !== 'string' || typeof e.b !== 'string' || (!ids.has(e.a) && !(e.a === 'base' && homeXY)) || !ids.has(e.b)) continue;
     edges.push({
       a: e.a,
       b: e.b,
@@ -160,7 +232,7 @@ export function cleanTrip(value: unknown): Trip {
     start,
     end,
     home: text(value.home),
-    homeXY: point(value.homeXY),
+    homeXY,
     stops,
     edges,
     rules: text(value.rules, 2400),
@@ -191,19 +263,54 @@ export function mergeStops(trip: Trip, incoming: readonly unknown[]): MergeResul
     skipped: 0
   };
   const ids = new Set(trip.stops.map(stop => stop.id));
-  for (const raw of incoming) {
-    const stop = cleanStop(raw);
+  const batch = incoming.map(cleanStop);
+  // Sort only photo slots, leaving the order of the traveler's other evidence intact.
+  const orderedPhotos = batch.filter(photoLocation).sort((a, b) =>
+    a.date.localeCompare(b.date) || (a.captureTime || a.time || '99').localeCompare(b.captureTime || b.time || '99'));
+  let photoIndex = 0;
+  const link = (pin: Stop, stop: Stop) => {
+    const was = pin.xy;
+    result[linkPhotoReferences(pin, stop)]++;
+    // A saved route ends where the pin was. It goes with the move, as it does when the traveler moves a pin.
+    if (was && pin.xy && (was[0] !== pin.xy[0] || was[1] !== pin.xy[1])) {
+      trip.edges = trip.edges.filter(edge => edge.a !== pin.id && edge.b !== pin.id);
+    }
+  };
+  for (const item of batch) {
+    const stop = photoLocation(item) ? orderedPhotos[photoIndex++] : item;
     if (stop.date < trip.start || stop.date > trip.end) throw Error('תחנה מחוץ לטווח הטיול');
     const day = trip.stops.filter(s => s.date === stop.date);
-    if (ids.has(stop.id) || day.some(s => stop.refs.some(ref => s.refs.includes(ref)))) {
+    // Prefer stable asset identity, then a unique named visit, before spatial matching.
+    const isPhoto = photoLocation(stop);
+    const hasAssetRefs = hasPhotoAssetRefs(stop);
+    const refs = new Set(stop.refs);
+    const sharesReference = (saved: Stop) => saved.refs.some(ref => refs.has(ref));
+    // A photo's asset ID follows the stop when the traveler corrects its day. Other days are searched only for
+    // stops they changed, so two photos that happen to share a reference on different days stay separate.
+    const repeated = day.find(sharesReference) ?? (hasAssetRefs
+      ? trip.stops.find(saved => saved.edited && sharesReference(saved))
+      : undefined);
+    if (hasAssetRefs && repeated) {
+      link(repeated, stop);
+      continue;
+    }
+    if (ids.has(stop.id) || repeated) {
       result.skipped++;
       continue;
     }
-    const matches = day.filter(s => corroborates(s, stop));
+    const matches = day.filter(s => corroborates(s, stop) &&
+      (!isPhoto || !s.xy || distanceMeters(s.xy, stop.xy) <= photoPinRadiusMeters));
     if (matches.length === 1) {
       combineEvidence(matches[0], stop);
       result.linked++;
       continue;
+    }
+    if (isPhoto) {
+      const pin = closestPhotoPin(day, stop);
+      if (pin) {
+        link(pin, stop);
+        continue;
+      }
     }
     stop.rank = Math.max(0, ...day.map(s => s.rank)) + 1;
     trip.stops.push(stop);

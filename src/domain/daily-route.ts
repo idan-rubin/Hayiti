@@ -1,4 +1,4 @@
-import { cleanStop } from './core.ts';
+import { cleanStop, distanceMeters } from './core.ts';
 import type { Stop, Trip, Edge } from './core.ts';
 export const offRoute = (stop: Stop) => stop.kind === 'uncertain' || stop.kind === 'remote';
 export function dayStops(trip: Trip, day: string) {
@@ -31,12 +31,8 @@ function walkingLength(edge: Edge) {
   if (Number.isFinite(edge.m) && edge.m > 0) return edge.m;
   const points = edge.line || [];
   let length = 0;
-  const rad = Math.PI / 180;
   for (let i = 1; i < points.length; i++) {
-    const [lat, lon] = points[i - 1],
-      [nextLat, nextLon] = points[i];
-    const a = Math.sin((nextLat - lat) * rad / 2) ** 2 + Math.cos(lat * rad) * Math.cos(nextLat * rad) * Math.sin((nextLon - lon) * rad / 2) ** 2;
-    length += 12742000 * Math.asin(Math.sqrt(Math.min(1, a)));
+    length += distanceMeters(points[i - 1], points[i]);
   }
   return length;
 }

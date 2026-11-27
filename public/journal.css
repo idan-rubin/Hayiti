@@ -108,10 +108,18 @@ body.route-copy #export,body.route-copy .top .actions,body.route-copy .toolbar,b
 
 header {column-gap:12px}
 header nav {justify-content:flex-end}
+.header-short {display:none}
 .brand {flex:none;gap:10px;direction:rtl}
 .brand-signature {display:block;width:clamp(108px,21vw,145px);height:auto}
-@media(max-width:375px) {
-  .brand {gap:6px}
+@media(max-width:500px) {
+  header {column-gap:6px}
+  .brand {flex:0 1 clamp(3.75rem,19vw,6rem);min-inline-size:0}
+  .brand-signature {width:100%}
+  header nav {flex:none;gap:4px;max-inline-size:calc(100% - 3.5rem)}
+  header nav button {padding-inline:.45rem}
+  #logout {min-width:44px;min-height:44px}
+  header .header-full {display:none}
+  header .header-short {display:inline}
 }
 
 .beta-links {margin:1.5rem 0;color:#426258;font-size:.9rem}.beta-links a {color:inherit}
@@ -195,6 +203,7 @@ body.hosted-view:not(.route-ready):has(#routeGone:not([hidden])) #status {displa
 #welcome {padding:1.4rem 1.25rem}
 #welcome h3 {font-size:1.2rem;letter-spacing:-.02em;line-height:1.25}
 #welcome p {margin:.55rem 0 1rem;color:var(--muted);line-height:1.5}
+[data-portable] .chat-first,html:not([data-portable]) .file-first {display:none}
 @media(max-width:820px){
   body.no-trip .mapcard {display:none}
   body.no-trip .listcard {display:flex}

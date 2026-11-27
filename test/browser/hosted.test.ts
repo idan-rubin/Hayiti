@@ -1176,15 +1176,56 @@ await test('Sign out is offered only while the account journal is open', async (
       ? route.fulfill({ json: { trips: [], rev: 'r1' } })
       : route.fulfill({ status: 401, json: { error: 'Authentication required' } }));
     await page.goto(origin + '/journal.html?lang=en');
-    const signOut = page.getByRole('link', { name: 'Sign out', exact: true });
+    const signOut = page.getByRole('button', { name: 'Sign out', exact: true });
     await signOut.waitFor();
-    assert.equal(await signOut.getAttribute('href'), '/signout-with-chatgpt?return_to=%2Fjournal.html');
     assert.equal(await page.locator('#login').isVisible(), false);
 
     signedIn = false;
     await page.reload();
     await page.getByRole('link', { name: 'Sign in with ChatGPT', exact: true }).waitFor();
     assert.equal(await signOut.isVisible(), false);
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('the signed-in mobile header fits on one row and sign-out requires confirmation in both languages', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage({ viewport: { width: 375, height: 812 } });
+    const trip = { id: 'a', title: 'My trip', start: '2026-06-14', end: '2026-06-14', stops: [] };
+    await hostJournal(page, route => route.fulfill({ json: { trips: [trip], rev: 'r1' } }));
+    const signOutUrl = origin + '/signout-with-chatgpt?return_to=%2Fjournal.html';
+    await page.route(signOutUrl, route => route.fulfill({ contentType: 'text/html', body: 'Signed out' }));
+    for (const language of ['he', 'en']) {
+      const journalUrl = origin + '/journal.html?lang=' + language;
+      await page.goto(journalUrl);
+      const signOut = page.getByRole('button', { name: language === 'he' ? 'יציאה מהחשבון' : 'Sign out', exact: true });
+      await signOut.waitFor();
+      const bounds = await page.locator('.brand, #share, #export, #logout, #languageSwitch').evaluateAll(elements => elements.map(element => {
+        const { top, bottom, left, right } = element.getBoundingClientRect();
+        return { top, bottom, left, right };
+      }));
+      assert.equal(bounds.length, 5);
+      assert.ok(bounds.every(box => box.right > box.left && box.left >= 0 && box.right <= 375), language + ' header fits');
+      assert.ok(Math.max(...bounds.map(box => box.top)) < Math.min(...bounds.map(box => box.bottom)), language + ' header shares one row');
+      const box = await signOut.boundingBox();
+      assert.ok(box && box.width >= 44 && box.height >= 44, 'sign-out tap target');
+      assert.equal(await signOut.innerText(), language === 'he' ? 'יציאה' : 'Exit');
+
+      await signOut.press('Enter');
+      const dialog = page.getByRole('alertdialog');
+      const cancel = dialog.getByRole('button', { name: language === 'he' ? 'ביטול' : 'Cancel', exact: true });
+      await cancel.waitFor();
+      assert.equal(await cancel.evaluate(element => element === document.activeElement), true);
+      await cancel.press('Enter');
+      await dialog.waitFor({ state: 'hidden' });
+      assert.equal(page.url(), journalUrl);
+      assert.equal(await signOut.evaluate(element => element === document.activeElement), true);
+      await signOut.click();
+      await dialog.locator('#confirmYes').click();
+      await page.waitForURL(signOutUrl);
+    }
   } finally {
     await browser.close();
   }
@@ -1601,6 +1642,103 @@ await test('the hosted journal opens without the street map library and draws th
     await page.locator('#map canvas.maplibregl-canvas').waitFor();
     assert.equal(await page.locator('#map').getAttribute('data-note'), null);
     assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('the traveler can apply multiple days of street routes in one account save', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    const a = [51.92, 4.48], turn = [51.921, 4.48], b = [51.921, 4.485];
+    const start = '2026-05-03', end = '2026-05-04';
+    const trip = { id: 'route-trip', title: 'Week away', start, end, home: 'Home', homeXY: a,
+      stops: [{ id: 'market', name: 'Market', date: start, xy: b }, { id: 'station', name: 'Station', date: end, xy: b }]
+    };
+    const written: unknown[] = [];
+    await hostJournal(page, async route => {
+      if (route.request().method() === 'GET') return route.fulfill({ json: { trips: [trip], rev: 'v1' } });
+      written.push(route.request().postDataJSON());
+      return route.fulfill({ json: { rev: 'v2' } });
+    });
+    await page.goto(origin + '/journal.html?lang=en');
+    await page.locator('#title').filter({ hasText: 'Week away' }).waitFor();
+    await page.locator('#import').click();
+    await page.locator('[data-tab="files"]').click();
+    await page.locator('#file').setInputFiles({
+      name: 'street-routes.json', mimeType: 'application/json',
+      buffer: Buffer.from(JSON.stringify({
+        format: 'hayiti-routes/1', tripId: trip.id,
+        days: trip.stops.map(to => ({ date: to.date, routes: [{ a: 'base', b: to.id, type: 'walk', line: [a, turn, b] }] }))
+      }))
+    });
+    await page.locator('#preview').filter({ hasText: '2 route segments to update' }).waitFor();
+    assert.equal(written.length, 0);
+    await page.getByRole('button', { name: 'Save routes' }).click();
+    await page.locator('#sources').waitFor({ state: 'hidden' });
+    assert.equal(written.length, 1);
+    const saved = written[0] as { rev: string; trips: { edges: { b: string; line: number[][] }[] }[] };
+    assert.equal(saved.rev, 'v1');
+    assert.deepEqual(saved.trips[0].edges.map(edge => [edge.b, edge.line]), [['market', [a, turn, b]], ['station', [a, turn, b]]]);
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('the hosted journal welcomes a new traveler with the way to build a trip in ChatGPT', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await hostJournal(page, guestAPI);
+    await page.goto(origin + '/journal.html?lang=en');
+    await page.locator('#welcome').waitFor();
+    assert.deepEqual(await page.locator('#welcome h3:visible').allTextContents(), ['Build your trip in ChatGPT']);
+    assert.deepEqual(await page.locator('#welcome a:visible').allTextContents(), ['Open ChatGPT']);
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('taxi dashes and the walking path are both visible on a shared street in either travel order', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    const home = [51.92, 4.48], market = [51.92, 4.49];
+    const dates = ['2026-05-03', '2026-05-04'];
+    const trip = {
+      id: 'round-trip', title: 'Round trip', start: dates[0], end: dates[1], home: 'Home', homeXY: home,
+      stops: dates.flatMap(date => [
+        { id: date + '-out', date, name: 'Market', xy: market, rank: 1 },
+        { id: date + '-back', date, name: 'Back home', xy: home, rank: 2 }
+      ]),
+      edges: dates.flatMap((date, index) => [
+        { a: 'base', b: date + '-out', type: index === 0 ? 'taxi' : 'walk', line: [home, market] },
+        { a: date + '-out', b: date + '-back', type: index === 0 ? 'walk' : 'taxi', line: [market, home] }
+      ])
+    };
+    await hostJournal(page, route => route.fulfill({ json: { trips: [trip], rev: 'r1' } }));
+    await page.goto(origin + '/journal.html?lang=en');
+    await page.locator('#title').filter({ hasText: trip.title }).waitFor();
+    for (const date of dates) {
+      await page.locator('#tripDate').selectOption(date);
+      // Sample the top painted line across several dash periods, away from the pins at each end.
+      await page.waitForFunction(() => {
+        const lines = [...document.querySelectorAll<SVGPathElement>('#map .leaflet-pane path[stroke]')];
+        const walk = lines.find(line => !line.hasAttribute('stroke-dasharray'));
+        const taxi = lines.find(line => line.hasAttribute('stroke-dasharray'));
+        const matrix = walk?.getScreenCTM();
+        if (!walk || !taxi || !matrix) return false;
+        const visible = new Set<Element>();
+        const length = walk.getTotalLength();
+        for (let distance = length / 4; distance < length * .75; distance++) {
+          const point = walk.getPointAtLength(distance).matrixTransform(matrix);
+          const topLine = document.elementsFromPoint(point.x, point.y).find(el => el === walk || el === taxi);
+          if (topLine) visible.add(topLine);
+        }
+        return visible.size === 2;
+      }, undefined, { timeout: 5000 });
+    }
   } finally {
     await browser.close();
   }

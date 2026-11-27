@@ -16,6 +16,10 @@ const stopShape = {
       type: 'string',
       description: 'Known local HH:mm only'
     },
+    captureTime: {
+      type: 'string',
+      description: 'Optional local photo capture time HH:mm:ss, optionally with milliseconds. Use the same local date and minute as the stop.'
+    },
     xy: {
       type: 'array',
       items: {
@@ -122,6 +126,12 @@ export const tools = [{
       home: {
         type: 'string'
       },
+      homeXY: {
+        ...stopShape.properties.xy,
+        description: 'Optional verified latitude and longitude of the traveler-approved home base for a new trip.',
+        minItems: 2,
+        maxItems: 2
+      },
       sourceChecks: checkSchema,
       stops: {
         type: 'array',
@@ -130,5 +140,40 @@ export const tools = [{
       }
     },
     required: ['tripId', 'stops']
+  }
+}, {
+  name: 'set_day_routes',
+  description: 'Save network routes between adjacent stops on a saved day. Default to an estimated pedestrian route. Use road directions for a known taxi leg. Preserve legs with confirmed travel by other modes and omit unavailable directions. Supply same only for coincident stops. Use gap and an empty line only for an explicitly requested gap. Read get_day to verify the saved modes and vertex counts.',
+  annotations: {
+    readOnlyHint: false,
+    destructiveHint: true,
+    openWorldHint: false,
+    idempotentHint: true
+  },
+  inputSchema: {
+    type: 'object',
+    properties: {
+      tripId: { type: 'string' },
+      date: { type: 'string', description: 'Local YYYY-MM-DD' },
+      routes: {
+        type: 'array', maxItems: 200,
+        items: {
+          type: 'object',
+          properties: {
+            a: { type: 'string', description: 'Start stop ID, or base for the implicit home origin.' },
+            b: { type: 'string', description: 'Next on-route stop ID for this day.' },
+            type: { type: 'string', enum: ['walk', 'taxi', 'same', 'gap'] },
+            m: { type: 'number', minimum: 0, description: 'Optional network distance in metres; defaults to measured line length.' },
+            line: {
+              type: 'array', maxItems: 1000,
+              description: 'Network geometry in travel order. Each point is [latitude, longitude]. Leave empty for gap or same. Never draw a direct line as a substitute for routing.',
+              items: { type: 'array', minItems: 2, maxItems: 2, items: { type: 'number' } }
+            }
+          },
+          required: ['a', 'b', 'type', 'line']
+        }
+      }
+    },
+    required: ['tripId', 'date', 'routes']
   }
 }];

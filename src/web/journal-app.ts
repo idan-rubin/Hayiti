@@ -10,6 +10,7 @@ import { createDateReel } from './date-reel.ts';
 import { cleanTrip, cleanStop, mergeStops, combineEvidence, journalCharacterLimit } from '../domain/core.ts';
 import { importCsv, importIcs, pastedStop } from '../domain/importers.ts';
 import { checkGuestBackup, discardGuest, guestKey, guestMergeRequested, requestGuestMerge, tripsWaitingInTab } from './guest-draft.ts';
+import { prepareRouteImport } from '../domain/route-update.ts';
 import { JournalSession, localToday } from './journal-session.ts';
 import { preparePhoto } from './photos.ts';
 import { ask, clearError, showError } from './confirm.ts';
@@ -115,6 +116,8 @@ const map = L.map('map', {
   zoomSnap: .25,
   maxZoom: 19
 }).setView([30, 15], 2);
+// Taxi dashes sit above walking paths (400) and below stop markers (600), in either travel order.
+map.createPane('taxiRoutes').style.zIndex = '410';
 const overlay = L.layerGroup().addTo(map);
 const rows = new Map<string, HTMLElement>(),
   marks = new Map<string, MapMarker>();
@@ -220,6 +223,7 @@ const types = {
   whatsapp: ['✆', '#276a58']
 };
 const glyphs: Partial<Record<Source, string>> = {
+  photo: '<path d="M2 6h4l2-3h4l2 3h4v11H2z"/><circle cx="10" cy="11" r="3"/>',
   email: '<rect x="2" y="4" width="16" height="12" rx="2"/><path d="m3 5 7 5 7-5"/>',
   calendar: '<rect x="3" y="4" width="14" height="13" rx="2"/><path d="M6 2v4m8-4v4M3 8h14m-10 4h2m2 0h2"/>',
   card: '<rect x="2" y="4" width="16" height="12" rx="2"/><path d="M2 8h16M5 12h4"/>'
@@ -415,10 +419,11 @@ function draw() {
           const line = edge?.line?.length ? edge.line : [prev.xy, s.xy];
           const taxi = edge?.type === 'taxi';
           L.polyline(line, {
+            pane: taxi ? 'taxiRoutes' : 'overlayPane',
             color: taxi ? '#b96331' : '#267957',
-            weight: 3,
-            dashArray: taxi ? '9 7' : edge?.type === 'walk' ? null : '5 7',
-            opacity: .85
+            weight: edge?.type === 'walk' ? 5 : 3,
+            dashArray: taxi ? '9 9' : edge?.type === 'walk' ? null : '5 7',
+            opacity: taxi ? 1 : .85
           }).addTo(overlay);
           routeBounds.extend(line);
         }
@@ -848,6 +853,8 @@ $('tripForm').onsubmit = async e => {
             s.address = '';
             trip.edges = trip.edges.filter(edge => edge.a !== s.id && edge.b !== s.id);
           }
+          // A saved leg from the home base starts at the place it used to be.
+          if (JSON.stringify(fields.homeXY) !== JSON.stringify(trip.homeXY)) trip.edges = trip.edges.filter(edge => edge.a !== 'base');
         }
         Object.assign(trip, fields);
       }
@@ -995,6 +1002,12 @@ $('editForm').onsubmit = async e => {
       else if (old?.photos.length && ef.source.value !== 'photo') evidence = evidence.filter(source => source !== 'photo');
       const s = cleanStop({
         ...old,
+        captureTime: old?.date === ef.date.value && old.time === ef.time.value ? old.captureTime : undefined,
+        photoAnchor: old?.date === ef.date.value && old.xy?.toString() === xy?.toString() ? old.photoAnchor : undefined,
+        // A photo-backed stop the traveler re-dates, re-times or moves is theirs from then on. Later imports
+        // leave it in place, and a retry of the same photo finds it on its corrected day.
+        edited: old?.edited || (old?.sources.includes('photo')
+          && (old.date !== ef.date.value || old.time !== ef.time.value || old.xy?.toString() !== xy?.toString())) || undefined,
         photos: draftPhotos,
         id: draftId || undefined,
         name: ef.name.value,
@@ -1027,6 +1040,9 @@ $('editForm').onsubmit = async e => {
           delete trip.dayNotes[old.date];
         }
         Object.assign(old, s);
+        // Assigning keeps what the edit left out. A capture time or anchor the edit dropped goes with it.
+        if (!s.captureTime) delete old.captureTime;
+        if (!s.photoAnchor) delete old.photoAnchor;
       } else {
         mergeStops(trip, [s]);
       }
@@ -1194,6 +1210,11 @@ for (const dialog of document.querySelectorAll('dialog')) {
   dialog.addEventListener('input', () => clearError(dialog));
 }
 enableSharing(() => session.trip, portable, () => session.day, () => session.mode === 'account');
+$('logout').onclick = async () => {
+  const confirmed = ask(ui('Sign out of hayiti?', 'לצאת מהחשבון?'), t('יציאה מהחשבון'));
+  $('confirmNo').focus();
+  if (await confirmed) window.open('/signout-with-chatgpt?return_to=%2Fjournal.html', '_top');
+};
 $('export').onclick = () => {
   const { trip } = session;
   if (!trip) return;
@@ -1293,6 +1314,23 @@ async function previewFile(f: File, order?: 'day-first' | 'month-first') {
       backup: Trip | undefined;
     if (/\.json$/i.test(f.name)) {
       const o = JSON.parse(raw);
+      if (isRecord(o) && o.format === 'hayiti-routes/1') {
+        const active = session.trip;
+        if (!active) throw Error(t('יש לבחור טיול תחילה'));
+        const revision = session.revision;
+        const plan = prepareRouteImport(active, o);
+        target.append(dom('p', quantity(plan.updated, ' מקטעים לעדכון', 'route segment to update', 'route segments to update') +
+          ' · ' + quantity(plan.unchanged, ' מקטעים כבר שמורים', 'segment already saved', 'segments already saved')));
+        if (plan.updated) target.append(button(ui('Save routes', 'שמירת מסלולים'), async () => {
+          const ok = await change(() => {
+            const trip = session.trip;
+            if (!trip || trip !== active || session.revision !== revision) throw Error(t('הטיול השתנה. יש לבחור את קובץ הייבוא מחדש.'));
+            trip.edges = plan.edges;
+          });
+          if (ok) $('sources').close();
+        }));
+        return;
+      }
       if (['hayiti/1', 'masluli/1'].includes(o.format)) backup = cleanTrip(o.trip);else if (['hayiti-stops/1', 'masluli-stops/1'].includes(o.format) && Array.isArray(o.stops)) result = {
         stops: o.stops.map(cleanStop),
         omitted: 0,
