@@ -1130,15 +1130,21 @@ await test('a removed Google Pin stays off the map after reload and reimport unt
     const date = '2026-06-14';
     const pin = { id: 'bookmark', name: 'Museum', xy: [52.01, 4.01], date };
     const another = { ...pin, id: 'new', name: 'Gallery', xy: [52.01, 4.02] };
-    await page.addInitScript(trip => {
-      if (!localStorage.getItem('masluli-portable-v2')) localStorage.setItem('masluli-portable-v2', JSON.stringify({ trips: [trip] }));
-    }, { id: 'trip', title: 'Weekend', start: date, end: date, stops: [], googlePins: [pin] });
+    const trip = { id: 'trip', title: 'Weekend', start: date, end: date, stops: [], googlePins: [pin] };
     await page.goto(new URL('../../dist/web/Hayiti.html?lang=en', import.meta.url).href);
+    await page.locator('#import').click();
+    await page.locator('[data-tab="files"]').click();
+    await page.locator('#file').setInputFiles({ name: 'weekend.json', mimeType: 'application/json',
+      buffer: Buffer.from(JSON.stringify({ format: 'hayiti/1', trip })) });
+    await page.getByRole('button', { name: 'Load trip' }).click();
     await page.getByRole('button', { name: 'Museum · Google Pin' }).click();
     await page.getByRole('button', { name: 'Remove from trip' }).click();
     await page.locator('#confirmYes').click();
     await page.locator('.google-pin').waitFor({ state: 'detached' });
+    await page.waitForFunction(id => JSON.parse(localStorage.getItem('masluli-portable-v2')!).trips[0].removedGooglePinIds?.includes(id), pin.id);
     await page.reload();
+    await page.locator('#title').filter({ hasText: trip.title }).waitFor();
+    assert.equal(await page.locator('.google-pin').count(), 0);
     const openPreview = async () => {
       await page.locator('#import').click();
       await page.locator('[data-tab="files"]').click();

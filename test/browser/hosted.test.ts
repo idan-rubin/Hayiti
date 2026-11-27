@@ -1248,16 +1248,21 @@ await test('the mobile trip toolbar keeps the overview beside the daily actions 
             const label = [...button.children].find(span => span.checkVisibility()) ?? button;
             const range = document.createRange();
             range.selectNodeContents(label);
-            const textLines = new Set([...range.getClientRects()].map(rect => rect.top));
-            return { top, left, right, lines: textLines.size };
+            // Bidirectional glyph runs can share a baseline while having different font ascents.
+            const runs = [...range.getClientRects()].filter(rect => rect.width && rect.height);
+            const overlap = Math.min(...runs.map(rect => rect.bottom)) - Math.max(...runs.map(rect => rect.top));
+            const oneLine = runs.length > 0 && overlap > Math.min(...runs.map(rect => rect.height)) / 2;
+            const fits = runs.every(rect => rect.left >= left - 1 && rect.right <= right + 1);
+            return { id: button.id, top, left, right, oneLine, fits };
           }));
           assert.equal(boxes.length, pressed ? 2 : 4);
-          assert.ok(boxes.every(box => box.lines === 1), 'each action label fits on one line');
+          for (const box of boxes) assert.ok(box.oneLine && box.fits, `${lang} ${width}px: ${box.id} label must fit on one line`);
           assert.equal(await toolbar.getByRole('button', { name: lang === 'he' ? 'מקורות וייבוא' : 'Sources and import', exact: true }).count(), 1);
           if (!pressed) assert.equal(await toolbar.getByRole('button', { name: lang === 'he' ? 'הצע סדר הליכה' : 'Suggest walking order', exact: true }).count(), 1);
           assert.ok(boxes.every(box => box.top === boxes[0].top));
           const bounds = await toolbar.boundingBox();
           assert.ok(bounds);
+          assert.ok(boxes.every(box => box.left >= bounds.x - 1 && box.right <= bounds.x + bounds.width + 1));
           const leadingSpace = lang === 'he' ? bounds.x + bounds.width - boxes[0].right : boxes[0].left - bounds.x;
           assert.ok(Math.abs(leadingSpace) < 1);
           const gap = await toolbar.evaluate(row => parseFloat(getComputedStyle(row).columnGap));
