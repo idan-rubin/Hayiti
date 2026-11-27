@@ -1255,7 +1255,7 @@ await test('one daily details panel keeps unlocated visits, unconfirmed attendan
       if (!localStorage.getItem(key)) localStorage.setItem(key, JSON.stringify({ trips: [seed] }));
     }, trip);
     await page.goto(new URL('../../dist/web/Hayiti.html?lang=he', import.meta.url).href);
-    await page.locator('#otherSummary').click();
+    await page.locator('#reviewDay').click();
     assert.equal(await page.locator('#otherSummary').innerText(), 'מידע נוסף לאותו יום (5)');
     assert.equal(await page.locator('#otherSummary').evaluate(el => document.activeElement === el), true);
     assert.deepEqual(await page.locator('#stops .stopname').allTextContents(), ['Park']);
@@ -1397,7 +1397,7 @@ await test('mapped visits keep details collapsed until the last visit is removed
     await page.locator('#otherSummary').click();
     await page.locator('#languageSwitch').selectOption('he');
     assert.equal(await isOpen(), false);
-    await page.locator('#reviewDay').click();
+    await page.locator('#otherSummary').click();
     await page.locator('#languageSwitch').selectOption('en');
     assert.equal(await isOpen(), true);
   } finally {
