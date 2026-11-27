@@ -397,3 +397,13 @@ await test('a Google Pin with no known location is refused, and a day outside th
   // A journal that already holds such a pin still opens.
   assert.equal(cleanTrip({ ...trip, googlePins: [{ id: 'nowhere', name: 'Unknown place', xy: [0, 0] }] }).googlePins?.length, 1);
 });
+
+await test('two photos on different days that share a reference stay separate stops', () => {
+  const trip = sample();
+  trip.stops = [];
+  // Two phones can produce the same file name. Only a stop the traveler moved is followed to another day.
+  const photo = (date: string, xy: number[]) => ({ date, name: 'Camera pin', time: '10:00', xy, sources: ['photo'], refs: ['IMG_0001'] });
+  mergeStops(trip, [photo(trip.start, [0, 4])]);
+  assert.deepEqual(mergeStops(trip, [photo(trip.end, [0.5, 4])]), { added: 1, linked: 0, skipped: 0 });
+  assert.deepEqual(trip.stops.map(stop => [stop.date, stop.xy]), [[trip.start, [0, 4]], [trip.end, [0.5, 4]]]);
+});

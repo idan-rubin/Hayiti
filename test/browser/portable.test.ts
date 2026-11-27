@@ -1022,3 +1022,26 @@ await test('the map controls leave pins and an opened popup uncovered, and a Goo
     await browser.close();
   }
 });
+
+await test('a photo-backed visit the traveler moves to another day is marked as theirs', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await page.route('https://**/*', route => route.abort());
+    const first = '2026-06-14', second = '2026-06-15';
+    await page.addInitScript(trip => localStorage.setItem('masluli-portable-v2', JSON.stringify({ trips: [trip] })), {
+      id: 'trip', title: 'Weekend', start: first, end: second,
+      stops: [{ id: 'visit', date: first, name: 'Harbour café', xy: [32.08, 34.78], sources: ['card', 'photo'], refs: ['charge', 'asset-1'], count: 1 }]
+    });
+    await page.goto(new URL('../../dist/web/Hayiti.html?lang=en', import.meta.url).href);
+    await page.getByRole('button', { name: 'Harbour café', exact: true }).first().click();
+    await page.locator('#editForm [name=date]').fill(second);
+    await page.locator('#editForm .primary').click();
+    await page.locator('#edit').waitFor({ state: 'hidden' });
+    const [stop] = await page.evaluate(() => JSON.parse(localStorage.getItem('masluli-portable-v2')!).trips[0].stops);
+    // A retry of the same photo finds the visit on its corrected day because of this mark.
+    assert.deepEqual([stop.date, stop.edited], [second, true]);
+  } finally {
+    await browser.close();
+  }
+});
