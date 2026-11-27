@@ -65,6 +65,17 @@ await test('a trip created in chat starts each day at the supplied home base', a
   assert.deepEqual(origin.xy, homeXY);
 });
 
+await test('a home base that cannot be placed is refused, and no trip is saved without its pin', async () => {
+  const { tool, trip, env } = fixture();
+  // Longitude first: a latitude of 139.69 does not exist.
+  const refused = await (await tool('add_trip_stops', {
+    tripId: trip.id, start: trip.start, end: trip.end, title: trip.title,
+    home: 'Guesthouse', homeXY: [139.69, 35.68], stops: []
+  })).json();
+  assert.equal(refused.result.isError, true);
+  assert.deepEqual((await loadState(env.BUCKET, 'alice')).trips, []);
+});
+
 await test('owner-only reads, dated source outcomes, and duplicate writes through the MCP endpoint', async () => {
   const {
     env,
