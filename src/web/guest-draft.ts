@@ -39,10 +39,7 @@ function adoptTabDraft() {
   sessionStorage.removeItem(attemptsKey);
 }
 
-/**
- * How many trips this tab still holds from the earlier version because they do not fit in the browser's
- * storage next to the trips already there. They stay in the tab, untouched, until there is room.
- */
+/** Legacy tab drafts that cannot yet fit beside the browser's stored trips. */
 export function tripsWaitingInTab(): number {
   try {
     const fromTab = sessionStorage.getItem(guestKey);
@@ -52,10 +49,7 @@ export function tripsWaitingInTab(): number {
   }
 }
 
-/**
- * Moves a draft the earlier version left in this tab into the browser's draft. Tabs take turns, as they do
- * for saves, so two tabs that upgrade at the same moment both keep their trips.
- */
+/** Migrate legacy tab drafts under the cross-tab save lock. */
 export async function moveTabDraft() {
   let waiting: boolean;
   try {
@@ -94,10 +88,7 @@ export function guestSnapshot(): string | null {
   }
 }
 
-/**
- * Runs a save while no other tab of this browser is saving the draft, so one tab's check of the stored draft
- * and the write that follows are never interleaved with another tab's.
- */
+/** Keep the draft version check and write atomic across browser tabs. */
 export function withGuestLock<T>(save: () => T | Promise<T>): Promise<T> {
   const locks: LockManager | undefined = navigator.locks;
   if (!locks) return Promise.resolve().then(save);

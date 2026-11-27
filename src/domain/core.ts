@@ -71,7 +71,7 @@ export interface Trip {
   homeXY: Point | null;
   stops: Stop[];
   googlePins?: GooglePin[];
-  /** Stable bookmark IDs the traveler removed from this trip. */
+  /** Tombstones suppress reimports until explicitly restored. */
   removedGooglePinIds?: string[];
   edges: Edge[];
   rules: string;
@@ -230,8 +230,7 @@ export function photoLocation(stop: Stop): stop is Stop & { xy: Point } {
   return stop.kind === 'visit' && stop.xy !== null && hasPhotoAssetRefs(stop) && !stop.photos.length && !stop.count;
 }
 
-// Whether one local time is known to come before another. A time without seconds says nothing about the
-// order inside its own minute, so it never displaces a capture recorded to the second.
+// Minute-only timestamps cannot order captures within the same minute.
 function knownEarlier(time: string, than: string): boolean {
   if (time.length === 5 || than.length === 5) return time.slice(0, 5) < than.slice(0, 5);
   const precise = (value: string) => value.length === 8 ? value + '.000' : value.padEnd(12, '0');
@@ -419,7 +418,7 @@ export function mergeStops(trip: Trip, incoming: readonly unknown[], restoredIds
     // A restore can add references to a current pin without moving it and invalidating the saved route.
     result[linkPhotoReferences(pin, stop, originalPins?.has(pin))]++;
     restoredIds?.set(stop.id, pin.id);
-    // A saved route ends where the pin was. It goes with the move, as it does when the traveler moves a pin.
+    // Routes attached to the old photo location are no longer valid.
     if (was && pin.xy && (was[0] !== pin.xy[0] || was[1] !== pin.xy[1])) {
       trip.edges = trip.edges.filter(edge => edge.a !== pin.id && edge.b !== pin.id);
     }

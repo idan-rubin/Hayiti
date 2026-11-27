@@ -104,7 +104,6 @@ function hint(message: () => string, tone: Tone = '') {
 function endHint() {
   if (heldStatus) msg(...heldStatus);
 }
-// Failures appear in the open dialog, or in the status line when none is open.
 const fail = (message: string) => showError(message, text => msg(() => text, 'error'));
 const button = (title: string, fn: () => void) => {
   const b = dom('button', title);
@@ -193,7 +192,6 @@ function renderSelection() {
   render();
 }
 const ui = (en: string, he: string) => language === 'en' ? en : he;
-// Pins and routes are drawn either way. When the streets under them cannot be, the map says why.
 let streetMapProblem: StreetMapProblem = null;
 function showStreetMapNote() {
   const container = map.getContainer();
@@ -664,7 +662,6 @@ $('reviewDay').onclick = () => {
   $('other').open = true;
   $('otherSummary').focus();
 };
-// Connects a stop's row with its pin: choosing one points at the other.
 function reveal(id: string, target: 'row' | 'pin') {
   selected = id;
   for (const [key, row] of rows) row.classList.toggle('activeStop', key === id);
@@ -785,7 +782,6 @@ async function load(afterConflict = false, quiet = false) {
   $('range').hidden = unreadable;
   $('discardDraft').hidden = !unreadable;
   $('login').hidden = result.kind !== 'guest' && result.kind !== 'signed-out';
-  // Sign out is offered only while the account journal is open, which is also how the traveler sees they are signed in.
   $('logout').hidden = session.mode !== 'account';
   renderSelection();
   switch (result.kind) {
@@ -1016,7 +1012,6 @@ function openSettings(fresh: boolean) {
   showPin($('homeState'), tf.coords.value);
   $('config').showModal();
 }
-// Says in words whether a place has a map pin, since the coordinates sit under the extra fields.
 function showPin(target: HTMLElement, coordinates: string) {
   target.textContent = coordinates.trim() ? ui('Pin set', 'הסיכה נקבעה') : ui('No map pin yet', 'עדיין אין סיכה במפה');
 }
@@ -1179,7 +1174,6 @@ function openStop(s: Partial<Stop> = {}) {
   ef.notes.value = s.notes || '';
   $('georesults').replaceChildren();
   $('removeStop').hidden = !draftId;
-  // A new stop needs only a name. A saved stop shows everything recorded about it.
   $('moreStop').open = !!draftId;
   resetPinForm(stopPin);
   showPin($('pinState'), ef.coords.value);
@@ -1352,7 +1346,6 @@ async function searchPlaces(query: string, trip: Trip | null): Promise<Place[]> 
     coordinates: a.lat + ', ' + a.lon
   }));
 }
-// The traveler asked to see the matches and chooses among them.
 async function findOnMap(query: string, trip: Trip | null, target: HTMLElement, trigger: HTMLButtonElement, choose: (coordinates: string) => void) {
   const q = query.trim();
   if (!q) {
@@ -1374,8 +1367,7 @@ async function findOnMap(query: string, trip: Trip | null, target: HTMLElement, 
     setTimeout(() => trigger.disabled = false, 1100);
   }
 }
-// A form that can pin its address when saved. It counts its openings and closings, so an answer that arrives
-// late never reaches a form that was closed or reused for something else.
+// The generation counter prevents late lookups from reaching a closed or reused form.
 interface PinForm {
   address: HTMLInputElement;
   coords: HTMLInputElement;
@@ -1391,10 +1383,7 @@ function resetPinForm(form: PinForm) {
   form.looking = false;
   form.unpinned = '';
 }
-/**
- * Saving an address without a pin looks the address up first. When no pin is found the save stops and says so,
- * and saving the same address again keeps it without a pin. Returns whether the save goes on.
- */
+/** Geocode an unpinned address before saving; a second save accepts an unresolved address. */
 async function pinBeforeSave(form: PinForm, saved: string, trip: Trip | null) {
   if (form.looking) return false;
   const address = form.address.value.trim();

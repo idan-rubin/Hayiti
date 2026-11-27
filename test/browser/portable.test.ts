@@ -15,7 +15,6 @@ async function showDayDetails(page: Page) {
   }
 }
 
-// Reads the single HTML file out of a ZIP that the Share dialog offers for download.
 async function offeredFile(page: Page, link: string) {
   await page.waitForFunction(id => document.querySelector<HTMLAnchorElement>(id)?.href.startsWith('blob:'), link);
   const bytes = await page.evaluate(async id => {
@@ -462,7 +461,6 @@ await test('Escape cancels choosing a point on the map and returns to the stop b
     await page.waitForTimeout(300);
     assert.equal(await page.locator('#edit').getAttribute('open'), '');
     assert.equal(await page.locator('#editForm [name=name]').inputValue(), 'Half-written stop');
-    // A second Escape is the ordinary way to close the editor.
     await page.keyboard.press('Escape');
     await page.locator('#edit').waitFor({ state: 'hidden' });
   } finally {
@@ -511,7 +509,6 @@ await test('a journal file makes an exact copy of the blank app and a route file
     await page.getByRole('button', { name: 'Try the sample trip' }).click();
     await page.locator('#share').click();
 
-    // The file stores its code once, and still reproduces itself character for character.
     const app = await offeredFile(page, '#downloadApp');
     const original = await readFile(built, 'utf8');
     assert.equal(app.html.length, original.length);
@@ -580,7 +577,6 @@ await test('a browser that cannot draw the street map says so and still shows th
   }
 });
 
-// Where each pin of the sample trip is drawn, on load and after zooming in twice.
 async function samplePins(page: Page) {
   await page.setViewportSize({ width: 1200, height: 800 });
   await page.route('https://**/*', route => route.abort());

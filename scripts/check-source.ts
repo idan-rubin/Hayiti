@@ -2,7 +2,6 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { basename, extname } from 'node:path';
 
-// Documentation, data, artwork and declarative configuration can accompany TypeScript.
 const assetExtensions = new Set([
   '.css', '.html', '.ico', '.jpeg', '.jpg', '.json', '.md', '.png', '.svg',
   '.toml', '.ttf', '.txt', '.webp', '.woff', '.woff2', '.yaml', '.yml'

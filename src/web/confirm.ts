@@ -16,7 +16,6 @@ export function ask(message: string, action: string): Promise<boolean> {
   });
 }
 
-/** Shows a failure where the traveler is looking: inside the open dialog, or in the given fallback. */
 export function showError(message: string, fallback: (message: string) => void) {
   const open = [...document.querySelectorAll<HTMLDialogElement>('dialog[open]:not(#confirmBox)')].at(-1);
   if (!open) {

@@ -81,8 +81,7 @@ for (const name of ['hayiti-icon.png', 'hayiti-signature.png']) {
   const image = await dataURL('public/' + name, 'image/png');
   standalone = standalone.replaceAll(new RegExp('"' + name.replace('.', '\\.') + '(?:\\?[^"]*)?"', 'g'), '"' + image + '"');
 }
-// A browser reads every line ending as a line feed. Writing them that way keeps the text a running journal
-// reads back from its own document identical to the text in the file.
+// Match the browser's parsed line endings so portable exports reproduce their source exactly.
 standalone = standalone.replace(/\r\n?/g, '\n');
 const blank = portableDocument(standalone);
 await writeFile(output + '/Hayiti.html', blank);

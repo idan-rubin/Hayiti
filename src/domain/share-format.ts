@@ -11,7 +11,7 @@ function selectSharedRoute(trip: Trip, includeOrigin: boolean, day: string | nul
     // A ride can end at the home base even when the record is labelled as a drop-off.
     const xy = stop.xy;
     if (xy && points.some(([lat, lon]) => Math.abs(xy[0] - lat) < 0.0002 && Math.abs(xy[1] - lon) < 0.0002)) return true;
-    // A photo taken where the traveler stayed is pinned where the camera was, anywhere around the building.
+    // Nearby photo coordinates can expose the home base.
     if (xy && stop.sources.includes('photo') && points.some(home => distanceMeters(home, xy) <= photoPinRadiusMeters)) return true;
     return [stop.name, stop.address].some(value => value && labels.some(label => value.trim().toLowerCase() === label || label.length >= 6 && value.toLowerCase().includes(label)));
   }
@@ -76,8 +76,7 @@ export function readSharedRoute(value: unknown, includeOrigin: boolean) {
   return selectSharedRoute(cleanTrip(value), includeOrigin, null, id => id);
 }
 
-// Code and styles that the portable file holds once. The pristine copy it carries leaves their text out,
-// and a file made from a journal takes that text from the document the journal runs in.
+// Portable copies refill omitted script and style bodies from the running document.
 const part = /(<(script|style) data-part="([\w-]+)"[^>]*>)[\s\S]*?(<\/\2>)/g;
 
 export function withoutParts(source: string) {

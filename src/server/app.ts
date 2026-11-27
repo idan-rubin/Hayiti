@@ -2,7 +2,7 @@ import { journalAPI } from './journal-api.ts';
 import { routeLinkAPI } from './route-links.ts';
 import type { Bindings } from './storage.ts';
 
-/** The host resolves identity from its verified session or OAuth token. Anonymous callers retain discovery and link viewing. */
+/** identity must come from the host's verified session or OAuth token. */
 export async function handleRequest(request: Request, env: Bindings, identity: string | null, assets: (request: Request) => Promise<Response>): Promise<Response> {
   const url = new URL(request.url);
   switch (url.pathname) {

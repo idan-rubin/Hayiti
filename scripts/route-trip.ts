@@ -1,5 +1,4 @@
-// Input is a private plan of adjacent stops. A pair defaults to an estimated walk.
-// Route services receive only coordinates. Write the import package to stdout after all calls succeed.
+// Route services receive coordinates only; emit the import package after all requests succeed.
 import { readFileSync } from 'node:fs';
 import { distanceMeters, isRecord, point, safeDate, type Edge, type Point } from '../src/domain/core.ts';
 
