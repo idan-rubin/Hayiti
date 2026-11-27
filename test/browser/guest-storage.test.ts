@@ -1,19 +1,22 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
-import { chromium, type Page } from 'playwright-core';
-import { guestTitles, patchGuestRecord, readGuestRecord } from './guest-storage-helpers.ts';
+import { chromium, type Page, type Route } from 'playwright-core';
+import { journalAPI } from '../../src/server/journal-api.ts';
+import { loadState } from '../../src/server/storage.ts';
+import { MemoryBucket } from '../memory-bucket.ts';
+import { guestTitles, patchGuestRecord, readGuestRecord, readLegacyGuestSources, replaceLegacyGuestAfterCommit, seedLegacyGuestOnce } from './guest-storage-helpers.ts';
 
 const origin = 'https://hayiti.test';
 const legacyKey = 'hayiti-unsigned-journal';
 const date = '2026-06-14';
 const trip = (id: string, title = id) => ({ id, title, start: date, end: date, stops: [] });
 
-async function hostGuest(page: Page) {
+async function hostGuest(page: Page, api: (route: Route) => Promise<void> = route => route.fulfill({ status: 401 })) {
   await page.route('https://**/*', route => route.abort());
   await page.route(origin + '/**', async route => {
     const pathname = new URL(route.request().url()).pathname;
-    if (pathname.startsWith('/api/')) return route.fulfill({ status: 401 });
+    if (pathname.startsWith('/api/')) return api(route);
     try {
       const body = await readFile(new URL('../../dist/web' + pathname, import.meta.url));
       const extension = pathname.split('.').at(-1) ?? '';
@@ -73,13 +76,12 @@ await test('concurrent guest saves preserve every trip with and without Web Lock
   }
 });
 
-await test('canonical guest data ignores later writes from an older localStorage client', async () => {
+await test('a trip added by an older localStorage client survives alongside canonical changes after reload', async () => {
   const browser = await chromium.launch();
   try {
     const page = await browser.newPage();
-    await page.addInitScript(({ key, seed }) => {
-      if (localStorage.getItem(key) === null) localStorage.setItem(key, JSON.stringify({ trips: [seed] }));
-    }, { key: legacyKey, seed: trip('legacy', 'Legacy trip') });
+    const original = trip('legacy', 'Legacy trip');
+    await seedLegacyGuestOnce(page, { local: JSON.stringify({ trips: [original] }) });
     await hostGuest(page);
     await page.goto(origin + '/journal.html?lang=en');
     await page.locator('#title').filter({ hasText: 'Legacy trip' }).waitFor();
@@ -87,14 +89,66 @@ await test('canonical guest data ignores later writes from an older localStorage
     await page.locator('#tripForm [name=title]').fill('Canonical trip');
     await page.locator('#tripForm .primary').click();
     await page.locator('#config').waitFor({ state: 'hidden' });
-    const before = await readGuestRecord(page);
-    await page.evaluate(({ key, stale }) => localStorage.setItem(key, JSON.stringify({ trips: [stale] })), {
-      key: legacyKey, stale: trip('stale', 'Old client replacement')
+    const oldTab = await page.context().newPage();
+    await oldTab.route(origin + '/**', route => route.fulfill({ contentType: 'text/html', body: '<title>Older client</title>' }));
+    await oldTab.goto(origin + '/older-client.html');
+    const later = JSON.stringify({ trips: [original, trip('old-tab-added', 'Added in the old tab')] });
+    await oldTab.evaluate(({ key, source }) => localStorage.setItem(key, source), {
+      key: legacyKey, source: later
     });
     await page.reload();
-    await page.locator('#trips option').filter({ hasText: 'Canonical trip' }).waitFor({ state: 'attached' });
-    assert.deepEqual(await guestTitles(page), ['Canonical trip', 'Legacy trip']);
+    await page.locator('#trips option').filter({ hasText: 'Added in the old tab' }).waitFor({ state: 'attached' });
+    assert.deepEqual(await guestTitles(page), ['Added in the old tab', 'Canonical trip', 'Legacy trip']);
+    assert.equal((await readLegacyGuestSources(page)).local, null);
+    const before = await readGuestRecord(page);
+    await oldTab.evaluate(({ key, source }) => localStorage.setItem(key, source), { key: legacyKey, source: later });
+    await page.reload();
+    await page.locator('#trips option').filter({ hasText: 'Added in the old tab' }).waitFor({ state: 'attached' });
     assert.deepEqual(await readGuestRecord(page), before);
+    assert.equal((await readLegacyGuestSources(page)).local, null);
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('successful migration removes local and tab plaintext only after committing both drafts and their retry metadata', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    const local = trip('browser-source', 'Browser source'), tab = trip('tab-source', 'Tab source');
+    const localAttempt = { guestId: local.id, targetId: local.id, before: '', sent: 'browser-fingerprint' };
+    const tabAttempt = { guestId: tab.id, targetId: tab.id, before: '', sent: 'tab-fingerprint' };
+    await seedLegacyGuestOnce(page, {
+      local: JSON.stringify({ trips: [local] }), tab: JSON.stringify({ trips: [tab] }),
+      localAttempts: JSON.stringify([localAttempt]), tabAttempts: JSON.stringify([tabAttempt])
+    });
+    await page.addInitScript(() => {
+      const state = { committed: false, removedBeforeCommit: false };
+      Object.assign(window, { migrationCleanupReview: state });
+      const put = IDBObjectStore.prototype.put;
+      IDBObjectStore.prototype.put = function (value: unknown, key?: IDBValidKey) {
+        if (this.transaction.db.name === 'hayiti-guest') {
+          this.transaction.addEventListener('complete', () => { state.committed = true; }, { once: true, capture: true });
+        }
+        return key === undefined ? put.call(this, value) : put.call(this, value, key);
+      };
+      const remove = Storage.prototype.removeItem;
+      Storage.prototype.removeItem = function (key: string) {
+        if (['hayiti-unsigned-journal', 'hayiti-guest-merge'].includes(key) && !state.committed) state.removedBeforeCommit = true;
+        remove.call(this, key);
+      };
+    });
+    await hostGuest(page);
+    await page.goto(origin + '/journal.html?lang=en');
+    await page.locator('#trips option').filter({ hasText: 'Tab source' }).waitFor({ state: 'attached' });
+    assert.deepEqual(await guestTitles(page), ['Browser source', 'Tab source']);
+    const saved = await readGuestRecord(page);
+    assert.deepEqual(saved?.attempts, [localAttempt, tabAttempt]);
+    assert.deepEqual(await readLegacyGuestSources(page), { local: null, tab: null, localAttempts: null, tabAttempts: null });
+    const cleanup = await page.evaluate(() => (window as unknown as Window & {
+      migrationCleanupReview: { committed: boolean; removedBeforeCommit: boolean }
+    }).migrationCleanupReview);
+    assert.deepEqual(cleanup, { committed: true, removedBeforeCommit: false });
   } finally {
     await browser.close();
   }
@@ -108,14 +162,15 @@ await test('simultaneous legacy migrations commit every tab draft once without W
     const pages = [await context.newPage(), await context.newPage()];
     for (const [index, page] of pages.entries()) {
       await hostGuest(page);
-      await page.addInitScript(({ key, local, tab }) => {
-        localStorage.setItem(key, JSON.stringify({ trips: [local] }));
-        sessionStorage.setItem(key, JSON.stringify({ trips: [tab] }));
-      }, { key: legacyKey, local: trip('local', 'Browser legacy'), tab: trip('tab-' + index, 'Tab legacy ' + index) });
+      await seedLegacyGuestOnce(page, {
+        local: JSON.stringify({ trips: [trip('local', 'Browser legacy')] }),
+        tab: JSON.stringify({ trips: [trip('tab-' + index, 'Tab legacy ' + index)] })
+      });
     }
     await Promise.all(pages.map(page => page.goto(origin + '/journal.html?lang=en')));
     for (const page of pages) await page.locator('#newTrip:not([disabled])').waitFor();
     assert.deepEqual(await guestTitles(pages[0]), ['Browser legacy', 'Tab legacy 0', 'Tab legacy 1']);
+    for (const page of pages) assert.deepEqual(await readLegacyGuestSources(page), { local: null, tab: null, localAttempts: null, tabAttempts: null });
     await Promise.all(pages.map(page => page.reload()));
     for (const page of pages) await page.locator('#newTrip:not([disabled])').waitFor();
     assert.deepEqual(await guestTitles(pages[0]), ['Browser legacy', 'Tab legacy 0', 'Tab legacy 1']);
@@ -125,13 +180,17 @@ await test('simultaneous legacy migrations commit every tab draft once without W
   }
 });
 
-await test('an aborted first migration keeps its legacy source until a successful retry', async () => {
+await test('an aborted first migration retains both local and tab originals until a successful retry', async () => {
   const browser = await chromium.launch();
   try {
     const page = await browser.newPage();
-    const serialized = JSON.stringify({ trips: [trip('legacy', 'Keep original')] });
-    await page.addInitScript(({ key, source }) => {
-      if (localStorage.getItem(key) === null) localStorage.setItem(key, source);
+    const sources = {
+      local: JSON.stringify({ trips: [trip('legacy', 'Keep browser original')] }),
+      tab: JSON.stringify({ trips: [trip('tab', 'Keep tab original')] }),
+      localAttempts: '[]', tabAttempts: '[]'
+    };
+    await seedLegacyGuestOnce(page, sources);
+    await page.addInitScript(() => {
       if (sessionStorage.getItem('migration-retry') === 'yes') return;
       const put = IDBObjectStore.prototype.put;
       IDBObjectStore.prototype.put = function (value: unknown, key?: IDBValidKey) {
@@ -141,17 +200,177 @@ await test('an aborted first migration keeps its legacy source until a successfu
         }
         return key === undefined ? put.call(this, value) : put.call(this, value, key);
       };
-    }, { key: legacyKey, source: serialized });
+    });
     await hostGuest(page);
     await page.goto(origin + '/journal.html?lang=en');
     await page.locator('#retryLoad').waitFor();
-    assert.equal(await page.evaluate(key => localStorage.getItem(key), legacyKey), serialized);
+    assert.deepEqual(await readLegacyGuestSources(page), sources);
     assert.equal(await readGuestRecord(page), null);
     assert.equal(await page.locator('#newTrip').isDisabled(), true);
     await page.evaluate(() => sessionStorage.setItem('migration-retry', 'yes'));
     await page.reload();
-    await page.locator('#title').filter({ hasText: 'Keep original' }).waitFor();
-    assert.deepEqual(await guestTitles(page), ['Keep original']);
+    await page.locator('#trips option').filter({ hasText: 'Keep tab original' }).waitFor({ state: 'attached' });
+    assert.deepEqual(await guestTitles(page), ['Keep browser original', 'Keep tab original']);
+    assert.deepEqual(await readLegacyGuestSources(page), { local: null, tab: null, localAttempts: null, tabAttempts: null });
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('a legacy source changed after commit survives cleanup and is reconciled on the next reload', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    const a = trip('a', 'Browser original'), b = trip('b', 'Tab original');
+    const changed = {
+      local: JSON.stringify({ trips: [a, trip('c', 'Browser added after commit')] }),
+      tab: JSON.stringify({ trips: [b, trip('d', 'Tab added after commit')] }),
+      localAttempts: JSON.stringify([{ guestId: 'c', targetId: 'c', before: '', sent: 'new-browser-attempt' }]),
+      tabAttempts: JSON.stringify([{ guestId: 'd', targetId: 'd', before: '', sent: 'new-tab-attempt' }])
+    };
+    await seedLegacyGuestOnce(page, {
+      local: JSON.stringify({ trips: [a] }), tab: JSON.stringify({ trips: [b] }),
+      localAttempts: '[]', tabAttempts: '[]'
+    });
+    await replaceLegacyGuestAfterCommit(page, changed);
+    await hostGuest(page);
+    await page.goto(origin + '/journal.html?lang=en');
+    await page.locator('#trips option').filter({ hasText: 'Tab original' }).waitFor({ state: 'attached' });
+    assert.deepEqual(await guestTitles(page), ['Browser original', 'Tab original']);
+    assert.deepEqual(await readLegacyGuestSources(page), changed);
+
+    await page.reload();
+    await page.locator('#trips option').filter({ hasText: 'Tab added after commit' }).waitFor({ state: 'attached' });
+    assert.deepEqual(await guestTitles(page), ['Browser added after commit', 'Browser original', 'Tab added after commit', 'Tab original']);
+    assert.deepEqual(await readLegacyGuestSources(page), { local: null, tab: null, localAttempts: null, tabAttempts: null });
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('cleanup also retains a newer retry fingerprint when its legacy trip bytes did not change', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    const local = JSON.stringify({ trips: [trip('a', 'Browser trip')] });
+    const tab = JSON.stringify({ trips: [trip('b', 'Tab trip')] });
+    const localAttempt = { guestId: 'a', targetId: 'a', before: '', sent: 'new-browser-attempt' };
+    const tabAttempt = { guestId: 'b', targetId: 'b', before: '', sent: 'new-tab-attempt' };
+    const changed = { local, tab, localAttempts: JSON.stringify([localAttempt]), tabAttempts: JSON.stringify([tabAttempt]) };
+    await seedLegacyGuestOnce(page, { local, tab, localAttempts: '[]', tabAttempts: '[]' });
+    await replaceLegacyGuestAfterCommit(page, changed);
+    await hostGuest(page);
+    await page.goto(origin + '/journal.html?lang=en');
+    await page.locator('#trips option').filter({ hasText: 'Tab trip' }).waitFor({ state: 'attached' });
+    assert.deepEqual(await guestTitles(page), ['Browser trip', 'Tab trip']);
+    assert.deepEqual(await readLegacyGuestSources(page), changed);
+    assert.deepEqual((await readGuestRecord(page))?.attempts, []);
+
+    await page.reload();
+    await page.locator('#trips option').filter({ hasText: 'Tab trip' }).waitFor({ state: 'attached' });
+    assert.deepEqual(await guestTitles(page), ['Browser trip', 'Tab trip']);
+    assert.deepEqual((await readGuestRecord(page))?.attempts, [localAttempt, tabAttempt]);
+    assert.deepEqual(await readLegacyGuestSources(page), { local: null, tab: null, localAttempts: null, tabAttempts: null });
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('replayed legacy snapshots cannot resurrect a deleted trip or duplicate a conflicting edit', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    const a = trip('a', 'Delete this trip'), b = trip('b', 'Browser B');
+    const first = JSON.stringify({ trips: [a, b] });
+    await seedLegacyGuestOnce(page, { local: first, tab: first, localAttempts: '[]', tabAttempts: '[]' });
+    await hostGuest(page);
+    await page.goto(origin + '/journal.html?lang=en');
+    await page.locator('#trips option').filter({ hasText: 'Browser B' }).waitFor({ state: 'attached' });
+    assert.deepEqual(await guestTitles(page), ['Browser B', 'Delete this trip']);
+    await page.locator('#trips').selectOption('a');
+    await page.locator('#settings').click();
+    await page.locator('#deleteTrip').click();
+    await page.locator('#confirmYes').click();
+    await page.locator('#config').waitFor({ state: 'hidden' });
+    assert.deepEqual(await guestTitles(page), ['Browser B']);
+    assert.deepEqual(await readLegacyGuestSources(page), { local: null, tab: null, localAttempts: null, tabAttempts: null });
+
+    await page.locator('#settings').click();
+    await page.locator('#tripForm [name=title]').fill('Canonical B edited');
+    await page.locator('#tripForm .primary').click();
+    await page.locator('#config').waitFor({ state: 'hidden' });
+    await page.evaluate(({ key, source }) => {
+      localStorage.setItem(key, source);
+      sessionStorage.setItem(key, source);
+    }, { key: legacyKey, source: first });
+    await page.reload();
+    await page.locator('#title').filter({ hasText: 'Canonical B edited' }).waitFor();
+    assert.deepEqual(await guestTitles(page), ['Canonical B edited']);
+
+    const legacyEdit = { ...b, title: 'Legacy B edited' };
+    await page.evaluate(({ key, source }) => localStorage.setItem(key, source), {
+      key: legacyKey, source: JSON.stringify({ trips: [a, legacyEdit] })
+    });
+    await page.reload();
+    await page.locator('#trips option').filter({ hasText: 'Legacy B edited' }).waitFor({ state: 'attached' });
+    assert.deepEqual(await guestTitles(page), ['Canonical B edited', 'Legacy B edited']);
+    const imported = (await readGuestRecord(page))?.trips.find(item => item.title === 'Legacy B edited');
+    assert.ok(imported && imported.id !== 'b');
+
+    await page.evaluate(({ key, source }) => sessionStorage.setItem(key, source), {
+      key: legacyKey, source: JSON.stringify({ trips: [a, legacyEdit, trip('c', 'Unrelated later trip')] })
+    });
+    await page.reload();
+    await page.locator('#trips option').filter({ hasText: 'Unrelated later trip' }).waitFor({ state: 'attached' });
+    assert.deepEqual(await guestTitles(page), ['Canonical B edited', 'Legacy B edited', 'Unrelated later trip']);
+    const repeated = (await readGuestRecord(page))?.trips.filter(item => item.title === 'Legacy B edited');
+    assert.deepEqual(repeated, [imported]);
+    assert.deepEqual(await readLegacyGuestSources(page), { local: null, tab: null, localAttempts: null, tabAttempts: null });
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('sign-in removes migrated legacy plaintext and replaying its old snapshot never restores a retired draft', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    const bucket = new MemoryBucket();
+    let signedIn = false, writes = 0;
+    const source = JSON.stringify({ trips: [trip('signed-in-trip', 'Keep in the account')] });
+    await seedLegacyGuestOnce(page, { local: source, tab: source, localAttempts: '[]', tabAttempts: '[]' });
+    await hostGuest(page, async route => {
+      const request = route.request();
+      if (request.method() === 'POST') writes++;
+      const response = await journalAPI(new Request(request.url(), {
+        method: request.method(), headers: await request.allHeaders(), body: request.postData()
+      }), bucket, 'web', signedIn ? 'traveler' : null);
+      await route.fulfill({ status: response.status, contentType: 'application/json', body: await response.text() });
+    });
+    await page.goto(origin + '/journal.html?lang=en');
+    await page.locator('#title').filter({ hasText: 'Keep in the account' }).waitFor();
+    assert.deepEqual(await readLegacyGuestSources(page), { local: null, tab: null, localAttempts: null, tabAttempts: null });
+    signedIn = true;
+    await page.reload();
+    await page.locator('#confirmText').filter({ hasText: 'Keep in the account' }).waitFor();
+    await page.locator('#confirmYes').click();
+    await page.locator('#status').filter({ hasText: 'is now in your journal' }).waitFor();
+    assert.equal(writes, 1);
+    assert.deepEqual((await loadState(bucket, 'traveler')).trips.map(item => item.title), ['Keep in the account']);
+    assert.deepEqual(await guestTitles(page), []);
+    assert.deepEqual(await readLegacyGuestSources(page), { local: null, tab: null, localAttempts: null, tabAttempts: null });
+
+    await page.evaluate(({ key, old }) => {
+      localStorage.setItem(key, old);
+      sessionStorage.setItem(key, old);
+      localStorage.setItem('hayiti-guest-merge', '[]');
+      sessionStorage.setItem('hayiti-guest-merge', '[]');
+    }, { key: legacyKey, old: source });
+    await page.reload();
+    await page.locator('#status').filter({ hasText: 'up to date' }).waitFor();
+    assert.equal(writes, 1);
+    assert.deepEqual(await guestTitles(page), []);
+    assert.deepEqual(await readLegacyGuestSources(page), { local: null, tab: null, localAttempts: null, tabAttempts: null });
   } finally {
     await browser.close();
   }
@@ -220,6 +439,36 @@ await test('discarding an unreadable tab draft preserves the valid canonical jou
     await page.locator('#title').filter({ hasText: 'Keep canonical trip' }).waitFor();
     assert.equal(await page.evaluate(key => sessionStorage.getItem(key), legacyKey), null);
     assert.deepEqual(await readGuestRecord(page), before);
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('discarding a broken tab draft migrates an ID-less browser trip once and preserves it on replay', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    const local = JSON.stringify({ trips: [{ title: 'Keep the browser trip', start: date, end: date, stops: [] }] });
+    await seedLegacyGuestOnce(page, { local, tab: '{broken' });
+    await hostGuest(page);
+    await page.goto(origin + '/journal.html?lang=en');
+    await page.locator('#discardDraft').waitFor();
+    assert.equal(await readGuestRecord(page), null);
+    assert.deepEqual(await readLegacyGuestSources(page), { local, tab: '{broken', localAttempts: null, tabAttempts: null });
+
+    await page.locator('#discardDraft').click();
+    await page.locator('#confirmYes').click();
+    await page.locator('#title').filter({ hasText: 'Keep the browser trip' }).waitFor();
+    assert.deepEqual(await guestTitles(page), ['Keep the browser trip']);
+    const before = await readGuestRecord(page);
+    assert.deepEqual(await readLegacyGuestSources(page), { local: null, tab: null, localAttempts: null, tabAttempts: null });
+
+    await page.evaluate(({ key, source }) => localStorage.setItem(key, source), { key: legacyKey, source: local });
+    await page.reload();
+    await page.locator('#title').filter({ hasText: 'Keep the browser trip' }).waitFor();
+    assert.deepEqual((await readGuestRecord(page))?.trips, before?.trips);
+    assert.deepEqual(await guestTitles(page), ['Keep the browser trip']);
+    assert.equal((await readLegacyGuestSources(page)).local, null);
   } finally {
     await browser.close();
   }

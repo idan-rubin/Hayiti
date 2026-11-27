@@ -32,10 +32,6 @@ function parseTrips(value: unknown): Trip[] {
   try { return value.trips.map(cleanTrip); }
   catch { throw new UnreadableDraft(); }
 }
-function legacyTrips(raw: string): Trip[] {
-  try { return parseTrips(JSON.parse(raw)); }
-  catch { throw new UnreadableDraft(); }
-}
 function recordOf(value: unknown): GuestRecord {
   requireJournalSchema(isRecord(value) ? value.schemaVersion : undefined);
   if (!isRecord(value) || typeof value.version !== 'string' || !value.version || !Array.isArray(value.importedTabs)
@@ -50,26 +46,12 @@ function recordOf(value: unknown): GuestRecord {
     throw error;
   }
 }
-function legacyRecord(): GuestRecord {
-  const raw = localStorage.getItem(guestKey);
-  const attempts = localStorage.getItem(attemptsKey);
-  let parsed: unknown = [];
-  if (attempts !== null) {
-    try { parsed = JSON.parse(attempts); }
-    catch { parsed = attempts; }
-  }
-  let trips: Trip[] = [];
-  if (raw !== null) {
-    try { trips = legacyTrips(raw); }
-    catch (error) {
-      unreadableTarget = { local: raw };
-      throw error;
-    }
-  }
-  return { schemaVersion: journalSchemaVersion, version: crypto.randomUUID(), trips, attempts: parsed, importedTabs: [] };
-}
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
+    if (typeof indexedDB === 'undefined') {
+      reject(Error('Saved drafts are unavailable in this browser. Enable browser storage and try again, or sign in to use your account journal.'));
+      return;
+    }
     const request = indexedDB.open('hayiti-guest', 1);
     request.onupgradeneeded = () => request.result.createObjectStore('journal');
     request.onerror = () => reject(request.error ?? Error('Draft storage unavailable'));
@@ -77,18 +59,98 @@ function openDatabase(): Promise<IDBDatabase> {
     request.onsuccess = () => resolve(request.result);
   });
 }
-async function tabMigration() {
-  const raw = sessionStorage.getItem(guestKey);
-  if (raw === null) return null;
-  const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(raw));
-  const id = Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, '0')).join('');
-  const attempts = sessionStorage.getItem(attemptsKey);
-  let parsed: unknown = [];
-  if (attempts !== null) {
-    try { parsed = JSON.parse(attempts); }
-    catch { parsed = attempts; }
+
+interface LegacySource {
+  kind: 'local' | 'tab';
+  storage: Storage;
+  raw: string | null;
+  attemptsRaw: string | null;
+  snapshot: string;
+  previousReceipt: string;
+  trips: Array<{ trip: Trip; receipt: string }>;
+  attempts: unknown;
+}
+class MigrationChanged extends Error {}
+async function digest(value: string) {
+  const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(bytes), byte => byte.toString(16).padStart(2, '0')).join('');
+}
+async function legacySource(kind: LegacySource['kind'], storage: Storage): Promise<LegacySource> {
+  const raw = storage.getItem(guestKey), attemptsRaw = storage.getItem(attemptsKey);
+  const source: LegacySource = { kind, storage, raw, attemptsRaw, snapshot: '', previousReceipt: '', trips: [], attempts: [] };
+  if (raw === null) return source;
+  let value: unknown;
+  let trips: Trip[];
+  try {
+    value = JSON.parse(raw);
+    trips = parseTrips(value);
+  } catch (error) {
+    unreadableTarget = kind === 'local' ? { local: raw } : { tab: raw };
+    throw error instanceof UnreadableDraft ? error : new UnreadableDraft();
   }
-  return { raw, id, attempts: parsed };
+  const originals = (value as { trips: unknown[] }).trips;
+  source.trips = await Promise.all(trips.map(async (trip, index) => {
+    const original = originals[index];
+    const stableIds = isRecord(original) && typeof original.id === 'string' && original.id.trim()
+      && (!Array.isArray(original.stops) || original.stops.every((stop: unknown) => isRecord(stop) && typeof stop.id === 'string' && stop.id.trim()));
+    return { trip, receipt: 'trip:' + await digest(JSON.stringify(stableIds ? trip : original)) };
+  }));
+  source.previousReceipt = await digest(raw);
+  source.snapshot = kind + ':' + await digest(JSON.stringify([raw, attemptsRaw]));
+  if (attemptsRaw !== null) {
+    try { source.attempts = JSON.parse(attemptsRaw); }
+    catch { source.attempts = attemptsRaw; }
+  }
+  return source;
+}
+function mergeLegacyAttempts(record: GuestRecord, incoming: unknown) {
+  if (Array.isArray(record.attempts) && Array.isArray(incoming)) {
+    const seen = new Set(record.attempts.map(item => JSON.stringify(item)));
+    record.attempts.push(...incoming.filter(item => !seen.has(JSON.stringify(item))));
+  } else if (Array.isArray(incoming) && !incoming.length) return;
+  else if (Array.isArray(record.attempts) && !record.attempts.length) record.attempts = incoming;
+  else if (JSON.stringify(record.attempts) !== JSON.stringify(incoming)) record.attempts = { canonical: record.attempts, legacy: incoming };
+}
+function migrateSources(record: GuestRecord, sources: LegacySource[]) {
+  const receipts = new Set(record.importedTabs);
+  let changed = false;
+  for (const source of sources) {
+    if (source.raw === null) continue;
+    const snapshotImported = receipts.has(source.snapshot);
+    const imported = snapshotImported || receipts.has(source.previousReceipt);
+    for (const { trip, receipt } of source.trips) {
+      if (receipts.has(receipt)) continue;
+      if (!imported) {
+        const same = record.trips.find(other => other.id === trip.id);
+        if (!same) record.trips.push(trip);
+        else if (JSON.stringify(same) !== JSON.stringify(trip)) {
+          const id = 'legacy-' + receipt.slice('trip:'.length);
+          if (!record.trips.some(other => other.id === id)) record.trips.push({ ...trip, id });
+        }
+      }
+      receipts.add(receipt);
+      changed = true;
+    }
+    if (!snapshotImported) mergeLegacyAttempts(record, source.attempts);
+    if (!snapshotImported) {
+      receipts.add(source.snapshot);
+      changed = true;
+    }
+  }
+  if (changed) {
+    record.importedTabs = [...receipts];
+    record.version = crypto.randomUUID();
+  }
+  return changed;
+}
+function clearMigratedSource(source: LegacySource) {
+  if (source.raw === null) return;
+  try {
+    if (source.storage.getItem(guestKey) === source.raw && source.storage.getItem(attemptsKey) === source.attemptsRaw) {
+      source.storage.removeItem(guestKey);
+      source.storage.removeItem(attemptsKey);
+    }
+  } catch {}
 }
 function notifyChange(version: string) {
   try {
@@ -101,66 +163,50 @@ function notifyChange(version: string) {
 
 // The version check and write share one IndexedDB transaction, even without Web Locks or storage events.
 export async function updateGuest<T>(operation: (record: GuestRecord) => { result: T; write?: boolean }): Promise<T> {
-  const migration = await tabMigration();
   const database = await openDatabase();
-  let committedVersion: string | undefined;
   try {
-    const result = await new Promise<T>((resolve, reject) => {
-      const transaction = database.transaction('journal', 'readwrite');
-      const store = transaction.objectStore('journal');
-      const request = store.get('current');
-      let answer: T;
-      let failure: unknown;
-      request.onsuccess = () => {
-        try {
-          const record = request.result === undefined ? legacyRecord() : recordOf(request.result);
-          let migrated = request.result === undefined;
-          if (migration && !record.importedTabs.includes(migration.id)) {
-            let trips: Trip[];
-            try { trips = legacyTrips(migration.raw); }
-            catch (error) {
-              unreadableTarget = { tab: migration.raw };
-              throw error;
-            }
-            for (const [index, trip] of trips.entries()) {
-              const same = record.trips.find(other => other.id === trip.id);
-              if (!same) record.trips.push(trip);
-              else if (JSON.stringify(same) !== JSON.stringify(trip)) {
-                record.trips.push({ ...trip, id: 'legacy-' + migration.id + '-' + index });
-              }
-            }
-            if (Array.isArray(record.attempts) && Array.isArray(migration.attempts)) {
-              const seen = new Set(record.attempts.map(item => JSON.stringify(item)));
-              record.attempts.push(...migration.attempts.filter(item => !seen.has(JSON.stringify(item))));
-            } else if (Array.isArray(record.attempts) && !record.attempts.length) record.attempts = migration.attempts;
-            record.importedTabs.push(migration.id);
-            record.version = crypto.randomUUID();
-            migrated = true;
-          }
-          const next = operation(record);
-          answer = next.result;
-          if (migrated || next.write) {
-            store.put(record, 'current');
-            committedVersion = record.version;
-          }
-        } catch (error) {
-          failure = error;
-          transaction.abort();
-        }
-      };
-      transaction.oncomplete = () => resolve(answer);
-      transaction.onabort = () => reject(failure ?? transaction.error ?? Error('Draft storage unavailable'));
-    });
-    if (migration) {
+    for (let retry = 0; retry < 3; retry++) {
+      const sources = await Promise.all([legacySource('local', localStorage), legacySource('tab', sessionStorage)]);
+      let committedVersion: string | undefined;
       try {
-        if (sessionStorage.getItem(guestKey) === migration.raw) {
-          sessionStorage.removeItem(guestKey);
-          sessionStorage.removeItem(attemptsKey);
-        }
-      } catch {}
+        const result = await new Promise<T>((resolve, reject) => {
+          const transaction = database.transaction('journal', 'readwrite');
+          const store = transaction.objectStore('journal');
+          const request = store.get('current');
+          let answer: T;
+          let failure: unknown;
+          request.onsuccess = () => {
+            try {
+              const record: GuestRecord = request.result === undefined
+                ? { schemaVersion: journalSchemaVersion, version: crypto.randomUUID(), trips: [], attempts: [], importedTabs: [] }
+                : recordOf(request.result);
+              // Hashing runs before the transaction; recheck its source before applying any operation.
+              for (const source of sources) {
+                if (source.storage.getItem(guestKey) !== source.raw || source.storage.getItem(attemptsKey) !== source.attemptsRaw) throw new MigrationChanged();
+              }
+              const migrated = migrateSources(record, sources);
+              const next = operation(record);
+              answer = next.result;
+              if (request.result === undefined || migrated || next.write) {
+                store.put(record, 'current');
+                committedVersion = record.version;
+              }
+            } catch (error) {
+              failure = error;
+              transaction.abort();
+            }
+          };
+          transaction.oncomplete = () => resolve(answer);
+          transaction.onabort = () => reject(failure ?? transaction.error ?? Error('Draft storage unavailable'));
+        });
+        for (const source of sources) clearMigratedSource(source);
+        if (committedVersion) notifyChange(committedVersion);
+        return result;
+      } catch (error) {
+        if (!(error instanceof MigrationChanged)) throw error;
+      }
     }
-    if (committedVersion) notifyChange(committedVersion);
-    return result;
+    throw Error('The draft changed in another tab while it was being migrated. Reload and try again.');
   } finally {
     database.close();
   }
@@ -191,9 +237,7 @@ export async function discardUnreadableGuest() {
             if (target.canonical !== JSON.stringify(request.result)) return;
           } else if (target.canonical !== undefined) return;
           if (request.result === undefined || target.canonical !== undefined) {
-            const empty: GuestRecord = { schemaVersion: journalSchemaVersion, version: crypto.randomUUID(), trips: [], attempts: [], importedTabs: [] };
-            const fresh = request.result !== undefined || (target.local !== undefined && localStorage.getItem(guestKey) === target.local)
-              ? empty : legacyRecord();
+            const fresh: GuestRecord = { schemaVersion: journalSchemaVersion, version: crypto.randomUUID(), trips: [], attempts: [], importedTabs: [] };
             version = fresh.version;
             store.put(fresh, 'current');
           }
