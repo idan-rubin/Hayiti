@@ -63,20 +63,32 @@ await test('route adapter defaults to walking, reuses equivalent explicit walks,
   }
 });
 
-await test('route adapter keeps a long ride within the journal limit and leaves out a leg that takes a ferry', async () => {
+await test('route adapter preserves long rides and their turns and leaves out a leg that takes a ferry', async () => {
   const last = 51 + 1499 * 0.00009;
+  // Point 500 is the only turn in this 1,001-point path. Sampling by index drops it.
+  const bend = [4.01, 51];
+  const turning = [
+    ...Array.from({ length: 500 }, (_, i) => [4 + i * 0.000018, 51]),
+    bend,
+    ...Array.from({ length: 500 }, (_, i) => [4.01, 51.001 + i * 0.000018])
+  ];
+  const turnsEnd = turning[turning.length - 1];
+  const loop = [...Array.from({ length: 1100 }, (_, i) => [4 + i * 0.00001, 51 + (i % 2) * 0.0001]), [4, 51]];
+  const fixtures = new Map([
+    ['4.001,51.001', { distance: 158, coordinates: [[4, 51], [4.001, 51.001]], modes: ['walking', 'ferry', 'walking'] }],
+    ['4,' + last, { distance: 15000, coordinates: Array.from({ length: 1500 }, (_, i) => [4, 51 + i * 0.00009]), modes: ['driving'] }],
+    [turnsEnd.join(','), { distance: 1820, coordinates: turning, modes: ['driving'] }],
+    ['4,51', { distance: 12900, coordinates: loop, modes: ['driving'] }]
+  ]);
   const server = createServer((req, res) => {
-    const walking = (req.url ?? '').startsWith('/foot/');
+    const pathname = new URL(req.url ?? '/', 'http://localhost').pathname;
+    const fixture = fixtures.get(pathname.split(';')[1]);
+    assert.ok(fixture);
     res.setHeader('Content-Type', 'application/json');
-    res.end(JSON.stringify({ code: 'Ok', routes: [walking ? {
-      distance: 158,
-      geometry: { type: 'LineString', coordinates: [[4, 51], [4.0005, 51.0005], [4.001, 51.001]] },
-      legs: [{ steps: [{ mode: 'walking' }, { mode: 'ferry' }, { mode: 'walking' }] }]
-    } : {
-      distance: 15000,
-      // A ride across a city comes back as far more points than the journal keeps for one leg.
-      geometry: { type: 'LineString', coordinates: Array.from({ length: 1500 }, (_, i) => [4, 51 + i * 0.00009]) },
-      legs: [{ steps: [{ mode: 'driving' }] }]
+    res.end(JSON.stringify({ code: 'Ok', routes: [{
+      distance: fixture.distance,
+      geometry: { type: 'LineString', coordinates: fixture.coordinates },
+      legs: [{ steps: fixture.modes.map(mode => ({ mode })) }]
     }] }));
   });
   server.listen(0, '127.0.0.1');
@@ -91,14 +103,24 @@ await test('route adapter keeps a long ride within the journal limit and leaves 
     const result = Promise.all([once(child, 'close'), text(child.stdout), text(child.stderr)]);
     child.stdin.end(JSON.stringify({ tripId: 'test-trip', days: [{ date: '2026-07-01', legs: [
       { a: 'pier', b: 'island', type: 'walk', from: [51, 4], to: [51.001, 4.001] },
-      { a: 'hotel', b: 'airport', type: 'taxi', from: [51, 4], to: [last, 4] }
+      { a: 'hotel', b: 'airport', type: 'taxi', from: [51, 4], to: [last, 4] },
+      { a: 'depot', b: 'station', type: 'taxi', from: [51, 4], to: [turnsEnd[1], turnsEnd[0]] },
+      { a: 'depart', b: 'return', type: 'taxi', from: [51, 4], to: [51, 4] }
     ] }] }));
     const [[code], out, err] = await result;
     assert.equal(code, 0);
-    const [ride, ...others] = JSON.parse(out).days[0].routes;
-    assert.deepEqual(others, []);
-    assert.deepEqual([ride.a, ride.b, ride.type, ride.m, ride.line.length], ['hotel', 'airport', 'taxi', 15000, 1000]);
-    assert.deepEqual([ride.line[0], ride.line[999]], [[51, 4], [last, 4]]);
+    const routes = JSON.parse(out).days[0].routes;
+    assert.equal(routes.length, 3);
+    assert.deepEqual(routes.slice(0, 2), [
+      { a: 'hotel', b: 'airport', type: 'taxi', m: 15000, line: [[51, 4], [last, 4]] },
+      { a: 'depot', b: 'station', type: 'taxi', m: 1820, line: [[51, 4], [bend[1], bend[0]], [turnsEnd[1], turnsEnd[0]]] }
+    ]);
+    const winding = routes[2];
+    assert.equal(winding.line.length, 1000);
+    assert.equal(winding.m, 12900);
+    assert.deepEqual(winding.line[0], [51, 4]);
+    assert.deepEqual(winding.line.at(-1), [51, 4]);
+    assert.ok(winding.line.some(([lat]: [number, number]) => lat > 51));
     assert.match(err, /Keeping existing route for 2026-07-01 pier → island/);
   } finally {
     server.close();
