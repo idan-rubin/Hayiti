@@ -782,3 +782,49 @@ await test('in high-contrast mode the menus keep the arrow the browser draws', a
     await browser.close();
   }
 });
+
+await test('the traveler re-times and moves a photo pin, and a new home base drops the route from the old one', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await page.route('https://**/*', route => route.abort());
+    const date = '2026-06-14';
+    const home = [32.07, 34.77], camera = [32.08, 34.78], anchor = [32.0805, 34.78];
+    await page.addInitScript(trip => localStorage.setItem('masluli-portable-v2', JSON.stringify({ trips: [trip] })), {
+      id: 'trip', title: 'Day out', start: date, end: date, home: 'Hotel', homeXY: home,
+      stops: [{ id: 'pin', date, name: 'Camera pin', xy: camera, photoAnchor: anchor, captureTime: '14:00:10', sources: ['photo'], refs: ['asset-1'] }],
+      edges: [{ a: 'base', b: 'pin', type: 'walk', m: 1500, line: [home, camera] }]
+    });
+    await page.goto(new URL('../../dist/web/Hayiti.html?lang=en', import.meta.url).href);
+    const saved = () => page.evaluate(() => JSON.parse(localStorage.getItem('masluli-portable-v2')!).trips[0]);
+    const openPin = () => page.getByRole('button', { name: 'Camera pin', exact: true }).first().click();
+    const save = async (dialog: string, form: string) => {
+      await page.locator(form + ' .primary').click();
+      await page.locator(dialog).waitFor({ state: 'hidden' });
+    };
+
+    // The camera recorded 14:00:10. The traveler knows better, and the capture time goes with the old minute.
+    await openPin();
+    await page.locator('#editForm [name=time]').fill('14:30');
+    await save('#edit', '#editForm');
+    let trip = await saved();
+    assert.deepEqual([trip.stops[0].time, trip.stops[0].captureTime, trip.stops[0].edited, trip.stops[0].photoAnchor, trip.edges.length],
+      ['14:30', undefined, true, anchor, 1]);
+
+    await page.locator('#settings').click();
+    await page.locator('#moreTrip').evaluate((more: HTMLDetailsElement) => { more.open = true; });
+    await page.locator('#tripForm [name=coords]').fill('32.06, 34.76');
+    await save('#config', '#tripForm');
+    trip = await saved();
+    assert.deepEqual([trip.homeXY, trip.edges], [[32.06, 34.76], []]);
+
+    await openPin();
+    await page.locator('#moreStop').evaluate((more: HTMLDetailsElement) => { more.open = true; });
+    await page.locator('#editForm [name=coords]').fill('32.09, 34.79');
+    await save('#edit', '#editForm');
+    trip = await saved();
+    assert.deepEqual([trip.stops[0].xy, trip.stops[0].photoAnchor, trip.stops[0].time], [[32.09, 34.79], undefined, '14:30']);
+  } finally {
+    await browser.close();
+  }
+});

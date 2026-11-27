@@ -1,3 +1,4 @@
+import { distanceMeters, photoLocation, photoPinRadiusMeters } from './core.ts';
 import type { Point, Stop, Trip } from './core.ts';
 // Only location and itinerary fields belong in a route that another person can open.
 export function shareableTrip(trip: Trip, includeOrigin: boolean, day: string | null = null) {
@@ -9,6 +10,8 @@ export function shareableTrip(trip: Trip, includeOrigin: boolean, day: string | 
     // A ride can end at the home base even when the record is labelled as a drop-off.
     const xy = stop.xy;
     if (xy && points.some(([lat, lon]) => Math.abs(xy[0] - lat) < 0.0002 && Math.abs(xy[1] - lon) < 0.0002)) return true;
+    // A photo taken where the traveler stayed is pinned where the camera was, anywhere around the building.
+    if (photoLocation(stop) && points.some(home => distanceMeters(home, stop.xy) <= photoPinRadiusMeters)) return true;
     return [stop.name, stop.address].some(value => value && labels.some(label => value.trim().toLowerCase() === label || label.length >= 6 && value.toLowerCase().includes(label)));
   }
   const ids = new Map<string, string>();

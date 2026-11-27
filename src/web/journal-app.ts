@@ -7,7 +7,7 @@ import { displayTripTitle, messages, t, quantity } from './journal-messages.ts';
 import { enableSharing } from './share-ui.ts';
 import { routeStops, indexEdges, offRoute, suggest, walkingStats } from '../domain/daily-route.ts';
 import { createDateReel } from './date-reel.ts';
-import { cleanTrip, cleanStop, mergeStops, combineEvidence, journalCharacterLimit } from '../domain/core.ts';
+import { cleanTrip, cleanStop, mergeStops, combineEvidence, journalCharacterLimit, photoLocation } from '../domain/core.ts';
 import { importCsv, importIcs, pastedStop } from '../domain/importers.ts';
 import { checkGuestBackup, discardGuest, guestKey, guestMergeRequested, requestGuestMerge, tripsWaitingInTab } from './guest-draft.ts';
 import { prepareRouteImport } from '../domain/route-update.ts';
@@ -850,6 +850,8 @@ $('tripForm').onsubmit = async e => {
             s.address = '';
             trip.edges = trip.edges.filter(edge => edge.a !== s.id && edge.b !== s.id);
           }
+          // A saved leg from the home base starts at the place it used to be.
+          if (JSON.stringify(fields.homeXY) !== JSON.stringify(trip.homeXY)) trip.edges = trip.edges.filter(edge => edge.a !== 'base');
         }
         Object.assign(trip, fields);
       }
@@ -999,6 +1001,9 @@ $('editForm').onsubmit = async e => {
         ...old,
         captureTime: old?.date === ef.date.value && old.time === ef.time.value ? old.captureTime : undefined,
         photoAnchor: old?.date === ef.date.value && old.xy?.toString() === xy?.toString() ? old.photoAnchor : undefined,
+        // A photo pin the traveler re-times or moves is theirs from then on. Later imports leave it in place.
+        edited: old?.edited || (old && photoLocation(old)
+          && (old.date !== ef.date.value || old.time !== ef.time.value || old.xy?.toString() !== xy?.toString())) || undefined,
         photos: draftPhotos,
         id: draftId || undefined,
         name: ef.name.value,
@@ -1031,6 +1036,9 @@ $('editForm').onsubmit = async e => {
           delete trip.dayNotes[old.date];
         }
         Object.assign(old, s);
+        // Assigning keeps what the edit left out. A capture time or anchor the edit dropped goes with it.
+        if (!s.captureTime) delete old.captureTime;
+        if (!s.photoAnchor) delete old.photoAnchor;
       } else {
         mergeStops(trip, [s]);
       }

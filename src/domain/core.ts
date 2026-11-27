@@ -25,6 +25,8 @@ export interface Stop {
   xy: Point | null;
   photoAnchor?: Point;
   captureTime?: string;
+  /** The traveler set this stop's time or place by hand. An import adds its evidence and leaves both alone. */
+  edited?: true;
   notes: string;
   band: string;
   sources: Source[];
@@ -95,11 +97,19 @@ export function distanceMeters([lat, lon]: Point, [nextLat, nextLon]: Point): nu
   return 12742000 * Math.asin(Math.sqrt(Math.min(1, a)));
 }
 
-const photoPinRadiusMeters = 100;
+export const photoPinRadiusMeters = 100;
 
-function photoLocation(stop: Stop): stop is Stop & { xy: Point } {
+export function photoLocation(stop: Stop): stop is Stop & { xy: Point } {
   return stop.kind === 'visit' && stop.xy !== null && stop.sources.length === 1 &&
     stop.sources[0] === 'photo' && stop.refs.length > 0 && !stop.photos.length && !stop.count;
+}
+
+// Whether one local time is known to come before another. A time without seconds says nothing about the
+// order inside its own minute, so it never displaces a capture recorded to the second.
+function knownEarlier(time: string, than: string): boolean {
+  if (time.length === 5 || than.length === 5) return time.slice(0, 5) < than.slice(0, 5);
+  const precise = (value: string) => value.length === 8 ? value + '.000' : value.padEnd(12, '0');
+  return precise(time) < precise(than);
 }
 
 function linkPhotoReferences(pin: Stop, incoming: Stop): 'linked' | 'skipped' {
@@ -107,8 +117,9 @@ function linkPhotoReferences(pin: Stop, incoming: Stop): 'linked' | 'skipped' {
   const refs = [...new Set([...pin.refs, ...incoming.refs])].slice(0, 100);
   const time = incoming.captureTime || incoming.time;
   const current = pin.captureTime || pin.time;
-  const earlier = photoLocation(pin) && photoLocation(incoming) && time &&
-    (!current || time < current) &&
+  // A pin the traveler placed or timed by hand keeps collecting references and stays where they put it.
+  const earlier = !pin.edited && photoLocation(pin) && photoLocation(incoming) && time &&
+    (!current || knownEarlier(time, current)) &&
     distanceMeters(pin.photoAnchor ?? pin.xy, incoming.xy) <= photoPinRadiusMeters;
   if (!earlier && refs.length === pin.refs.length) return 'skipped';
   if (earlier && pin.xy) {
@@ -156,6 +167,7 @@ export function cleanStop(value: unknown): Stop {
     time,
     ...(captureTime ? { captureTime } : {}),
     ...(anchor ? { photoAnchor: anchor } : {}),
+    ...(value.edited === true ? { edited: true as const } : {}),
     address: text(value.address),
     xy: point(value.xy),
     notes: text(value.notes, 1200),
@@ -253,6 +265,14 @@ export function mergeStops(trip: Trip, incoming: readonly unknown[]): MergeResul
   const orderedPhotos = batch.filter(photoLocation).sort((a, b) =>
     a.date.localeCompare(b.date) || (a.captureTime || a.time || '99').localeCompare(b.captureTime || b.time || '99'));
   let photoIndex = 0;
+  const link = (pin: Stop, stop: Stop) => {
+    const was = pin.xy;
+    result[linkPhotoReferences(pin, stop)]++;
+    // A saved route ends where the pin was. It goes with the move, as it does when the traveler moves a pin.
+    if (was && pin.xy && (was[0] !== pin.xy[0] || was[1] !== pin.xy[1])) {
+      trip.edges = trip.edges.filter(edge => edge.a !== pin.id && edge.b !== pin.id);
+    }
+  };
   for (const item of batch) {
     const stop = photoLocation(item) ? orderedPhotos[photoIndex++] : item;
     if (stop.date < trip.start || stop.date > trip.end) throw Error('תחנה מחוץ לטווח הטיול');
@@ -260,7 +280,7 @@ export function mergeStops(trip: Trip, incoming: readonly unknown[]): MergeResul
     // Prefer stable asset identity, then a unique named visit, before spatial matching.
     const repeated = day.find(s => stop.refs.some(ref => s.refs.includes(ref)));
     if (photoLocation(stop) && repeated) {
-      result[linkPhotoReferences(repeated, stop)]++;
+      link(repeated, stop);
       continue;
     }
     if (ids.has(stop.id) || repeated) {
@@ -277,7 +297,7 @@ export function mergeStops(trip: Trip, incoming: readonly unknown[]): MergeResul
     if (photoLocation(stop)) {
       const pin = closestPhotoPin(day, stop);
       if (pin) {
-        result[linkPhotoReferences(pin, stop)]++;
+        link(pin, stop);
         continue;
       }
     }
