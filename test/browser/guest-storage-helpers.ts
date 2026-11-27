@@ -71,38 +71,81 @@ export async function replaceLegacyGuestAfterCommit(page: Page, sources: Require
   }, sources);
 }
 
-export function readGuestRecord(page: Page): Promise<GuestRecord | null> {
-  return page.evaluate(() => new Promise<GuestRecord | null>((resolve, reject) => {
-    const open = indexedDB.open('hayiti-guest', 1);
-    open.onerror = () => reject(open.error);
-    open.onsuccess = () => {
-      const database = open.result;
-      const transaction = database.transaction('journal');
-      const request = transaction.objectStore('journal').get('current');
-      transaction.oncomplete = () => { database.close(); resolve(request.result ?? null); };
-      transaction.onabort = () => { database.close(); reject(transaction.error); };
+function accessGuestRecord(page: Page, patch?: Record<string, unknown>): Promise<GuestRecord | null> {
+  return page.evaluate(patch => new Promise<GuestRecord | null>((resolve, reject) => {
+    let database: IDBDatabase | undefined, transaction: IDBTransaction | undefined;
+    let settled = false, initialized = false, blocked = false;
+    let phase = 'opening database', recordState = 'not read';
+    let result: GuestRecord | null = null;
+    const finish = (error?: unknown) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (error) {
+        try { transaction?.abort(); } catch {}
+      }
+      database?.close();
+      if (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        reject(Error((patch === undefined ? 'Read' : 'Patch') + ' guest IndexedDB failed during ' + phase
+          + ' (initialized=' + initialized + ', blocked=' + blocked + ', record=' + recordState + '): ' + reason));
+      } else resolve(result);
     };
-  }));
+    const timeout = setTimeout(() => finish(Error('Timed out after 10 seconds')), 10000);
+    let open: IDBOpenDBRequest;
+    try { open = indexedDB.open('hayiti-guest', 1); }
+    catch (error) { finish(error); return; }
+    open.onupgradeneeded = () => {
+      database = open.result;
+      phase = 'unexpected database initialization';
+      // Only the app may initialize its database. Do not conceal a failed migration in the helper.
+      open.transaction?.abort();
+      finish(Error('The app has not initialized its guest database'));
+    };
+    open.onerror = () => finish(open.error ?? Error('Database open failed'));
+    open.onblocked = () => {
+      blocked = true;
+      finish(Error('Database open was blocked by another connection'));
+    };
+    open.onsuccess = () => {
+      database = open.result;
+      if (settled) { database.close(); return; }
+      initialized = database.objectStoreNames.contains('journal');
+      phase = 'starting transaction';
+      try {
+        transaction = database.transaction('journal', patch === undefined ? 'readonly' : 'readwrite');
+        transaction.oncomplete = () => finish();
+        transaction.onabort = () => finish(transaction?.error ?? Error('Transaction aborted'));
+        const store = transaction.objectStore('journal');
+        const request = store.get('current');
+        phase = 'reading canonical record';
+        request.onerror = () => finish(request.error ?? Error('Record read failed'));
+        request.onsuccess = () => {
+          recordState = request.result === undefined ? 'missing' : 'present';
+          result = request.result ?? null;
+          if (patch === undefined) return;
+          phase = 'patching canonical record';
+          try {
+            if (request.result === undefined) throw Error('The app has not saved a canonical guest record');
+            const write = store.put({ ...request.result, ...patch, version: crypto.randomUUID() }, 'current');
+            write.onerror = () => finish(write.error ?? Error('Record patch failed'));
+          } catch (error) { finish(error); }
+        };
+      } catch (error) { finish(error); }
+    };
+  }), patch);
+}
+
+export function readGuestRecord(page: Page): Promise<GuestRecord | null> {
+  return accessGuestRecord(page);
 }
 
 export async function guestTitles(page: Page): Promise<string[]> {
   return (await readGuestRecord(page))?.trips.map(trip => trip.title).sort() ?? [];
 }
 
-export function patchGuestRecord(page: Page, patch: Record<string, unknown>): Promise<void> {
-  return page.evaluate(patch => new Promise<void>((resolve, reject) => {
-    const open = indexedDB.open('hayiti-guest', 1);
-    open.onerror = () => reject(open.error);
-    open.onsuccess = () => {
-      const database = open.result;
-      const transaction = database.transaction('journal', 'readwrite');
-      const store = transaction.objectStore('journal');
-      const request = store.get('current');
-      request.onsuccess = () => store.put({ ...request.result, ...patch, version: crypto.randomUUID() }, 'current');
-      transaction.oncomplete = () => { database.close(); resolve(); };
-      transaction.onabort = () => { database.close(); reject(transaction.error); };
-    };
-  }), patch);
+export async function patchGuestRecord(page: Page, patch: Record<string, unknown>): Promise<void> {
+  await accessGuestRecord(page, patch);
 }
 
 export function refuseGuestWrites(page: Page): Promise<void> {
