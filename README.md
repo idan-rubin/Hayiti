@@ -14,7 +14,9 @@ An itinerary app keeps the plan. hayiti recovers what happened.
 
 ## The AI does the heavy lifting
 
-The ChatGPT app is the conductor. All the rest is tools. Gathering the evidence, deciding which café a charge belongs to, stitching a day into order: all of that is the AI. hayiti never connects to your bank, your mailbox or your photo library.
+ChatGPT is the brain and the engine. The ChatGPT app is the conductor. All the rest is tools. hayiti is a UI/UX tool with an agent skill.
+
+Gathering the evidence, deciding which café a charge belongs to, stitching a day into order: all of that is the AI. hayiti never connects to your bank, your mailbox or your photo library.
 
 This repository is the template around that work.
 
