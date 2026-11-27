@@ -54,8 +54,7 @@ async function callTool(bucket: Bucket, owner: string, name: unknown, args: Reco
   if (typeof args.tripId !== 'string' || !args.tripId.trim() || args.tripId !== args.tripId.trim() || args.tripId.length > 100 || !Array.isArray(args.stops) || args.stops.length > 200) throw Error('Supply a trip ID and up to 200 stops');
   const incoming = args.stops.map(cleanStop);
   if (incoming.some(s => !s.sources.length || !s.refs.length)) throw Error('Supply a source and stable reference for every stop');
-  // A home base that cannot be placed would be saved without its pin, and the chat would not be told.
-  if (args.homeXY != null && !point(args.homeXY)) throw Error('Supply homeXY as [latitude, longitude] in degrees');
+  if (!trip && args.homeXY != null && !point(args.homeXY)) throw Error('Supply homeXY as [latitude, longitude] in degrees');
   const target = trip ?? cleanTrip({
     id: args.tripId,
     title: args.title,
