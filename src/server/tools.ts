@@ -115,7 +115,7 @@ export const tools = [{
   }
 }, {
   name: 'add_trip_stops',
-  description: 'Create a dated trip, append visits, or save Google Maps bookmarks in googlePins. For a bookmarks-only import, send stops: []. Supply a title, start and end dates for a new trip. Save only the place and itinerary details approved by the traveler. Repeating a stop with the same source reference on the same day skips the duplicate.',
+  description: 'Create a dated trip, append visits, or save Google Maps bookmarks in googlePins. For a bookmarks-only import, send stops: []. Reuse the original bookmark ID so removals are respected; previouslyRemoved counts bookmarks the traveler chose to leave out. Supply a title, start and end dates for a new trip. Save only the place and itinerary details approved by the traveler. Repeating a stop with the same source reference on the same day skips the duplicate.',
   annotations: {
     readOnlyHint: false,
     destructiveHint: false,

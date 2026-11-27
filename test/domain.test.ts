@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { cleanTrip, mergeGooglePins, mergeStops, safeDate } from '../src/domain/core.ts';
+import { cleanTrip, mergeGooglePins, removeGooglePin, restoreGooglePin, mergeStops, safeDate } from '../src/domain/core.ts';
 import { shareableTrip } from '../src/domain/share-format.ts';
 import { importCsv, importEvidencePackage, importIcs, prepareTripBackup } from '../src/domain/importers.ts';
 import { indexEdges, routeStops, suggest, walkingStats } from '../src/domain/daily-route.ts';
@@ -433,4 +433,38 @@ await test('two photos on different days that share a reference stay separate st
   mergeStops(trip, [photo(trip.start, [0, 4])]);
   assert.deepEqual(mergeStops(trip, [photo(trip.end, [0.5, 4])]), { added: 1, linked: 0, skipped: 0 });
   assert.deepEqual(trip.stops.map(stop => [stop.date, stop.xy]), [[trip.start, [0, 4]], [trip.end, [0.5, 4]]]);
+});
+
+await test('Google Pin removals survive repeat imports and backups without suppressing nearby places', () => {
+  const trip = sample();
+  const removed = { id: 'removed-place', name: 'Gallery', date: trip.start, xy: [52, 4] };
+  const kept = { ...removed, id: 'same-name-nearby', date: trip.end, dayEdited: true };
+  mergeGooglePins(trip, [removed, kept]);
+  const oldBackup = structuredClone(trip);
+  removeGooglePin(trip, removed.id);
+  removeGooglePin(trip, removed.id);
+  assert.deepEqual(trip.removedGooglePinIds, [removed.id]);
+  const repeat = { ...removed, name: 'New title', xy: [52, 4.1], date: trip.end };
+  const fresh = { ...removed, id: 'different-place' };
+  const live = cleanTrip(JSON.parse(JSON.stringify(trip)));
+  assert.deepEqual(mergeGooglePins(live, [repeat, { ...kept, date: trip.start }, fresh]),
+    { added: 1, linked: 0, skipped: 1, previouslyRemoved: 1 });
+  assert.deepEqual(live.googlePins?.map(pin => [pin.id, pin.date]), [[kept.id, trip.end], [fresh.id, trip.start]]);
+  assert.deepEqual(prepareTripBackup(oldBackup, [live]).trip, live);
+  const restored = prepareTripBackup(live, []).trip;
+  assert.deepEqual(restored, live);
+  assert.deepEqual(mergeGooglePins(restored, [repeat]), { added: 0, linked: 0, skipped: 0, previouslyRemoved: 1 });
+  const other = sample();
+  assert.equal(mergeGooglePins(other, [repeat]).added, 1);
+  const mergedRemovals = prepareTripBackup(live, [sample()]).trip;
+  assert.deepEqual(mergedRemovals.removedGooglePinIds, [removed.id]);
+  assert.ok(!JSON.stringify(shareableTrip(live, true)).includes(removed.id));
+  assert.throws(() => restoreGooglePin(live, { ...repeat, xy: [0, 0] }));
+  assert.deepEqual(live.removedGooglePinIds, [removed.id]);
+  restoreGooglePin(live, repeat);
+  assert.equal(live.removedGooglePinIds, undefined);
+  assert.equal(mergeGooglePins(live, [repeat]).skipped, 1);
+  assert.equal(live.googlePins?.find(pin => pin.id === repeat.id)?.name, 'New title');
+  assert.equal(prepareTripBackup(restored, [live]).trip.removedGooglePinIds, undefined);
+  assert.throws(() => cleanTrip({ ...live, removedGooglePinIds: [repeat.id] }), /also be saved/);
 });
