@@ -996,6 +996,8 @@ $('editForm').onsubmit = async e => {
       else if (old?.photos.length && ef.source.value !== 'photo') evidence = evidence.filter(source => source !== 'photo');
       const s = cleanStop({
         ...old,
+        captureTime: old?.date === ef.date.value && old.time === ef.time.value ? old.captureTime : undefined,
+        photoAnchor: old?.date === ef.date.value && old.xy?.toString() === xy?.toString() ? old.photoAnchor : undefined,
         photos: draftPhotos,
         id: draftId || undefined,
         name: ef.name.value,
