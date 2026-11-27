@@ -1,5 +1,5 @@
 import { language } from './language.ts';
-export function createDateReel(reel: HTMLElement, menu: HTMLSelectElement, format: (day: string, style: 'full' | 'short') => string, onChange: (day: string) => void) {
+export function createDateReel(reel: HTMLElement, menu: HTMLSelectElement, progress: HTMLElement, format: (day: string, style: 'full' | 'short') => string, onChange: (day: string) => void) {
   let dates: string[] = [],
     current = -1,
     step = 0,
@@ -10,7 +10,9 @@ export function createDateReel(reel: HTMLElement, menu: HTMLSelectElement, forma
     current = index;
     menu.selectedIndex = index;
     reel.setAttribute('aria-valuenow', String(index + 1));
-    reel.setAttribute('aria-valuetext', menu.options[index].text + ', ' + progressLabel(index));
+    const label = progressLabel(index);
+    progress.textContent = label;
+    reel.setAttribute('aria-valuetext', menu.options[index].text + ', ' + label);
     if (notify) onChange(dates[index]);
   }
   function paint() {
@@ -82,14 +84,15 @@ export function createDateReel(reel: HTMLElement, menu: HTMLSelectElement, forma
       } else {
         face.textContent = label;
       }
-      const progress = document.createElement('small');
-      progress.textContent = progressLabel(index);
-      face.append(progress);
+      const dayNumber = document.createElement('small');
+      dayNumber.textContent = progressLabel(index);
+      face.append(dayNumber);
       row.append(face);
       return row;
     }));
     reel.parentElement!.hidden = !days.length;
     if (!days.length) {
+      progress.textContent = '';
       current = -1;
       step = 0;
       return;

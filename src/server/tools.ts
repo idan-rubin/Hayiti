@@ -1,4 +1,5 @@
 import { sources, reportSources, statesBySource } from '../domain/core.ts';
+export const dailyGooglePinPreviewLimit = 20;
 const stopShape = {
   type: 'object',
   properties: {
@@ -81,7 +82,7 @@ export const tools = [{
   }
 }, {
   name: 'get_day',
-  description: 'Read one day of an owned trip for reconciling events and visits.',
+  description: `Read one day of an owned trip for reconciling events and visits. googlePins previews up to ${dailyGooglePinPreviewLimit} bookmarks and googlePinCount gives the total. Fetch the rest with list_google_pins using the same date and an offset equal to the number already received.`,
   annotations: {
     readOnlyHint: true,
     destructiveHint: false,
@@ -101,13 +102,14 @@ export const tools = [{
   }
 }, {
   name: 'list_google_pins',
-  description: 'Read the saved Google Pins for an owned trip, including places without a day assignment. Each call returns up to 200 pins with the total. Pass offset to read the rest.',
+  description: 'Read up to 200 saved Google Pins with the total for the selection. Supply date to read only that day. Omit date to include the whole trip and unassigned pins. Pass offset to continue the same selection.',
   annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   inputSchema: {
     type: 'object',
     properties: {
       tripId: { type: 'string' },
-      offset: { type: 'integer', minimum: 0, description: 'Number of pins to skip. Omit for the first 200.' }
+      date: { type: 'string', format: 'date', description: 'Assigned trip day in local YYYY-MM-DD.' },
+      offset: { type: 'integer', minimum: 0, description: 'Number of matching pins to skip. Omit to start at the first pin.' }
     },
     required: ['tripId']
   }

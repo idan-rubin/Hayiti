@@ -1,11 +1,23 @@
-import { cleanStop, isRecord, member, mergeGooglePins, safeDate, sources, type MergeResult, type Stop, type Trip } from './core.ts';
+import { cleanTrip, cleanStop, isRecord, member, mergeGooglePins, mergeStops, safeDate, sources, type GooglePinResult, type Stop, type Trip } from './core.ts';
 export interface ImportResult {
   stops: Stop[];
   omitted: number;
   checks?: unknown;
   googlePins?: unknown[];
-  pinPreview?: MergeResult;
+  pinPreview?: GooglePinResult;
   needsDateOrder?: boolean;
+}
+
+export function prepareTripBackup(value: unknown, trips: readonly Trip[]) {
+  const backup = cleanTrip(value);
+  const existing = trips.find(trip => trip.id === backup.id);
+  const trip = existing ? structuredClone(existing) : backup;
+  const stops = existing ? mergeStops(trip, backup.stops) : { added: backup.stops.length, linked: 0, skipped: 0 };
+  if (!existing) delete trip.googlePins;
+  // Use the validated source pins so the import can still report dates outside the destination trip.
+  const pins = isRecord(value) && Array.isArray(value.googlePins) && value.googlePins.length
+    ? mergeGooglePins(trip, value.googlePins, 'backup') : undefined;
+  return { trip, stops, pins, recordCount: backup.stops.length };
 }
 
 /** Preview an agent evidence package against the selected trip without changing its stops or bookmarks. */
@@ -17,7 +29,7 @@ export function importEvidencePackage(data: unknown, trip: Trip | null): ImportR
   if (data.tripId !== undefined && data.tripId !== trip.id) throw Error('הטיול השתנה. יש לבחור את קובץ הייבוא מחדש.');
   const stops = data.stops.map(cleanStop);
   const googlePins = data.googlePins;
-  let pinPreview: MergeResult | undefined;
+  let pinPreview: GooglePinResult | undefined;
   if (googlePins !== undefined) {
     if (!Array.isArray(googlePins)) throw Error('Invalid Google Pins collection');
     if (googlePins.length) pinPreview = mergeGooglePins({ ...trip }, googlePins);

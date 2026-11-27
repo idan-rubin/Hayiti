@@ -1,6 +1,6 @@
 import { element as $, errorMessage } from './dom.ts';
 import { member, reportSources, statesBySource, validOutcome, isRecord } from '../domain/core.ts';
-import type { Trip, Stop, Source, CheckStatus, Edge, GooglePin, Point, MergeResult } from '../domain/core.ts';
+import type { Trip, Stop, Source, CheckStatus, Edge, GooglePin, GooglePinResult, Point, MergeResult } from '../domain/core.ts';
 import type { ImportResult } from '../domain/importers.ts';
 import { language, locale, bindLanguageControl } from './language.ts';
 import { displayTripTitle, messages, t, quantity } from './journal-messages.ts';
@@ -8,7 +8,7 @@ import { enableSharing } from './share-ui.ts';
 import { routeStops, indexEdges, offRoute, suggest, walkingStats } from '../domain/daily-route.ts';
 import { createDateReel } from './date-reel.ts';
 import { cleanTrip, cleanStop, mergeGooglePins, mergeStops, combineEvidence, journalCharacterLimit } from '../domain/core.ts';
-import { importEvidencePackage, importCsv, importIcs, pastedStop } from '../domain/importers.ts';
+import { importEvidencePackage, prepareTripBackup, importCsv, importIcs, pastedStop } from '../domain/importers.ts';
 import { checkGuestBackup, discardGuest, guestKey, guestMergeRequested, requestGuestMerge, tripsWaitingInTab } from './guest-draft.ts';
 import { prepareRouteImport } from '../domain/route-update.ts';
 import { JournalSession, localToday } from './journal-session.ts';
@@ -127,12 +127,13 @@ let popupFor = '';
 let overviewTripId = '';
 let routeBounds = L.latLngBounds([]),
   fitFrame = 0;
-// The view and basemap controls lie over the top of the map. A fitted route and an opened popup stay below them.
+// Leave room for the basemap selector at the top of the map.
 const mapControls = document.querySelector<HTMLElement>('.map-controls');
 function controlsBand() {
   return mapControls?.offsetHeight ? mapControls.offsetTop + mapControls.offsetHeight + 6 : 0;
 }
-const popupBelowControls = (): PopupOptions => ({ autoPanPaddingTopLeft: [8, controlsBand() + 8] });
+// Leaflet reads this shared pair when a popup opens, including markers created while the map was hidden.
+const popupOptions: PopupOptions = { autoPanPaddingTopLeft: [8, 8] };
 function fitRoute() {
   if (fitFrame) return;
   fitFrame = requestAnimationFrame(() => {
@@ -142,6 +143,8 @@ function fitRoute() {
       clientHeight: height
     } = map.getContainer();
     if (!width || !height) return;
+    const controlHeight = controlsBand();
+    popupOptions.autoPanPaddingTopLeft[1] = controlHeight + 8;
     map.stop();
     map.invalidateSize({
       pan: false,
@@ -158,7 +161,7 @@ function fitRoute() {
     } else {
       const margin = Math.min(36, Math.round(Math.min(width, height) * .12));
       map.fitBounds(routeBounds, {
-        paddingTopLeft: [margin, margin + controlsBand()],
+        paddingTopLeft: [margin, margin + controlHeight],
         paddingBottomRight: [margin, margin],
         maxZoom: 16,
         animate: false
@@ -319,7 +322,7 @@ function render() {
   draw();
 }
 const stopCount = (count: number) => count === 1 ? t('תחנה אחת') : count + t(' תחנות');
-const setDates = createDateReel($('dayReel'), $('tripDate'), dateLabel, next => {
+const setDates = createDateReel($('dayReel'), $('tripDate'), $('dayProgress'), dateLabel, next => {
   if (next === session.day && !overviewTripId) return;
   overviewTripId = '';
   session.select(session.trip, next);
@@ -430,7 +433,7 @@ function addStopMarker(s: Stop, xy: Point, number: string, overview: boolean) {
       else openStop(s);
     }));
     return content;
-  }, popupBelowControls());
+  }, popupOptions);
   if (!overview) {
     mark.on('click', () => reveal(s.id, 'row'));
     marks.set(s.id, mark);
@@ -558,7 +561,7 @@ function draw() {
         });
       }
     };
-    for (const xy of drawGooglePins(trip, overview ? null : day, overlay, actions, locate, popupBelowControls())) routeBounds.extend(xy);
+    for (const xy of drawGooglePins(trip, overview ? null : day, overlay, actions, locate, popupOptions)) routeBounds.extend(xy);
   }
   if (!routeBounds.isValid()) for (const xy of visiblePoints) routeBounds.extend(locate(xy));
   fitRoute();
@@ -1422,9 +1425,19 @@ $('file').onchange = () => {
   const file = $('file').files?.[0];
   if (file) void previewFile(file);
 };
-function googlePinSummary({ added, linked, skipped }: MergeResult) {
-  return ui('Google Pins · ' + added + ' new · ' + linked + ' updated · ' + skipped + ' already saved',
-    'סיכות Google · ' + added + ' חדשות · ' + linked + ' עודכנו · ' + skipped + ' כבר שמורות');
+function googlePinSummary({ added, linked, skipped, datesOutsideTrip, unresolved }: GooglePinResult) {
+  const parts = [ui('Google Pins · ' + added + ' new · ' + linked + ' updated · ' + skipped + ' already saved',
+    'סיכות Google · ' + added + ' חדשות · ' + linked + ' עודכנו · ' + skipped + ' כבר שמורות')];
+  if (datesOutsideTrip) {
+    const dates = datesOutsideTrip === 1 ? ui('One date falls', 'תאריך אחד נמצא')
+      : ui(datesOutsideTrip + ' dates fall', datesOutsideTrip + ' תאריכים נמצאים');
+    parts.push(dates + ui(' outside the trip. Pins without a day appear in Whole trip.',
+      ' מחוץ לטווח הטיול. סיכות ללא יום מופיעות במבט על כל הטיול.'));
+  }
+  if (unresolved) parts.push(unresolved === 1
+    ? ui('One pin skipped because its location is unknown', 'סיכה אחת דולגה כי המיקום שלה אינו ידוע')
+    : ui(unresolved + ' pins skipped because their locations are unknown', unresolved + ' סיכות דולגו כי המיקום שלהן אינו ידוע'));
+  return parts.join(' · ');
 }
 async function previewFile(f: File, order?: 'day-first' | 'month-first') {
   const target = $('preview');
@@ -1445,7 +1458,8 @@ async function previewFile(f: File, order?: 'day-first' | 'month-first') {
         stops: [],
         omitted: 0
       },
-      backup: Trip | undefined;
+      backup: ReturnType<typeof prepareTripBackup> | undefined;
+    let backupValue: unknown;
     if (/\.json$/i.test(f.name)) {
       const o = JSON.parse(raw);
       if (isRecord(o) && o.format === 'hayiti-routes/1') {
@@ -1472,7 +1486,8 @@ async function previewFile(f: File, order?: 'day-first' | 'month-first') {
         return;
       }
       if (['hayiti/1', 'masluli/1'].includes(o.format)) {
-        backup = cleanTrip(o.trip);
+        backupValue = o.trip;
+        backup = prepareTripBackup(backupValue, session.trips);
       } else {
         result = importEvidencePackage(o, session.trip);
       }
@@ -1490,37 +1505,34 @@ async function previewFile(f: File, order?: 'day-first' | 'month-first') {
       openStop(pastedStop(raw, session.day, /\.eml$/i.test(f.name) ? 'email' : 'manual'));
       return;
     }
-    if (backup && session.mode === 'guest') checkGuestBackup(session.trips, backup);
+    if (backup && session.mode === 'guest') checkGuestBackup(session.trips, backup.trip);
     if (!backup && !session.trip) throw Error(t('יש ליצור טיול לפני ייבוא תחנות'));
     const active = session.trip;
     const valid = backup || !active ? [] : result.stops.filter(s => s.date >= active.start && s.date <= active.end);
-    const pinPreview = result.pinPreview;
+    const pinPreview = backup?.pins ?? result.pinPreview;
     if (backup) {
-      const counts = [quantity(backup.stops.length, ' רשומות', 'record', 'records')];
-      if (backup.googlePins?.length) counts.push(quantity(backup.googlePins.length, ' סיכות Google', 'Google Pin', 'Google Pins'));
-      target.append(dom('p', [displayTripTitle(backup.title), ...counts].join(' · ')));
+      target.append(dom('p', displayTripTitle(backup.trip.title) + ' · ' + quantity(backup.recordCount, ' רשומות', 'record', 'records')));
     } else {
       if (result.stops.length || !pinPreview) target.append(dom('p', (language === 'en' && valid.length === 1 ?
         '1 record within the trip dates · ' : valid.length + t(' רשומות בטווח הטיול · ')) +
         (result.omitted + result.stops.length - valid.length) + t(' דולגו')));
-      if (pinPreview) target.append(dom('p', googlePinSummary(pinPreview)));
     }
+    if (pinPreview) target.append(dom('p', googlePinSummary(pinPreview)));
     const checks = Object.entries(isRecord(result.checks) ? result.checks : {}).filter(([key, status]) => validOutcome(key, status));
     if (!backup && !valid.length && !checks.length && !pinPreview?.added && !pinPreview?.linked) return;
     const action = backup ? t('טעינת הטיול') : pinPreview && !valid.length
       ? ui('Save Google Pins', 'שמירת סיכות Google') : t('מיזוג התחנות');
     target.append(button(action, async () => {
-      let test: MergeResult | undefined, savedPins: MergeResult | undefined;
+      let test: MergeResult | undefined, savedPins: GooglePinResult | undefined;
       const ok = await change(() => {
         if (backup) {
-          const existing = session.trips.find(t => t.id === backup.id);
-          if (existing) {
-            test = mergeStops(existing, backup.stops);
-            if (backup.googlePins?.length) savedPins = mergeGooglePins(existing, backup.googlePins);
-          } else {
-            session.trips.push(backup);
-          }
-          session.select(existing ?? backup);
+          const restored = prepareTripBackup(backupValue, session.trips);
+          const index = session.trips.findIndex(trip => trip.id === restored.trip.id);
+          if (index < 0) session.trips.push(restored.trip);
+          else session.trips[index] = restored.trip;
+          session.select(restored.trip);
+          test = restored.stops;
+          savedPins = restored.pins;
         } else {
           const { trip } = session;
           if (!trip || !active || trip.id !== active.id || trip.start !== active.start || trip.end !== active.end) {
@@ -1540,7 +1552,7 @@ async function previewFile(f: File, order?: 'day-first' | 'month-first') {
       if (ok) {
         $('sources').close();
         const done = test;
-        if (done && session.trip?.id === (backup?.id ?? active?.id)) msg(() => {
+        if (done && session.trip?.id === (backup?.trip.id ?? active?.id)) msg(() => {
           const summaries = [];
           if (done.added || done.linked || done.skipped || !savedPins) {
             summaries.push(ui('Added: ' + done.added + ' · Matched: ' + done.linked + ' · Already present: ' + done.skipped,

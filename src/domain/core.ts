@@ -132,23 +132,28 @@ function cleanGooglePin(value: unknown, start: string, end: string, inferSaveDay
 }
 
 export interface GooglePinResult extends MergeResult {
-  /** Pins saved without the day they were sent with, because that day is outside the trip. */
+  /** Explicit day assignments outside the trip that were ignored. */
   datesOutsideTrip?: number;
+  /** Legacy backup pins omitted because Google supplied no location. */
+  unresolved?: number;
 }
 
 /**
  * On a retry, fill missing details and take a corrected name or location for the same place,
  * while preserving a day chosen or cleared by the traveler.
  */
-export function mergeGooglePins(trip: Trip, incoming: readonly unknown[]): GooglePinResult {
+export function mergeGooglePins(trip: Trip, incoming: readonly unknown[], source: 'import' | 'backup' = 'import'): GooglePinResult {
   const result = { added: 0, linked: 0, skipped: 0 };
-  let datesOutsideTrip = 0;
+  let datesOutsideTrip = 0, unresolved = 0;
   const pins = new Map(trip.googlePins?.map(pin => [pin.id, pin]));
   for (const value of incoming) {
-    const pin = cleanGooglePin(value, trip.start, trip.end, true);
+    const pin = cleanGooglePin(value, trip.start, trip.end, source === 'import');
     // Google's export writes [0, 0] for a place whose location it does not know.
-    if (pin.xy[0] === 0 && pin.xy[1] === 0) throw Error('A Google Pin at [0, 0] has no known location');
-    // The pin is still saved, without a day. The count tells the agent its day was not kept.
+    if (pin.xy[0] === 0 && pin.xy[1] === 0) {
+      if (source === 'import') throw Error('A Google Pin at [0, 0] has no known location');
+      unresolved++;
+      continue;
+    }
     if (isRecord(value) && value.date !== undefined && !pin.date) datesOutsideTrip++;
     const previous = pins.get(pin.id);
     if (!previous) {
@@ -158,15 +163,22 @@ export function mergeGooglePins(trip: Trip, incoming: readonly unknown[]): Googl
     }
     const date = !previous.dayEdited && !previous.date ? pin.date : undefined;
     const savedAt = !previous.savedAt ? pin.savedAt : undefined;
-    const corrected = previous.name !== pin.name || previous.xy[0] !== pin.xy[0] || previous.xy[1] !== pin.xy[1];
+    // A backup can fill an unresolved location, while a fresh import can also correct a known one.
+    const corrected = (source === 'import' || (previous.xy[0] === 0 && previous.xy[1] === 0)) &&
+      (previous.name !== pin.name || previous.xy[0] !== pin.xy[0] || previous.xy[1] !== pin.xy[1]);
     if (date || savedAt || corrected) {
-      pins.set(pin.id, { ...previous, name: pin.name, xy: pin.xy, ...(date ? { date } : {}), ...(savedAt ? { savedAt } : {}) });
+      pins.set(pin.id, {
+        ...previous,
+        ...(corrected ? { name: pin.name, xy: pin.xy } : {}),
+        ...(date ? { date } : {}),
+        ...(savedAt ? { savedAt } : {})
+      });
       result.linked++;
     } else result.skipped++;
   }
   if (pins.size > googlePinLimit) throw Error('Too many Google Pins in this trip');
   if (result.added || result.linked) trip.googlePins = [...pins.values()];
-  return datesOutsideTrip ? { ...result, datesOutsideTrip } : result;
+  return { ...result, ...(datesOutsideTrip ? { datesOutsideTrip } : {}), ...(unresolved ? { unresolved } : {}) };
 }
 
 export function distanceMeters([lat, lon]: Point, [nextLat, nextLon]: Point): number {

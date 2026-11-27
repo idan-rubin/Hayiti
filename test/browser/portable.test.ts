@@ -900,7 +900,7 @@ await test('Google Pins belong to the selected day or the whole trip without joi
       googlePins: [
         { id: 'quay', savedAt: firstDay + 'T23:45:00+02:00', name: 'Old quay', xy: [52.01, 4] },
         { id: 'tower', date: secondDay, name: 'Bell tower', xy: [52.10, 4.09] },
-        { id: 'cove', name: 'Hidden cove', xy: [52.06, 4.035] }
+        { id: 'cove', name: 'Hidden cove', xy: [52.06, 4.035], date: '2019-01-01' }
       ]
     };
     const { googlePins, ...itinerary } = trip;
@@ -921,8 +921,11 @@ await test('Google Pins belong to the selected day or the whole trip without joi
       });
     };
     await importPins();
+    const outsideDay = 'One date falls outside the trip. Pins without a day appear in Whole trip.';
+    await page.locator('#preview').filter({ hasText: outsideDay }).waitFor();
     await page.getByRole('button', { name: 'Save Google Pins' }).click();
     await page.locator('#sources').waitFor({ state: 'hidden' });
+    await page.locator('#status').filter({ hasText: outsideDay }).waitFor();
 
     const scope = page.locator('#wholeTrip'), markers = page.locator('.leaflet-marker-icon.google-pin');
     const names = () => markers.evaluateAll(pins => pins.map(pin => pin.getAttribute('title')).sort());
@@ -1052,6 +1055,36 @@ await test('the map controls leave pins and an opened popup uncovered, and a Goo
     const trip = await page.evaluate(() => JSON.parse(localStorage.getItem('masluli-portable-v2')!).trips[0]);
     assert.deepEqual([trip.googlePins.map((pin: { id: string }) => pin.id), trip.stops.length], [['south'], 3]);
     assert.equal(await page.locator('#map .google-pin').count(), 1);
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('a pin drawn in the Hebrew mobile stop list can be closed after returning to the map', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage({ viewport: { width: 375, height: 667 }, hasTouch: true });
+    await page.route('https://**/*', route => route.abort());
+    const first = '2026-06-14', second = '2026-06-15';
+    await page.addInitScript(trip => localStorage.setItem('masluli-portable-v2', JSON.stringify({ trips: [trip] })), {
+      id: 'trip', title: 'Weekend', start: first, end: second, home: 'Hotel', homeXY: [32.07, 34.77],
+      stops: [{ id: 'port', date: second, name: 'Old port', xy: [32.052, 34.75], sources: ['card'], refs: ['c1'] }],
+      googlePins: [{ id: 'corner', name: 'Saved café with a fairly long name', xy: [32.0762, 34.7745], date: second }]
+    });
+    await page.goto(new URL('../../dist/web/Hayiti.html?lang=he', import.meta.url).href);
+    await page.getByRole('button', { name: 'תחנות', exact: true }).click();
+    await page.locator('#tripDate').selectOption(second);
+    await page.getByRole('button', { name: 'מפה', exact: true }).click();
+    await page.locator('.google-pin').click();
+    const close = page.locator('.leaflet-popup-close-button');
+    await close.waitFor();
+    await page.waitForFunction(() => !document.querySelector('.leaflet-pan-anim'));
+    assert.ok(await close.evaluate(button => {
+      const { x, y, width, height } = button.getBoundingClientRect();
+      return button.contains(document.elementFromPoint(x + width / 2, y + height / 2));
+    }), 'the close button receives taps above the map');
+    await close.tap();
+    await page.locator('.leaflet-popup').waitFor({ state: 'hidden' });
   } finally {
     await browser.close();
   }

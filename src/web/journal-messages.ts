@@ -7,6 +7,7 @@ export const messages: Record<string, string> = {
   "נדרשות שתי רשימות מלאות של מזהי תחנות ללא כפילויות.": "Supply both the current and proposed stop order, with each stop listed once.",
   "שתי הרשימות צריכות לכלול את אותן תחנות.": "Both lists must contain the same stops.",
   "סדר התחנות השתנה. יש לקרוא שוב את נתוני היום.": "The stop order has changed. Read the day again.",
+  "אין די מידע לשייך את נקודות האיסוף וההורדה לאותה נסיעת מונית.": "There is not enough evidence to match this pickup and drop-off to the same taxi ride.",
   "נקודת האיסוף של המונית צריכה להופיע מיד לפני נקודת ההורדה שלה.": "Keep each taxi pickup immediately before its original drop-off.",
   "יש לשמור על נקודות המוצא והיעד של נסיעת המונית ועל סוג הנסיעה.": "Keep both endpoints of a confirmed taxi ride together and preserve its travel mode.",
   "סוג מקטע או תוואי לא תקין": "Invalid travel mode or route geometry.",

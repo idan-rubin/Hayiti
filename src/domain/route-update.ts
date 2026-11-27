@@ -79,6 +79,42 @@ function nextStops(stops: Stop[]) {
   return new Map(stops.slice(1).map((stop, index) => [stops[index].id, stop]));
 }
 
+// A real endpoint can move across midnight. Home uses the shared "base" ID, so its destination identifies the day.
+function taxiTouchesDay(edge: Edge, positions: Map<string, number>): boolean {
+  return edge.type === 'taxi' && (positions.has(edge.b) || (edge.a !== 'base' && positions.has(edge.a)));
+}
+
+/** A saved taxi edge identifies a ride even after manual edits separate its endpoints. */
+function checkTaxiOrder(stops: Stop[], before: Map<string, Stop>, after: Map<string, Stop>, rides: Edge[]) {
+  const pickups = new Set<string>(), dropoffs = new Set<string>(), matched = new Set<string>();
+
+  function keepRide(pickup: string, dropoff: string) {
+    pickups.add(pickup);
+    dropoffs.add(dropoff);
+    if (after.get(pickup)?.id === dropoff) matched.add(pickup);
+    else if (before.get(pickup)?.id === dropoff) throw Error('נקודת האיסוף של המונית צריכה להופיע מיד לפני נקודת ההורדה שלה.');
+  }
+
+  for (const ride of rides) keepRide(ride.a, ride.b);
+  // Older trips can identify a ride only by an adjacent pickup and drop-off.
+  for (const stop of stops) {
+    const next = before.get(stop.id);
+    if (stop.kind === 'pickup' && next?.kind === 'dropoff' && !pickups.has(stop.id) && !dropoffs.has(next.id)) {
+      keepRide(stop.id, next.id);
+    }
+  }
+  const loosePickups = stops.filter(s => s.kind === 'pickup' && !pickups.has(s.id));
+  const looseDropoffs = stops.filter(s => s.kind === 'dropoff' && !dropoffs.has(s.id));
+  for (const stop of stops) {
+    const next = after.get(stop.id);
+    if (stop.kind !== 'pickup' || next?.kind !== 'dropoff' || before.get(stop.id)?.id === next.id || matched.has(stop.id)) continue;
+    if (loosePickups.length !== 1 || loosePickups[0].id !== stop.id ||
+        looseDropoffs.length !== 1 || looseDropoffs[0].id !== next.id) {
+      throw Error('אין די מידע לשייך את נקודות האיסוף וההורדה לאותה נסיעת מונית.');
+    }
+  }
+}
+
 /** Write an agent-supplied order and routes together after checking them against the stored day. */
 export function setDayRoutes(trip: Trip, date: unknown, routes: unknown, order?: unknown) {
   if (!safeDate(date) || date < trip.start || date > trip.end) throw Error('תאריך המסלול מחוץ לטיול');
@@ -89,17 +125,10 @@ export function setDayRoutes(trip: Trip, date: unknown, routes: unknown, order?:
   const stops = reordered ? routeStops({ ...trip, stops: ordered }, date) : before;
   const after = nextStops(stops);
   const oldNext = nextStops(before);
-  if (reordered) {
-    // A ride already saved as a pair stays together. A pickup and drop-off saved apart can be brought together:
-    // pairing a pickup with another ride's drop-off would separate that ride, which this also refuses.
-    for (const pickup of before.filter(stop => stop.kind === 'pickup')) {
-      const oldDrop = oldNext.get(pickup.id), newDrop = after.get(pickup.id);
-      if (oldDrop?.kind === 'dropoff' && newDrop?.id !== oldDrop.id) {
-        throw Error('נקודת האיסוף של המונית צריכה להופיע מיד לפני נקודת ההורדה שלה.');
-      }
-    }
-  }
   const positions = new Map(stops.map((stop, index) => [stop.id, index]));
+  if (reordered) {
+    checkTaxiOrder(stops, oldNext, after, trip.edges.filter(edge => taxiTouchesDay(edge, positions)));
+  }
   const replacements = new Map<string, Edge>();
   for (const raw of routes) {
     if (!isRecord(raw) || typeof raw.a !== 'string' || typeof raw.b !== 'string') throw Error('מזהי התחנות במקטע אינם תקינים');
@@ -109,17 +138,20 @@ export function setDayRoutes(trip: Trip, date: unknown, routes: unknown, order?:
     replacements.set(raw.a, readRoute(raw, stops[start], stops[start + 1]));
   }
 
+  const taxiOrigins = new Map([...replacements.values()].filter(edge => edge.type === 'taxi').map(edge => [edge.b, edge.a]));
   const edges: Edge[] = [];
   const seen = new Set<string>();
   const unchangedKeys = new Set<string>();
   for (const old of trip.edges) {
     const replacement = replacements.get(old.a);
-    if (order !== undefined && old.type === 'taxi' && oldNext.get(old.a)?.id === old.b &&
-        (after.get(old.a)?.id !== old.b || (replacement && replacement.type !== 'taxi'))) {
-      throw Error('יש לשמור על נקודות המוצא והיעד של נסיעת המונית ועל סוג הנסיעה.');
+    if (taxiTouchesDay(old, positions)) {
+      const origin = taxiOrigins.get(old.b);
+      if ((replacement?.b === old.b && replacement.type !== 'taxi') ||
+          (replacement?.type === 'taxi' && replacement.b !== old.b) || (origin !== undefined && origin !== old.a)) {
+        throw Error('יש לשמור על נקודות המוצא והיעד של נסיעת המונית ועל סוג הנסיעה.');
+      }
     }
-    // "base" is shared across days. The destination identifies which day's home leg this is.
-    if (reordered && positions.has(old.b) && positions.has(old.a) && after.get(old.a)?.id !== old.b) continue;
+    if (reordered && positions.has(old.a) && positions.has(old.b) && old.type !== 'taxi' && after.get(old.a)?.id !== old.b) continue;
     if (replacement?.b !== old.b) {
       edges.push(old);
     } else if (seen.has(old.a)) {

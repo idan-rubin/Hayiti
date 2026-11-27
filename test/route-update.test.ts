@@ -196,3 +196,104 @@ await test('a pickup and drop-off saved apart can be brought together, and then 
   assert.throws(() => setDayRoutes(trip, date, [], { previous: ['cafe', 'pickup', 'dropoff'], next: ['pickup', 'cafe', 'dropoff'] }));
   assert.deepEqual(ids(), ['cafe', 'pickup', 'dropoff']);
 });
+
+function separatedRides() {
+  const previous = ['p1', 'museum', 'd1', 'p2', 'lunch', 'd2'];
+  const stops = previous.map((id, rank) => ({
+    id, rank, date, name: id, xy: id.startsWith('p') ? a : b,
+    kind: id.startsWith('p') ? 'pickup' : id.startsWith('d') ? 'dropoff' : 'visit'
+  }));
+  const ride = (a: string, b: string) => ({ ...cab, a, b });
+  const trip = cleanTrip({ id: 'two-rides', start: date, end: date, stops, edges: [ride('p1', 'd1'), ride('p2', 'd2')] });
+  return { trip, previous, ride };
+}
+
+await test('manual separation keeps both recorded rides recoverable and prevents exchanging their endpoints', () => {
+  const { trip, previous, ride } = separatedRides();
+  const before = structuredClone(trip);
+  const swapped = { previous, next: ['p1', 'd2', 'museum', 'p2', 'd1', 'lunch'] };
+  assert.throws(() => setDayRoutes(trip, date, [], swapped));
+  assert.throws(() => setDayRoutes(trip, date, [ride('p1', 'd2'), ride('p2', 'd1')], swapped));
+  assert.deepEqual(trip, before);
+
+  const unrelated = ['museum', 'p1', 'lunch', 'd1', 'p2', 'd2'];
+  setDayRoutes(trip, date, [], { previous, next: unrelated });
+  assert.deepEqual(trip.edges, before.edges);
+  const restored = { previous: unrelated, next: ['museum', 'p1', 'd1', 'lunch', 'p2', 'd2'] };
+  assert.throws(() => setDayRoutes(trip, date, [{ a: 'p1', b: 'd1', type: 'gap', line: [] }], restored));
+  setDayRoutes(trip, date, [], restored);
+  assert.deepEqual(trip.edges, before.edges);
+  assert.deepEqual(setDayRoutes(trip, date, [], restored), { updated: 0, unchanged: 0 });
+  assert.throws(() => setDayRoutes(trip, date, [], swapped));
+  assert.deepEqual(trip.edges, before.edges);
+});
+
+await test('a routing retry cannot bind one ride to a different saved ride after a manual reorder', () => {
+  const { trip, ride } = separatedRides();
+  trip.stops.find(s => s.id === 'd2')!.rank = 0.5;
+  const before = structuredClone(trip);
+  assert.throws(() => setDayRoutes(trip, date, [ride('p1', 'd2')]));
+  assert.deepEqual(trip, before);
+});
+
+await test('several loose taxi endpoints cannot be paired by position while a single remaining ride can', () => {
+  const { trip, previous } = separatedRides();
+  const [firstRide] = trip.edges;
+  trip.edges = [];
+  const next = ['p1', 'd1', 'museum', 'p2', 'd2', 'lunch'];
+  assert.throws(() => setDayRoutes(trip, date, [], { previous, next }));
+  assert.deepEqual(routeStops(trip, date).map(s => s.id), previous);
+
+  trip.edges.push(firstRide);
+  assert.ok(setDayRoutes(trip, date, [], { previous, next }).reordered);
+  assert.deepEqual(routeStops(trip, date).map(s => s.id), next);
+});
+
+await test('get_day exposes only the IDs of separated taxi rides on the requested day', async () => {
+  const { trip } = separatedRides();
+  trip.end = end;
+  const stop = trip.stops[0];
+  trip.stops.push({ ...stop, id: 'tomorrow', date: end });
+  // Only the first ride is still separated.
+  trip.stops.find(s => s.id === 'lunch')!.rank = 6;
+  const bucket = new MemoryBucket();
+  await storeState(bucket, 'owner', [trip], '');
+  const read = async (day: string) => {
+    const request = new Request('https://example.test/mcp', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'get_day', arguments: { tripId: trip.id, date: day } } })
+    });
+    const response = await journalAPI(request, bucket, 'mcp', 'owner');
+    return JSON.parse((await response.json()).result.content[0].text);
+  };
+  assert.deepEqual((await read(date)).separatedTaxiPairs, [{ a: 'p1', b: 'd1' }]);
+  assert.equal((await read(end)).separatedTaxiPairs, undefined);
+});
+
+await test('geometry alone cannot downgrade a saved taxi leg, including visits with no taxi kind', () => {
+  const trip = example();
+  for (const stop of trip.stops) if (stop.kind === 'pickup' || stop.kind === 'dropoff') stop.kind = 'visit';
+  setDayRoutes(trip, date, [cab]);
+  const before = structuredClone(trip);
+  for (const route of [{ ...cab, type: 'gap', line: [] }, { ...cab, type: 'walk' }]) {
+    assert.throws(() => setDayRoutes(trip, date, [route]));
+  }
+  assert.deepEqual(trip, before);
+});
+
+await test('an overnight ride reserves its endpoint while home taxi legs are scoped by day', () => {
+  const { trip, previous, ride } = separatedRides();
+  trip.end = end;
+  trip.stops.find(s => s.id === 'd1')!.date = end;
+  trip.stops = trip.stops.filter(stop => stop.id !== 'p2');
+  trip.edges = [trip.edges[0]];
+  const before = structuredClone(trip);
+  const next = ['p1', 'd2', 'museum', 'lunch'];
+  assert.throws(() => setDayRoutes(trip, date, [], { previous: previous.filter(id => id !== 'd1' && id !== 'p2'), next }));
+  assert.deepEqual(trip, before);
+
+  const home = example();
+  assert.ok(setDayRoutes(home, date, [{ ...walking, type: 'taxi' }]).updated);
+  assert.ok(setDayRoutes(home, end, [ride('base', 'park')]).updated);
+  assert.deepEqual(home.edges.map(edge => [edge.a, edge.b]), [['base', 'cafe'], ['base', 'park']]);
+});
