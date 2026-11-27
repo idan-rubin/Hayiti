@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { cleanTrip, mergeStops, safeDate } from '../src/domain/core.ts';
+import { shareableTrip } from '../src/domain/share-format.ts';
 import { importCsv, importIcs } from '../src/domain/importers.ts';
 import { indexEdges, routeStops, suggest, walkingStats } from '../src/domain/daily-route.ts';
 import { readFileSync } from 'node:fs';
@@ -181,4 +182,16 @@ await test('earliest capture wins for an unsorted batch and for a later import w
   assert.deepEqual(restored.stops[0].xy, earliest.xy);
   assert.equal(mergeStops(restored, [earliest]).skipped, 1);
   assert.equal(mergeStops(restored, [photo('outside-original-radius', 30, -160)]).added, 1);
+});
+
+await test('synthetic home routes survive a backup and are shared only when the home base is included', () => {
+  const trip = sample();
+  const destination = trip.stops[0].id;
+  trip.homeXY = [51.92, 4.48];
+  const homeEdge = { a: 'base', b: destination, type: 'walk' as const, m: 120, line: [trip.homeXY, [51.921, 4.48]] };
+  const restored = cleanTrip({ ...trip, edges: [homeEdge, { ...homeEdge, a: 'missing' }, { ...homeEdge, b: 'missing' }] });
+  assert.deepEqual(restored.edges, [homeEdge]);
+  assert.equal(cleanTrip(shareableTrip(restored, true)).edges.length, 1);
+  assert.equal(cleanTrip(shareableTrip(restored, false)).edges.length, 0);
+  assert.equal(cleanTrip({ ...restored, homeXY: null }).edges.length, 0);
 });
