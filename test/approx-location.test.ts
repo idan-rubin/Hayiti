@@ -44,7 +44,8 @@ await test('an approved area replaces the address and shares its saved general l
   assert.equal(purchase.address, '');
   assert.deepEqual(purchase.xy, args.xy);
   assert.deepEqual(trip.edges, [unchangedLeg]);
-  assert.equal(correctStopLocation(trip, args, 'r2'), false);
+  assert.throws(() => correctStopLocation(trip, args, 'r2'), /journal changed/i);
+  assert.equal(correctStopLocation(trip, { ...args, address: '' }, 'r2'), false);
   const shared = shareableTrip(trip, false);
   assert.equal(shared.stops[1].name, 'Carmel Market');
   assert.equal(shared.stops[1].address, '');
@@ -127,11 +128,11 @@ await test('hosted approximation rejects the original point, respects revisions 
   assert.equal(applied.updated, true);
   const saved = await loadState(bucket, 'traveler');
   assert.equal(saved.trips[0].stops[1].address, '');
-  const retried = JSON.parse((await correct(args)).content[0].text);
+  const retried = JSON.parse((await correct({ ...args, address: '' })).content[0].text);
   assert.deepEqual(retried, { ...applied, updated: false });
   assert.deepEqual(await loadState(bucket, 'traveler'), saved);
 
-  const staleAddress = await correct({ expectedRevision: revision, address: 'Different private address', xy: args.xy });
+  const staleAddress = await correct({ expectedRevision: revision, approx: true, address: 'Different private address', xy: args.xy });
   assert.equal(staleAddress.isError, true);
   assert.match(staleAddress.content[0].text, /journal changed/i);
   assert.deepEqual(await loadState(bucket, 'traveler'), saved);
