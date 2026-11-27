@@ -5,12 +5,57 @@ import { distanceMeters, isRecord, point, safeDate, type Edge, type Point } from
 
 type Mode = 'walk' | 'taxi';
 
-// The journal keeps up to 1,000 points for a leg. A longer path keeps both ends and evenly spaced points between.
 const maxPoints = 1000;
-function thinned(line: Point[]): Point[] {
+
+// Budgeted Douglas–Peucker: split the segment with the largest deviation first.
+function simplifyRoute(line: Point[]): Point[] {
   if (line.length <= maxPoints) return line;
-  const step = (line.length - 1) / (maxPoints - 1);
-  return Array.from({ length: maxPoints }, (_, index) => line[Math.round(index * step)]);
+  const last = line.length - 1;
+  const longitudeScale = Math.cos((line[0][0] + line[last][0]) * Math.PI / 360);
+  let longitude = 0;
+  const projected = line.map(([lat, lon], i) => {
+    // Unwrap the date line and scale longitude to the route's latitude.
+    if (i > 0) {
+      const delta = lon - line[i - 1][1];
+      longitude += Math.abs(delta) > 180 ? delta - Math.sign(delta) * 360 : delta;
+    }
+    return { x: longitude * longitudeScale, y: lat - line[0][0] };
+  });
+  const selected = new Set([0, last]);
+  const segments: { start: number; end: number; split: number; error: number }[] = [];
+
+  function measureSegment(start: number, end: number) {
+    const a = projected[start], b = projected[end];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const lengthSquared = dx * dx + dy * dy;
+    let split = start, error = 0;
+    for (let i = start + 1; i < end; i++) {
+      const x = projected[i].x - a.x, y = projected[i].y - a.y;
+      const along = x * dx + y * dy;
+      let deviation: number;
+      if (along <= 0) deviation = x * x + y * y;
+      else if (along >= lengthSquared) deviation = (x - dx) ** 2 + (y - dy) ** 2;
+      else deviation = (x * dy - y * dx) ** 2 / lengthSquared;
+      if (deviation > error) {
+        error = deviation;
+        split = i;
+      }
+    }
+    if (error > 0) segments.push({ start, end, split, error });
+  }
+
+  measureSegment(0, last);
+  while (selected.size < maxPoints && segments.length) {
+    let largest = 0;
+    for (let i = 1; i < segments.length; i++) {
+      if (segments[i].error > segments[largest].error) largest = i;
+    }
+    const [segment] = segments.splice(largest, 1);
+    selected.add(segment.split);
+    measureSegment(segment.start, segment.split);
+    measureSegment(segment.split, segment.end);
+  }
+  return line.filter((_, i) => selected.has(i));
 }
 
 function coordinates(value: unknown): Point {
@@ -60,7 +105,7 @@ async function routedPath(mode: Mode, from: Point, to: Point): Promise<Pick<Edge
     return coordinates([pair[1], pair[0]]);
   });
   if (line.length < 2 || distanceMeters(from, line[0]) > snapMeters || distanceMeters(to, line[line.length - 1]) > snapMeters) return null;
-  return { line: thinned(line), m: route.distance };
+  return { line: simplifyRoute(line), m: route.distance };
 }
 
 async function main() {
