@@ -1211,7 +1211,7 @@ await test('the signed-in mobile header fits on one row and sign-out requires co
       assert.ok(Math.max(...bounds.map(box => box.top)) < Math.min(...bounds.map(box => box.bottom)), language + ' header shares one row');
       const box = await signOut.boundingBox();
       assert.ok(box && box.width >= 44 && box.height >= 44, 'sign-out tap target');
-      assert.equal(await signOut.innerText(), language === 'he' ? 'יציאה' : 'Sign out');
+      assert.equal(await signOut.innerText(), language === 'he' ? 'יציאה' : 'Exit');
 
       await signOut.press('Enter');
       const dialog = page.getByRole('alertdialog');
