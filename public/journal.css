@@ -113,12 +113,13 @@ header nav {justify-content:flex-end}
 .brand-signature {display:block;width:clamp(108px,21vw,145px);height:auto}
 @media(max-width:500px) {
   header {column-gap:6px}
-  .brand-signature {width:clamp(3.75rem,19vw,6rem)}
-  header nav {gap:4px}
+  .brand {flex:0 1 clamp(3.75rem,19vw,6rem);min-inline-size:0}
+  .brand-signature {width:100%}
+  header nav {flex:none;gap:4px;max-inline-size:calc(100% - 3.5rem)}
   header nav button {padding-inline:.45rem}
   #logout {min-width:44px;min-height:44px}
-  #export .header-full, #logout:lang(he) .header-full {display:none}
-  #export .header-short, #logout:lang(he) .header-short {display:inline}
+  header .header-full {display:none}
+  header .header-short {display:inline}
 }
 
 .beta-links {margin:1.5rem 0;color:#426258;font-size:.9rem}.beta-links a {color:inherit}
