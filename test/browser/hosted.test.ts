@@ -1605,3 +1605,42 @@ await test('the hosted journal opens without the street map library and draws th
     await browser.close();
   }
 });
+
+await test('the traveler can apply multiple days of street routes in one account save', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    const a = [51.92, 4.48], turn = [51.921, 4.48], b = [51.921, 4.485];
+    const start = '2026-05-03', end = '2026-05-04';
+    const trip = { id: 'route-trip', title: 'Week away', start, end, home: 'Home', homeXY: a,
+      stops: [{ id: 'market', name: 'Market', date: start, xy: b }, { id: 'station', name: 'Station', date: end, xy: b }]
+    };
+    const written: unknown[] = [];
+    await hostJournal(page, async route => {
+      if (route.request().method() === 'GET') return route.fulfill({ json: { trips: [trip], rev: 'v1' } });
+      written.push(route.request().postDataJSON());
+      return route.fulfill({ json: { rev: 'v2' } });
+    });
+    await page.goto(origin + '/journal.html?lang=en');
+    await page.locator('#title').filter({ hasText: 'Week away' }).waitFor();
+    await page.locator('#import').click();
+    await page.locator('[data-tab="files"]').click();
+    await page.locator('#file').setInputFiles({
+      name: 'street-routes.json', mimeType: 'application/json',
+      buffer: Buffer.from(JSON.stringify({
+        format: 'hayiti-routes/1', tripId: trip.id,
+        days: trip.stops.map(to => ({ date: to.date, routes: [{ a: 'base', b: to.id, type: 'walk', line: [a, turn, b] }] }))
+      }))
+    });
+    await page.locator('#preview').filter({ hasText: '2 route segments to update' }).waitFor();
+    assert.equal(written.length, 0);
+    await page.getByRole('button', { name: 'Save routes' }).click();
+    await page.locator('#sources').waitFor({ state: 'hidden' });
+    assert.equal(written.length, 1);
+    const saved = written[0] as { rev: string; trips: { edges: { b: string; line: number[][] }[] }[] };
+    assert.equal(saved.rev, 'v1');
+    assert.deepEqual(saved.trips[0].edges.map(edge => [edge.b, edge.line]), [['market', [a, turn, b]], ['station', [a, turn, b]]]);
+  } finally {
+    await browser.close();
+  }
+});
