@@ -162,3 +162,23 @@ await test('photo metadata imports reuse fixed daily pins across batches and ret
   assert.equal(mergeStops(trip, [photo('beyond-anchor', 105), photo('far', 500)]).added, 2);
   assert.equal(mergeStops(trip, [photo('another-day', 0, trip.end)]).added, 1);
 });
+
+await test('earliest capture wins for an unsorted batch and for a later import within the same minute', () => {
+  const trip = sample();
+  trip.stops = [];
+  const photo = (ref: string, seconds: number, northMeters: number) => ({
+    date: trip.start, name: 'Camera pin', captureTime: '14:00:' + String(seconds),
+    xy: [northMeters / 111195, 4], refs: [ref], sources: ['photo']
+  });
+  const early = photo('early', 20, 0);
+  const late = photo('late', 50, 70);
+  mergeStops(trip, [late, early]);
+  assert.deepEqual(trip.stops[0].xy, early.xy);
+  const earliest = photo('earliest', 10, -80);
+  assert.equal(mergeStops(trip, [earliest]).linked, 1);
+  const restored = cleanTrip(trip);
+  assert.equal(restored.stops[0].captureTime, '14:00:10');
+  assert.deepEqual(restored.stops[0].xy, earliest.xy);
+  assert.equal(mergeStops(restored, [earliest]).skipped, 1);
+  assert.equal(mergeStops(restored, [photo('outside-original-radius', 30, -160)]).added, 1);
+});
