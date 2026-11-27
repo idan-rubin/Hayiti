@@ -840,10 +840,9 @@ async function load(afterConflict = false, quiet = false) {
           ? ui('The trip you started before signing in is now in your journal.', 'הטיול שהתחלת לפני הכניסה נוסף ליומן האישי.')
           : ui('The trips you started before signing in are now in your journal.', 'הטיולים שהתחלת לפני הכניסה נוספו ליומן האישי.'));
   }
-  // Trips from the earlier version that do not fit next to the ones stored in this browser stay in the tab.
   if (!portable && !unreadable && !unavailable && tripsWaitingInTab()) {
-    msg(() => ui('This tab still holds trips from before an update, and this browser has no room to store them with your other trips. Keep this tab open. Free space by backing up and deleting a trip or its photos, or sign in, then reload this tab.',
-      'בלשונית הזאת עדיין שמורים טיולים מלפני עדכון, ואין בדפדפן מקום לשמור אותם לצד הטיולים האחרים. השאירו את הלשונית פתוחה. אפשר לפנות מקום על ידי גיבוי ומחיקה של טיול או של תמונות, או להיכנס לחשבון, ואז לטעון מחדש את הלשונית.'), 'warning');
+    msg(() => ui('This tab still has trips from an earlier version waiting to be imported. Keep it open and choose Refresh journal to finish importing them.',
+      'בלשונית הזאת עדיין יש טיולים מגרסה קודמת שממתינים לייבוא. השאירו אותה פתוחה ובחרו ברענון היומן כדי להשלים את הייבוא.'), 'warning');
   }
   return result.kind;
 }

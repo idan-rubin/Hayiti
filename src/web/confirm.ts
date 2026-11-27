@@ -1,7 +1,6 @@
 import { element as el } from './dom.ts';
 import { language } from './language.ts';
 
-/** Asks for confirmation inside the page, so the question carries the journal's language and styling. */
 export function ask(message: string, action: string): Promise<boolean> {
   const box = el('confirmBox');
   el('confirmText').textContent = message;

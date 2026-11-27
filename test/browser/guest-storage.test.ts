@@ -79,7 +79,8 @@ await test('concurrent guest saves preserve every trip with and without Web Lock
 await test('a trip added by an older localStorage client survives alongside canonical changes after reload', async () => {
   const browser = await chromium.launch();
   try {
-    const page = await browser.newPage();
+    const context = await browser.newContext();
+    const page = await context.newPage();
     const original = trip('legacy', 'Legacy trip');
     await seedLegacyGuestOnce(page, { local: JSON.stringify({ trips: [original] }) });
     await hostGuest(page);
@@ -89,7 +90,7 @@ await test('a trip added by an older localStorage client survives alongside cano
     await page.locator('#tripForm [name=title]').fill('Canonical trip');
     await page.locator('#tripForm .primary').click();
     await page.locator('#config').waitFor({ state: 'hidden' });
-    const oldTab = await page.context().newPage();
+    const oldTab = await context.newPage();
     await oldTab.route(origin + '/**', route => route.fulfill({ contentType: 'text/html', body: '<title>Older client</title>' }));
     await oldTab.goto(origin + '/older-client.html');
     const later = JSON.stringify({ trips: [original, trip('old-tab-added', 'Added in the old tab')] });
@@ -125,11 +126,19 @@ await test('successful migration removes local and tab plaintext only after comm
     await page.addInitScript(() => {
       const state = { committed: false, removedBeforeCommit: false };
       Object.assign(window, { migrationCleanupReview: state });
+      const written = new WeakSet<IDBTransaction>();
+      const transact = IDBDatabase.prototype.transaction;
+      // Observe commit before the app's handler resumes its cleanup promise.
+      IDBDatabase.prototype.transaction = function (stores: string | string[], mode?: IDBTransactionMode, options?: IDBTransactionOptions) {
+        const transaction = transact.call(this, stores, mode, options);
+        if (this.name === 'hayiti-guest') transaction.addEventListener('complete', () => {
+          if (written.has(transaction)) state.committed = true;
+        }, { once: true });
+        return transaction;
+      };
       const put = IDBObjectStore.prototype.put;
       IDBObjectStore.prototype.put = function (value: unknown, key?: IDBValidKey) {
-        if (this.transaction.db.name === 'hayiti-guest') {
-          this.transaction.addEventListener('complete', () => { state.committed = true; }, { once: true, capture: true });
-        }
+        if (this.transaction.db.name === 'hayiti-guest') written.add(this.transaction);
         return key === undefined ? put.call(this, value) : put.call(this, value, key);
       };
       const remove = Storage.prototype.removeItem;

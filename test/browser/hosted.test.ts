@@ -736,6 +736,7 @@ await test('an unreadable guest draft is retained until the traveler confirms di
       return route.fulfill({ json: { schemaVersion: journalSchemaVersion, trips: [], rev: 'r1' } });
     });
     await page.goto(origin + '/journal.html?lang=en');
+    await page.locator('#newTrip:not([disabled])').waitFor();
     await patchGuestRecord(page, { trips: [null] });
     await page.reload();
     const discard = page.getByRole('button', { name: 'Discard unreadable draft' });
@@ -1817,7 +1818,6 @@ await test('the hosted journal draws the street map and makes route files from t
     await page.locator('#languageSwitch').selectOption('he');
     await page.locator('#languageSwitch').selectOption('en');
 
-    // A route file is the packaged app plus the route, with every stored part filled in.
     await page.locator('#share').click();
     await page.waitForFunction(() => document.querySelector<HTMLAnchorElement>('#downloadTrip')?.href.startsWith('blob:'));
     const bytes = await page.evaluate(async () => {
