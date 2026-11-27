@@ -285,9 +285,10 @@ export function mergeStops(trip: Trip, incoming: readonly unknown[]): MergeResul
     const hasAssetRefs = hasPhotoAssetRefs(stop);
     const refs = new Set(stop.refs);
     const sharesReference = (saved: Stop) => saved.refs.some(ref => refs.has(ref));
-    // A photo's asset ID follows the pin when the traveler corrects its day.
+    // A photo's asset ID follows the stop when the traveler corrects its day. Other days are searched only for
+    // stops they changed, so two photos that happen to share a reference on different days stay separate.
     const repeated = day.find(sharesReference) ?? (hasAssetRefs
-      ? trip.stops.find(saved => (saved.edited || saved.sources.includes('photo')) && sharesReference(saved))
+      ? trip.stops.find(saved => saved.edited && sharesReference(saved))
       : undefined);
     if (hasAssetRefs && repeated) {
       link(repeated, stop);

@@ -7,7 +7,7 @@ import { displayTripTitle, messages, t, quantity } from './journal-messages.ts';
 import { enableSharing } from './share-ui.ts';
 import { routeStops, indexEdges, offRoute, suggest, walkingStats } from '../domain/daily-route.ts';
 import { createDateReel } from './date-reel.ts';
-import { cleanTrip, cleanStop, mergeStops, combineEvidence, journalCharacterLimit, photoLocation } from '../domain/core.ts';
+import { cleanTrip, cleanStop, mergeStops, combineEvidence, journalCharacterLimit } from '../domain/core.ts';
 import { importCsv, importIcs, pastedStop } from '../domain/importers.ts';
 import { checkGuestBackup, discardGuest, guestKey, guestMergeRequested, requestGuestMerge, tripsWaitingInTab } from './guest-draft.ts';
 import { prepareRouteImport } from '../domain/route-update.ts';
@@ -1004,8 +1004,9 @@ $('editForm').onsubmit = async e => {
         ...old,
         captureTime: old?.date === ef.date.value && old.time === ef.time.value ? old.captureTime : undefined,
         photoAnchor: old?.date === ef.date.value && old.xy?.toString() === xy?.toString() ? old.photoAnchor : undefined,
-        // A photo pin the traveler re-times or moves is theirs from then on. Later imports leave it in place.
-        edited: old?.edited || (old && photoLocation(old)
+        // A photo-backed stop the traveler re-dates, re-times or moves is theirs from then on. Later imports
+        // leave it in place, and a retry of the same photo finds it on its corrected day.
+        edited: old?.edited || (old?.sources.includes('photo')
           && (old.date !== ef.date.value || old.time !== ef.time.value || old.xy?.toString() !== xy?.toString())) || undefined,
         photos: draftPhotos,
         id: draftId || undefined,
