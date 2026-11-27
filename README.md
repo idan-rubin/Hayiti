@@ -2,7 +2,7 @@
 
 **Reverse engineer your trip™**
 
-hayiti rebuilds where you went, one day at a time, from the traces you already leave behind: photos, ride receipts, card purchases, calendar events and saved places. An AI does the work. [ChatGPT](https://chatgpt.com/) reads the sources you choose, works out where you were and proposes each day's stops. You decide what to keep, and hayiti draws the days on a map.
+With hayiti, [ChatGPT](https://chatgpt.com/) rebuilds your trip one day at a time from the photos, ride receipts, card purchases, calendar events and saved places you already have.
 
 It is made for trips you planned yourself. Nobody handed you an itinerary, and you were too busy living the days to write them down. A few weeks later a friend asks where you ate, and you can picture the place but the name is gone. The evidence is still there. hayiti puts it back in order.
 
@@ -14,20 +14,9 @@ An itinerary app keeps the plan. hayiti recovers what happened.
 
 ## The AI does the heavy lifting
 
-ChatGPT is the brain and the engine. The ChatGPT app is the conductor. All the rest is tools. hayiti is a UI/UX tool with an agent skill.
+You choose which sources ChatGPT can use. With hayiti’s skill, ChatGPT pieces together where you went and in what order. You review the stops, make corrections, and see your day on the map.
 
-Gathering the evidence, deciding which café a charge belongs to, stitching a day into order: all of that is the AI. hayiti never connects to your bank, your mailbox or your photo library.
-
-This repository is the template around that work.
-
-| The AI | This repository |
-| --- | --- |
-| Reads the sources you authorize | A journal that holds and shows the result |
-| Works out the place, the branch and the day | The tools the AI saves through, which check every write |
-| Puts the stops in order and finds the routes between them | A [playbook](skills/map-my-trip/SKILL.md) that tells the AI how to do the job |
-| Asks you when the evidence runs out | The lessons learned, written down as rules and tests |
-
-All the rest are standards: the tools speak MCP and the playbook is plain Markdown, so the same template can serve another agent. Better models will do the job better. The template tells any of them what a good answer looks like.
+hayiti never connects directly to your bank, mailbox or photo library. Its [playbook](skills/map-my-trip/SKILL.md) is written in Markdown, and the journal exposes its tools through the Model Context Protocol (MCP). Other agents can use the same instructions and tools to save the stops you approve.
 
 ### What the playbook has learned
 
@@ -44,18 +33,16 @@ The obvious approach goes wrong in specific ways. The playbook and the tests enc
 
 ## What each clue can tell you
 
-No single source is enough. Each one answers a different question.
-
 | Clue | What it tells you | What it leaves open |
 | --- | --- | --- |
 | **Photos** | Where you were and when, if the photo saved its location | What the place was and what you did there |
 | **Ride receipts** | Where a ride started and ended, and at what time | What you did at either end |
-| **Card purchases** | What you paid for, and on which day | Which branch, and whether you were there in person |
+| **Card purchases** | The transaction date and, when available, the merchant name | Which branch, and whether you were there in person |
 | **Calendar and bookings** | What was planned, with a time and often an address | Whether it happened |
 | **Saved places** | What you meant to see | Whether you went |
-| **Your memory** | Everything the rest missed | |
+| **Your memory** | Details such as which café you visited after the museum | The exact time, if you only remember the order |
 
-A photo knows the place but not what you did there. A charge knows what you bought but often not where. Put together, they make a day.
+A charge might name a café chain. A photo you took there that morning can help identify the branch.
 
 ## What goes on the map
 
@@ -86,7 +73,7 @@ The orange dashed line shows the taxi ride. Taxi pins show approximate locations
 
 ## Reading a day
 
-- **Numbered stops** appear in order, each with a pin. Between stops hayiti estimates a walk. A ride matched to a receipt is drawn as a dashed line.
+- **Numbered stops** appear in order, each with a pin. A solid green line shows an estimated walk. An orange dashed line shows a taxi ride. A green dashed line shows the order when the route between stops is unknown.
 - **More about this day** holds what could not be placed: places without a pin, visits to confirm and remote purchases.
 - **Whole trip** shows every day on one map, each day's route drawn separately. Choose streets, satellite imagery or terrain.
 - **Edit anything.** Move a stop up or down, fix a time or an address, or mark a location as approximate.
@@ -121,10 +108,10 @@ See the [privacy policy](https://hayiti-beta.cocoacoati256.chatgpt.site/privacy.
 - **Imports.** Create or select a trip before importing transactions (`.csv`), calendar events (`.ics`) or email (`.eml`). Include a transaction date. A payment channel such as `in store` or `online` identifies the type of purchase even when the merchant name is missing. A trip backup (`.json`) can open a trip in an empty journal. You can also place a pin by hand.
 - **Photos.** On each day, photo locations within 100 metres of a saved photo pin share that pin. The earliest known capture supplies the displayed pin. The grouping radius stays fixed, so a walk across several blocks can still add new stops.
 - **Matching.** hayiti checks the day and source reference before adding a stop. Independent records with matching places, compatible times and compatible addresses can corroborate one visit. Ambiguous matches stay separate for review.
-- **Order and distance.** Date, time, ordering rules and location inform the suggested order. Each adjacent pair can carry its own route. Walking is the estimate for each pair unless evidence identifies a different mode. This includes longer walks and crossings between cities. A taxi ride matched to the pair follows the driving network. When directions are unavailable, the journal keeps its existing route or estimated connector. Walking totals use recorded walking segments.
+- **Order and distance.** The suggested order uses dates, times, the traveler's ordering rules and locations. For a plausible walk, even across a city boundary, the agent looks up pedestrian directions. For a ride matched to a taxi receipt, it looks up driving directions. If directions are unavailable, the map keeps the saved route or draws a line between the stops. Only saved walking routes count toward walking distance.
 - **More about this day.** The panel starts collapsed when the day has numbered stops, and opens automatically when it only has additional entries.
-- **Google Pins.** Ask ChatGPT to add saved places from a Google Maps list it can read. A pin appears on its assigned day and in the trip overview, independently of visit counts and route distances. Pins without a known trip day appear in the overview, where you can assign a day yourself. A save timestamp, when available, records when you bookmarked the place. Removing a pin keeps it out of later imports for that trip. To bring it back, import a saved-places file containing it, then choose **Restore a removed pin** in the preview.
-- **Source status.** Each requested source has a dated status. Finances distinguishes a disconnected source, missing credit or debit accounts, zero transactions and purchases without a mappable place. Gmail and Calendar can contribute independently.
+- **Google Pins.** Ask ChatGPT to add saved places from a Google Maps list it can read. A pin appears on its assigned day and in the trip overview, independently of visit counts and route distances. Pins without a known trip day appear in the overview, where you can assign a day yourself. A save timestamp, when available, records when you bookmarked the place. Removing a pin keeps it out of later imports for that trip. To bring it back, ask ChatGPT to restore that pin from the original list, or import a file containing it and choose **Restore a removed pin** in the preview.
+- **Source status.** The journal can record dated checks for Finances, Gmail, Calendar and Drive. Finances distinguishes a disconnected source, missing credit or debit accounts, zero transactions and purchases without a mappable place. The agent reports access to photo libraries and Google Maps lists separately.
 - **Sharing.** You can choose a general place, such as a market, and use an approximate pin on the shared map. The share keeps your chosen place name and omits its street address. A downloaded copy stays with its recipient.
 - **Offline.** Saving a stop with an address and no map pin looks the address up and adds the pin. Offline, pins and routes are drawn without the streets. Place names on the street map follow the journal's language, English or Hebrew, and fall back to the local name.
 
