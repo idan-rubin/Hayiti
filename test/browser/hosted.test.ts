@@ -84,6 +84,9 @@ await test('a shared route stays on screen through a temporary failure and clear
       : route.fulfill({ status }));
     await page.goto(origin + '/journal.html?lang=en#route=fictional');
     await page.locator('body.route-ready').waitFor();
+    await page.getByRole('button', { name: 'Whole trip' }).click();
+    await page.getByRole('button', { name: 'Back to day' }).click();
+    assert.equal(await page.locator('#import').isVisible(), false);
     const recheck = async () => {
       const answered = page.waitForResponse(response => response.url().endsWith('/api/route-links'));
       await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
@@ -1184,6 +1187,36 @@ await test('Sign out is offered only while the account journal is open', async (
     await page.reload();
     await page.getByRole('link', { name: 'Sign in with ChatGPT', exact: true }).waitFor();
     assert.equal(await signOut.isVisible(), false);
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('the mobile trip toolbar keeps the overview beside the daily actions in either language', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage({ viewport: { width: 375, height: 812 }, hasTouch: true });
+    const trip = { id: 'toolbar', title: 'Toolbar trip', start: '2026-06-14', end: '2026-06-16', stops: [] };
+    await hostJournal(page, route => route.fulfill({ json: { trips: [trip], rev: 'r1' } }));
+    for (const lang of ['he', 'en']) {
+      await page.goto(origin + '/journal.html?lang=' + lang);
+      const overview = page.locator('.toolbar #wholeTrip');
+      await overview.waitFor();
+      const actions = page.locator('.toolbar button:visible');
+      const boxes = await actions.evaluateAll(buttons => buttons.map(button => {
+        const { top, left, right } = button.getBoundingClientRect();
+        return { top, left, right };
+      }));
+      assert.equal(boxes.length, 4);
+      assert.ok(boxes.every(box => box.top === boxes[0].top));
+      const end = boxes[boxes.length - 1];
+      assert.ok(lang === 'he' ? end.right <= boxes[2].left : end.left >= boxes[2].right);
+      assert.equal(await page.locator('.mapcard #mapStyle').isVisible(), true);
+      await overview.click();
+      assert.equal(await overview.getAttribute('aria-pressed'), 'true');
+      await overview.click();
+      assert.equal(await overview.getAttribute('aria-pressed'), 'false');
+    }
   } finally {
     await browser.close();
   }
