@@ -12,7 +12,7 @@ With hayiti connected, start in chat. For example:
 
 > Map my trip to Tel Aviv last week. I stayed near the market. Use my receipts and calendar to work out where I went each day.
 
-ChatGPT can ask for missing dates or a home base, then cross-check the sources you authorize. A Gett receipt can put a pickup and drop-off on the map where a card charge alone only shows a fare. A photo you share can help identify a place when its location is known. Only the local capture time and GPS coordinates are needed. On each day, photo locations within 100 metres of a saved photo pin share that pin. The first pin stays in place, so a walk across several blocks can still add new stops.
+ChatGPT can ask for missing dates or a home base, then cross-check the sources you authorize. A Gett receipt can put a pickup and drop-off on the map where a card charge alone only shows a fare. A photo you share can help identify a place when its location is known. Only the local capture time and GPS coordinates are needed. On each day, photo locations within 100 metres of a saved photo pin share that pin. The earliest known capture supplies the displayed pin. The grouping radius stays fixed, so a walk across several blocks can still add new stops.
 
 Review the suggested stops in chat and tell ChatGPT which to save. Open the journal with the same account to see your daily routes, change the home base, edit stops or share a read-only map. To add evidence later, use **Sources and import** in that trip.
 
