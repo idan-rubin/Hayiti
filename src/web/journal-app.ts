@@ -7,7 +7,7 @@ import { displayTripTitle, messages, t, quantity } from './journal-messages.ts';
 import { enableSharing } from './share-ui.ts';
 import { routeStops, indexEdges, offRoute, suggest, walkingStats } from '../domain/daily-route.ts';
 import { createDateReel } from './date-reel.ts';
-import { cleanTrip, cleanStop, mergeGooglePins, mergeStops, combineEvidence, journalCharacterLimit } from '../domain/core.ts';
+import { cleanTrip, cleanStop, mergeGooglePins, removeGooglePin, restoreGooglePin, mergeStops, combineEvidence, journalCharacterLimit } from '../domain/core.ts';
 import { importEvidencePackage, prepareTripBackup, importCsv, importIcs, pastedStop } from '../domain/importers.ts';
 import { checkGuestBackup, discardGuest, guestKey, guestMergeRequested, requestGuestMerge, tripsWaitingInTab } from './guest-draft.ts';
 import { prepareRouteImport } from '../domain/route-update.ts';
@@ -554,10 +554,10 @@ function draw() {
         });
       },
       async remove(pin) {
-        if (!await ask(ui('Remove this Google Pin from the trip?', 'להסיר את סיכת Google מהטיול?'), ui('Remove pin', 'הסרת הסיכה'))) return;
+        if (!await ask(ui('Remove this Google Pin from the trip? Future imports will keep it removed.', 'להסיר את סיכת Google מהטיול? גם ייבוא חוזר לא יחזיר אותה.'), ui('Remove pin', 'הסרת הסיכה'))) return;
         void change(() => {
           saved(pin);
-          trip.googlePins = trip.googlePins?.filter(other => other !== pin);
+          removeGooglePin(trip, pin.id);
         });
       }
     };
@@ -1425,9 +1425,12 @@ $('file').onchange = () => {
   const file = $('file').files?.[0];
   if (file) void previewFile(file);
 };
-function googlePinSummary({ added, linked, skipped, datesOutsideTrip, unresolved }: GooglePinResult) {
+function googlePinSummary({ added, linked, skipped, datesOutsideTrip, unresolved, previouslyRemoved }: GooglePinResult) {
   const parts = [ui('Google Pins · ' + added + ' new · ' + linked + ' updated · ' + skipped + ' already saved',
     'סיכות Google · ' + added + ' חדשות · ' + linked + ' עודכנו · ' + skipped + ' כבר שמורות')];
+  if (previouslyRemoved) parts.push(previouslyRemoved === 1
+    ? ui('One previously removed pin left out', 'סיכה אחת שהוסרה בעבר נשארה מחוץ לטיול')
+    : ui(previouslyRemoved + ' previously removed pins left out', previouslyRemoved + ' סיכות שהוסרו בעבר נשארו מחוץ לטיול'));
   if (datesOutsideTrip) {
     const dates = datesOutsideTrip === 1 ? ui('One date falls', 'תאריך אחד נמצא')
       : ui(datesOutsideTrip + ' dates fall', datesOutsideTrip + ' תאריכים נמצאים');
@@ -1438,6 +1441,9 @@ function googlePinSummary({ added, linked, skipped, datesOutsideTrip, unresolved
     ? ui('One pin skipped because its location is unknown', 'סיכה אחת דולגה כי המיקום שלה אינו ידוע')
     : ui(unresolved + ' pins skipped because their locations are unknown', unresolved + ' סיכות דולגו כי המיקום שלהן אינו ידוע'));
   return parts.join(' · ');
+}
+function backupRouteSummary(count: number) {
+  return quantity(count, ' מקטעי מסלול מהגיבוי', 'route segment from backup', 'route segments from backup');
 }
 async function previewFile(f: File, order?: 'day-first' | 'month-first') {
   const target = $('preview');
@@ -1512,18 +1518,45 @@ async function previewFile(f: File, order?: 'day-first' | 'month-first') {
     const pinPreview = backup?.pins ?? result.pinPreview;
     if (backup) {
       target.append(dom('p', displayTripTitle(backup.trip.title) + ' · ' + quantity(backup.recordCount, ' רשומות', 'record', 'records')));
+      if (backup.routes) target.append(dom('p', backupRouteSummary(backup.routes)));
     } else {
       if (result.stops.length || !pinPreview) target.append(dom('p', (language === 'en' && valid.length === 1 ?
         '1 record within the trip dates · ' : valid.length + t(' רשומות בטווח הטיול · ')) +
         (result.omitted + result.stops.length - valid.length) + t(' דולגו')));
     }
     if (pinPreview) target.append(dom('p', googlePinSummary(pinPreview)));
+    if (active && pinPreview?.previouslyRemoved && result.googlePins) {
+      const ids = new Set(active.removedGooglePinIds);
+      const candidates = new Map<string, Record<string, unknown>>();
+      for (const pin of result.googlePins) {
+        if (isRecord(pin) && typeof pin.id === 'string' && ids.has(pin.id)) candidates.set(pin.id, pin);
+      }
+      const details = dom('details');
+      const label = dom('label', ui('Removed pin', 'סיכה שהוסרה'));
+      const select = dom('select');
+      label.htmlFor = select.id = 'restoreGooglePinSelection';
+      for (const [id, pin] of candidates) select.add(new Option(String(pin.name), id));
+      const actions = dom('div', undefined, 'actions');
+      details.append(dom('summary', ui('Restore a removed pin', 'שחזור סיכה שהוסרה')), label, actions);
+      actions.append(select, button(ui('Restore selected pin', 'שחזור הסיכה שנבחרה'), async () => {
+          const ok = await change(() => {
+            const trip = session.trip;
+            if (!trip || trip.id !== active.id || trip.start !== active.start || trip.end !== active.end) {
+              throw Error(t('הטיול השתנה. יש לבחור את קובץ הייבוא מחדש.'));
+            }
+            restoreGooglePin(trip, candidates.get(select.value));
+          });
+          if (ok) await previewFile(f, order);
+        }));
+      target.append(details);
+    }
     const checks = Object.entries(isRecord(result.checks) ? result.checks : {}).filter(([key, status]) => validOutcome(key, status));
     if (!backup && !valid.length && !checks.length && !pinPreview?.added && !pinPreview?.linked) return;
     const action = backup ? t('טעינת הטיול') : pinPreview && !valid.length
       ? ui('Save Google Pins', 'שמירת סיכות Google') : t('מיזוג התחנות');
     target.append(button(action, async () => {
       let test: MergeResult | undefined, savedPins: GooglePinResult | undefined;
+      let savedRoutes = 0;
       const ok = await change(() => {
         if (backup) {
           const restored = prepareTripBackup(backupValue, session.trips);
@@ -1533,6 +1566,7 @@ async function previewFile(f: File, order?: 'day-first' | 'month-first') {
           session.select(restored.trip);
           test = restored.stops;
           savedPins = restored.pins;
+          savedRoutes = restored.routes;
         } else {
           const { trip } = session;
           if (!trip || !active || trip.id !== active.id || trip.start !== active.start || trip.end !== active.end) {
@@ -1559,6 +1593,7 @@ async function previewFile(f: File, order?: 'day-first' | 'month-first') {
               'נוספו ' + done.added + ' תחנות · הוצלבו ' + done.linked + ' · כבר קיימות ' + done.skipped));
           }
           if (savedPins) summaries.push(googlePinSummary(savedPins));
+          if (savedRoutes) summaries.push(backupRouteSummary(savedRoutes));
           return summaries.join(' · ');
         });
       }

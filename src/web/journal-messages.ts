@@ -211,6 +211,8 @@ export const messages: Record<string, string> = {
   "טיול חדש": "New trip",
   "＋ תחנה": "＋ Stop",
   "מקורות וייבוא": "Sources and import",
+  "מקורות": "Sources",
+  "סדר הליכה": "Walking order",
   "הצע סדר הליכה": "Suggest walking order",
   "מסלול היום": "Today's route",
   "תאריך המסלול": "Route date",

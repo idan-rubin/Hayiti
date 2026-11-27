@@ -1,4 +1,6 @@
 import { cleanTrip, cleanStop, isRecord, member, mergeGooglePins, mergeStops, safeDate, sources, type GooglePinResult, type Stop, type Trip } from './core.ts';
+import { restoreMissingRoutes } from './route-update.ts';
+
 export interface ImportResult {
   stops: Stop[];
   omitted: number;
@@ -12,12 +14,21 @@ export function prepareTripBackup(value: unknown, trips: readonly Trip[]) {
   const backup = cleanTrip(value);
   const existing = trips.find(trip => trip.id === backup.id);
   const trip = existing ? structuredClone(existing) : backup;
-  const stops = existing ? mergeStops(trip, backup.stops) : { added: backup.stops.length, linked: 0, skipped: 0 };
+  const restoredIds = new Map<string, string>();
+  const stops = existing ? mergeStops(trip, backup.stops.toSorted((a, b) => a.date.localeCompare(b.date) || a.rank - b.rank), restoredIds)
+    : { added: backup.stops.length, linked: 0, skipped: 0 };
+  const routes = existing ? restoreMissingRoutes(trip, backup, restoredIds) : trip.edges.length;
   if (!existing) delete trip.googlePins;
+  else if (backup.removedGooglePinIds?.length) {
+    // This journal's current choices win, including pins the traveler explicitly restored.
+    const savedIds = new Set(trip.googlePins?.map(pin => pin.id));
+    const removed = new Set([...(trip.removedGooglePinIds ?? []), ...backup.removedGooglePinIds.filter(id => !savedIds.has(id))]);
+    if (removed.size) trip.removedGooglePinIds = [...removed];
+  }
   // Use the validated source pins so the import can still report dates outside the destination trip.
   const pins = isRecord(value) && Array.isArray(value.googlePins) && value.googlePins.length
     ? mergeGooglePins(trip, value.googlePins, 'backup') : undefined;
-  return { trip, stops, pins, recordCount: backup.stops.length };
+  return { trip, stops, pins, routes, recordCount: backup.stops.length };
 }
 
 /** Preview an agent evidence package against the selected trip without changing its stops or bookmarks. */

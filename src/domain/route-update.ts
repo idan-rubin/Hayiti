@@ -189,3 +189,56 @@ export function prepareRouteImport(trip: Trip, file: Record<string, unknown>) {
   }
   return { stops: draft.stops, edges: draft.edges, updated, unchanged, reorderedDays };
 }
+
+function adjacentByDestination(trip: Trip) {
+  const pairs = new Map<string, { from: Stop; to: Stop }>();
+  for (const date of new Set(trip.stops.map(stop => stop.date))) {
+    const day = routeStops(trip, date);
+    for (let i = 1; i < day.length; i++) pairs.set(day[i].id, { from: day[i - 1], to: day[i] });
+  }
+  return pairs;
+}
+
+function sameRouteEndpoint(source: Stop, current: Stop) {
+  return source.date === current.date && source.kind === current.kind &&
+    source.xy?.[0] === current.xy?.[0] && source.xy?.[1] === current.xy?.[1];
+}
+
+/** Fill missing legs from a backup only when both endpoints still describe the same adjacent journey. */
+export function restoreMissingRoutes(trip: Trip, backup: Trip, restoredIds: ReadonlyMap<string, string>) {
+  if (!backup.edges.length) return 0;
+  const current = adjacentByDestination(trip), original = adjacentByDestination(backup);
+  const present = new Set(trip.edges.filter(edge => current.get(edge.b)?.from.id === edge.a).map(edge => edge.b));
+  const savedStops = new Set(backup.stops);
+  const restored: Edge[] = [];
+  // The map renderer uses the last occurrence when an old backup contains two versions of a leg.
+  for (const edge of backup.edges.toReversed()) {
+    const to = restoredIds.get(edge.b);
+    if (!to || present.has(to)) continue;
+    const pair = current.get(to), old = original.get(edge.b);
+    if (!pair || !old || old.from.id !== edge.a) continue;
+    const syntheticHome = edge.a === 'base' && old.from.kind === 'origin' && !savedStops.has(old.from);
+    if (!syntheticHome && restoredIds.get(edge.a) !== pair.from.id) continue;
+    if (!sameRouteEndpoint(old.from, pair.from) || !sameRouteEndpoint(old.to, pair.to)) continue;
+    let valid: Edge;
+    try {
+      // Older backups used zero when only the path, without a measured distance, had been saved.
+      if (!edge.line.length && (edge.type === 'taxi' || edge.type === 'mixed')) {
+        // An older journal may know the mode without recording a path.
+        if (!Number.isFinite(edge.m)) continue;
+        valid = { ...edge, a: pair.from.id, b: pair.to.id };
+      } else {
+        const mode = edge.type === 'mixed' ? 'taxi' : edge.type;
+        valid = readRoute({ ...edge, type: mode, m: edge.m || undefined }, pair.from, pair.to);
+        valid.type = edge.type;
+      }
+    } catch {
+      continue;
+    }
+    if (trip.edges.length + restored.length >= 8000) throw Error('מספר המקטעים גדול מדי ליומן');
+    restored.push(valid);
+    present.add(to);
+  }
+  trip.edges.push(...restored.reverse());
+  return restored.length;
+}

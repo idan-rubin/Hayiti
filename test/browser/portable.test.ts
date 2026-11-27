@@ -1112,3 +1112,43 @@ await test('a photo-backed visit the traveler moves to another day is marked as 
     await browser.close();
   }
 });
+
+await test('a removed Google Pin stays off the map after reload and reimport until deliberately restored', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await page.route('https://**/*', route => route.abort());
+    const date = '2026-06-14';
+    const pin = { id: 'bookmark', name: 'Museum', xy: [52.01, 4.01], date };
+    const another = { ...pin, id: 'new', name: 'Gallery', xy: [52.01, 4.02] };
+    await page.addInitScript(trip => {
+      if (!localStorage.getItem('masluli-portable-v2')) localStorage.setItem('masluli-portable-v2', JSON.stringify({ trips: [trip] }));
+    }, { id: 'trip', title: 'Weekend', start: date, end: date, stops: [], googlePins: [pin] });
+    await page.goto(new URL('../../dist/web/Hayiti.html?lang=en', import.meta.url).href);
+    await page.getByRole('button', { name: 'Museum · Google Pin' }).click();
+    await page.getByRole('button', { name: 'Remove from trip' }).click();
+    await page.locator('#confirmYes').click();
+    await page.locator('.google-pin').waitFor({ state: 'detached' });
+    await page.reload();
+    const openPreview = async () => {
+      await page.locator('#import').click();
+      await page.locator('[data-tab="files"]').click();
+      await page.locator('#file').setInputFiles({ name: 'saved.json', mimeType: 'application/json',
+        buffer: Buffer.from(JSON.stringify({ format: 'hayiti-stops/1', tripId: 'trip', stops: [], googlePins: [pin, another] })) });
+      await page.locator('#preview').getByText(/One previously removed pin left out/).waitFor();
+    };
+    await openPreview();
+    await page.getByRole('button', { name: 'Save Google Pins' }).click();
+    assert.deepEqual(await page.locator('.google-pin').evaluateAll(pins => pins.map(pin => pin.getAttribute('title'))), ['Gallery · Google Pin']);
+    await openPreview();
+    assert.equal(await page.getByRole('button', { name: 'Save Google Pins' }).count(), 0);
+    await page.getByText('Restore a removed pin', { exact: true }).click();
+    assert.equal(await page.getByLabel('Removed pin', { exact: true }).inputValue(), pin.id);
+    await page.getByRole('button', { name: 'Restore selected pin' }).click();
+    await page.locator('#preview').getByText(/2 already saved/).waitFor();
+    await page.locator('#sources [data-close]').click();
+    assert.equal(await page.locator('.google-pin').count(), 2);
+  } finally {
+    await browser.close();
+  }
+});

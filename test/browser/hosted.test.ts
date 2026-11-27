@@ -789,12 +789,13 @@ await test('a failed first load blocks import until Try again opens the journal'
   }
 });
 
-await test('a hosted journal restores a legacy backup and reports pins without a location', async () => {
+await test('a hosted journal restores backup routes and reports pins without a location', async () => {
   const browser = await chromium.launch();
   try {
     const page = await browser.newPage();
     const current = { id: 'park', name: 'Correct park', xy: [52, 4], date: '2026-06-15', dayEdited: true };
-    const trip = { id: 'restore', title: 'City break', start: '2026-06-14', end: '2026-06-15', stops: [], googlePins: [current] };
+    const trip = { id: 'restore', title: 'City break', start: '2026-06-14', end: '2026-06-15', stops: [], edges: [], googlePins: [current] };
+    const route = { a: 'museum', b: 'market', type: 'walk', line: [[52, 4], [52.001, 4.0005], [52.002, 4.002]], m: 285 };
     let saved = [trip];
     await hostJournal(page, route => {
       if (route.request().method() === 'GET') return route.fulfill({ json: { trips: saved, rev: '1' } });
@@ -807,13 +808,17 @@ await test('a hosted journal restores a legacy backup and reports pins without a
     await page.locator('[data-tab=files]').click();
     await page.locator('#file').setInputFiles({ name: 'legacy.json', mimeType: 'application/json',
       buffer: Buffer.from(JSON.stringify({ format: 'hayiti/1', trip: { ...trip,
-        stops: [{ id: 'museum', name: 'Museum', date: trip.start }],
+        stops: [{ id: 'museum', name: 'Museum', date: trip.start, rank: 1, xy: route.line[0] },
+          { id: 'market', name: 'Market', date: trip.start, rank: 2, xy: route.line[2] }], edges: [route],
         googlePins: [{ ...current, name: 'Old park', xy: [51, 4] },
           { id: 'unknown', name: 'Unknown', xy: [0, 0] }, { id: 'tower', name: 'Tower', xy: [52, 4.1] }] } })) });
+    await page.locator('#preview').filter({ hasText: '1 route segment from backup' }).waitFor();
     await page.locator('#preview').getByText(/One pin skipped because its location is unknown/).waitFor();
     await page.locator('#preview button').click();
     await page.locator('#status').filter({ hasText: 'One pin skipped because its location is unknown' }).waitFor();
-    assert.equal(saved[0].stops.length, 1);
+    await page.locator('#status').filter({ hasText: '1 route segment from backup' }).waitFor();
+    assert.equal(saved[0].stops.length, 2);
+    assert.deepEqual(saved[0].edges, [route]);
     assert.deepEqual(saved[0].googlePins, [current, { id: 'tower', name: 'Tower', xy: [52, 4.1] }]);
   } finally {
     await browser.close();
@@ -1234,15 +1239,22 @@ await test('the mobile trip toolbar keeps the overview beside the daily actions 
       const toolbar = page.locator('.toolbar');
       const overview = toolbar.locator('#wholeTrip');
       await overview.waitFor();
-      for (const width of [375, 393]) {
+      for (const width of [320, 375, 390, 430]) {
         await page.setViewportSize({ width, height: 852 });
         for (const pressed of [false, true]) {
           assert.equal(await overview.getAttribute('aria-pressed'), String(pressed));
           const boxes = await toolbar.locator('button:visible').evaluateAll(buttons => buttons.map(button => {
             const { top, left, right } = button.getBoundingClientRect();
-            return { top, left, right };
+            const label = [...button.children].find(span => span.checkVisibility()) ?? button;
+            const range = document.createRange();
+            range.selectNodeContents(label);
+            const textLines = new Set([...range.getClientRects()].map(rect => rect.top));
+            return { top, left, right, lines: textLines.size };
           }));
           assert.equal(boxes.length, pressed ? 2 : 4);
+          assert.ok(boxes.every(box => box.lines === 1), 'each action label fits on one line');
+          assert.equal(await toolbar.getByRole('button', { name: lang === 'he' ? 'מקורות וייבוא' : 'Sources and import', exact: true }).count(), 1);
+          if (!pressed) assert.equal(await toolbar.getByRole('button', { name: lang === 'he' ? 'הצע סדר הליכה' : 'Suggest walking order', exact: true }).count(), 1);
           assert.ok(boxes.every(box => box.top === boxes[0].top));
           const bounds = await toolbar.boundingBox();
           assert.ok(bounds);
@@ -1260,6 +1272,9 @@ await test('the mobile trip toolbar keeps the overview beside the daily actions 
           await overview.click();
         }
       }
+      await page.setViewportSize({ width: 960, height: 852 });
+      assert.equal(await toolbar.locator('#import').innerText(), lang === 'he' ? 'מקורות וייבוא' : 'Sources and import');
+      assert.equal(await toolbar.locator('#organize').innerText(), lang === 'he' ? 'הצע סדר הליכה' : 'Suggest walking order');
     }
   } finally {
     await browser.close();

@@ -349,3 +349,15 @@ await test('agents can continue a day preview without mixing in other or unassig
   const invalid = await (await tool('list_google_pins', { tripId: trip.id, date: '2026-06-31' })).json();
   assert.equal(invalid.result.isError, true);
 });
+
+await test('agent retries respect private Google Pin removals without creating a new revision', async () => {
+  const { tool, trip, env } = fixture();
+  trip.removedGooglePinIds = ['removed'];
+  const rev = await storeState(env.BUCKET, 'alice', [trip], '');
+  const pin = { id: 'removed', name: 'Park', xy: [52, 4], date: trip.start };
+  const result = await (await tool('add_trip_stops', { tripId: trip.id, stops: [], googlePins: [pin] })).json();
+  assert.deepEqual(JSON.parse(result.result.content[0].text).googlePins, { added: 0, linked: 0, skipped: 0, previouslyRemoved: 1 });
+  assert.equal((await loadState(env.BUCKET, 'alice')).rev, rev);
+  const list = await (await tool('list_google_pins', { tripId: trip.id })).json();
+  assert.deepEqual(JSON.parse(list.result.content[0].text).pins, []);
+});

@@ -18,7 +18,7 @@ Review the suggested stops in chat and tell ChatGPT which to save. Open the jour
 
 Each trip opens on a day. Choose **Whole trip** to see all its days on one map. Each day's route is drawn separately. Choose streets, satellite imagery or a topographic map in either view.
 
-Ask ChatGPT to add saved places from a Google Maps list it can read. A **Google Pin** is a bookmark. It appears on its assigned day and in the trip overview, independently of visit counts and route distances. Pins without a known trip day appear in the overview, where you can assign a day yourself. A save timestamp, when available, records when you bookmarked the place.
+Ask ChatGPT to add saved places from a Google Maps list it can read. A **Google Pin** is a bookmark. It appears on its assigned day and in the trip overview, independently of visit counts and route distances. Pins without a known trip day appear in the overview, where you can assign a day yourself. A save timestamp, when available, records when you bookmarked the place. Removing a pin keeps it out of later imports for that trip. To bring it back, import a saved-places file containing it, then choose **Restore a removed pin** in the preview.
 
 Using the portable journal, or the web app without signing in? The sync request asks ChatGPT for a JSON file. Import that file into your trip under **Sources and import** → **Files**.
 
