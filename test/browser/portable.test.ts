@@ -828,3 +828,19 @@ await test('the traveler re-times and moves a photo pin, and a new home base dro
     await browser.close();
   }
 });
+
+await test('the portable journal, which has no account, welcomes a traveler without sending them to one', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await page.route('https://**/*', route => route.abort());
+    await page.goto(new URL('../../dist/web/Hayiti.html?lang=en', import.meta.url).href);
+    await page.locator('#welcome').waitFor();
+    assert.deepEqual(await page.locator('#welcome h3:visible').allTextContents(), ['Rebuild a trip from what you already have']);
+    assert.equal(await page.locator('#welcome a:visible').count(), 0);
+    await page.locator('#languageSwitch').selectOption('he');
+    assert.deepEqual(await page.locator('#welcome h3:visible').allTextContents(), ['משחזרים טיול ממה שכבר יש לך']);
+  } finally {
+    await browser.close();
+  }
+});

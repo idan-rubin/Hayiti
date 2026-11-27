@@ -1644,3 +1644,17 @@ await test('the traveler can apply multiple days of street routes in one account
     await browser.close();
   }
 });
+
+await test('the hosted journal welcomes a new traveler with the way to build a trip in ChatGPT', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await hostJournal(page, guestAPI);
+    await page.goto(origin + '/journal.html?lang=en');
+    await page.locator('#welcome').waitFor();
+    assert.deepEqual(await page.locator('#welcome h3:visible').allTextContents(), ['Build your trip in ChatGPT']);
+    assert.deepEqual(await page.locator('#welcome a:visible').allTextContents(), ['Open ChatGPT']);
+  } finally {
+    await browser.close();
+  }
+});
