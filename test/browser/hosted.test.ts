@@ -5,8 +5,10 @@ import { strFromU8, unzipSync } from 'fflate';
 import { chromium, type Page, type Route } from 'playwright-core';
 import { journalAPI } from '../../src/server/journal-api.ts';
 import { cleanTrip } from '../../src/domain/core.ts';
+import { journalSchemaVersion } from '../../src/domain/journal-schema.ts';
 import { loadState, storeState } from '../../src/server/storage.ts';
 import { MemoryBucket } from '../memory-bucket.ts';
+import { guestTitles, patchGuestRecord, readGuestRecord, refuseGuestWrites } from './guest-storage-helpers.ts';
 
 // An https origin keeps the page a secure context, as the hosted journal is.
 const origin = 'https://hayiti.test';
@@ -150,7 +152,7 @@ await test('an account journal leaves the tab when its session ends and never be
     let signedIn = true;
     const account = { id: 'account', title: 'Account trip', start: '2026-06-14', end: '2026-06-14', stops: [] };
     await hostJournal(page, route => signedIn
-      ? route.fulfill({ json: { trips: [account], rev: 'r1' } })
+      ? route.fulfill({ json: { schemaVersion: journalSchemaVersion, trips: [account], rev: 'r1' } })
       : route.fulfill({ status: 401, json: { error: 'Authentication required' } }));
     await page.goto(origin + '/journal.html?lang=en');
     await page.locator('#title').filter({ hasText: 'Account trip' }).waitFor();
@@ -161,7 +163,8 @@ await test('an account journal leaves the tab when its session ends and never be
     assert.notEqual(await page.locator('#title').textContent(), 'Account trip');
 
     await createTrip(page, 'Guest trip');
-    const draft = await page.evaluate(key => JSON.parse(localStorage.getItem(key)!), draftKey);
+    const draft = await readGuestRecord(page);
+    assert.ok(draft);
     assert.deepEqual(draft.trips.map((trip: { title: string }) => trip.title), ['Guest trip']);
   } finally {
     await browser.close();
@@ -178,7 +181,7 @@ await test('guest edits to an untitled account trip get a distinct name in the p
     const saved: { trips: { title: string; stops: unknown[] }[] }[] = [];
     await hostJournal(page, route => {
       if (!signedIn) return route.fulfill({ status: 401, json: { error: 'Authentication required' } });
-      if (route.request().method() === 'GET') return route.fulfill({ json: { trips: [trip], rev: 'r1' } });
+      if (route.request().method() === 'GET') return route.fulfill({ json: { schemaVersion: journalSchemaVersion, trips: [trip], rev: 'r1' } });
       saved.push(route.request().postDataJSON());
       return route.fulfill({ json: { rev: 'r2' } });
     });
@@ -201,7 +204,7 @@ await test('guest edits to an untitled account trip get a distinct name in the p
     assert.deepEqual(saved.map(body => body.trips.map(item => [item.title, item.stops.length])),
       [[['', 1], ['My trip (before sign-in)', 2]]]);
     assert.deepEqual(await page.locator('#trips option').allTextContents(), ['My trip', 'My trip (before sign-in)']);
-    assert.equal(await page.evaluate(key => localStorage.getItem(key), draftKey), null);
+    assert.deepEqual(await guestTitles(page), []);
   } finally {
     await browser.close();
   }
@@ -221,7 +224,7 @@ await test('a save that fails after the session ended does not bring the account
         await held;
         return route.fulfill(signedOut);
       }
-      return route.fulfill(signedIn ? { json: { trips: [account], rev: 'r1' } } : signedOut);
+      return route.fulfill(signedIn ? { json: { schemaVersion: journalSchemaVersion, trips: [account], rev: 'r1' } } : signedOut);
     });
     await page.goto(origin + '/journal.html?lang=en');
     await page.locator('#title').filter({ hasText: 'Account trip' }).waitFor();
@@ -243,7 +246,8 @@ await test('a save that fails after the session ended does not bring the account
     assert.equal(await page.locator('#trips option').count(), 0);
     await page.locator('#config [data-close]').click();
     await createTrip(page, 'Guest trip');
-    const draft = await page.evaluate(key => JSON.parse(localStorage.getItem(key)!), draftKey);
+    const draft = await readGuestRecord(page);
+    assert.ok(draft);
     assert.deepEqual(draft.trips.map((trip: { title: string }) => trip.title), ['Guest trip']);
   } finally {
     await browser.close();
@@ -261,7 +265,7 @@ await test('retrying sign-in after a lost reply does not add the guest copy twic
       posts = 0;
     await hostJournal(page, route => {
       if (!signedIn) return route.fulfill({ status: 401, json: { error: 'Authentication required' } });
-      if (route.request().method() === 'GET') return route.fulfill({ json: { trips: account, rev: 'r' + posts } });
+      if (route.request().method() === 'GET') return route.fulfill({ json: { schemaVersion: journalSchemaVersion, trips: account, rev: 'r' + posts } });
       account = route.request().postDataJSON().trips;
       // The server stores the first save, but its reply never reaches the browser.
       return ++posts === 1 ? route.abort() : route.fulfill({ json: { rev: 'r' + posts } });
@@ -288,7 +292,7 @@ await test('retrying sign-in after a lost reply does not add the guest copy twic
     await page.locator('#status').filter({ hasText: 'up to date' }).waitFor();
     assert.equal(posts, 1);
     assert.deepEqual(account.map(item => item.title), ['Rotterdam', 'Rotterdam (before sign-in)']);
-    assert.equal(await page.evaluate(key => localStorage.getItem(key), draftKey), null);
+    assert.deepEqual(await guestTitles(page), []);
   } finally {
     await browser.close();
   }
@@ -301,9 +305,7 @@ await test('a guest edit the tab cannot store fails, and the stored trip is unto
     await hostJournal(page, route => route.fulfill({ status: 401, json: { error: 'Authentication required' } }));
     await page.goto(origin + '/journal.html?lang=en');
     await createTrip(page, 'Small trip');
-    await page.evaluate(() => {
-      Storage.prototype.setItem = () => { throw new DOMException('Full', 'QuotaExceededError'); };
-    });
+    await refuseGuestWrites(page);
     await page.locator('#newTrip').click();
     await page.locator('#tripForm [name=title]').fill('Does not fit');
     await page.locator('#tripForm .primary').click();
@@ -327,7 +329,7 @@ await test('refreshing after signing in elsewhere adds the guest trip with its s
     const saved: { trips: { stops: { name: string }[] }[] }[] = [];
     await hostJournal(page, route => {
       if (!signedIn) return route.fulfill({ status: 401, json: { error: 'Authentication required' } });
-      if (route.request().method() === 'GET') return route.fulfill({ json: { trips: [], rev: '' } });
+      if (route.request().method() === 'GET') return route.fulfill({ json: { schemaVersion: journalSchemaVersion, trips: [], rev: '' } });
       saved.push(route.request().postDataJSON());
       return route.fulfill({ json: { rev: 'r1' } });
     });
@@ -366,7 +368,7 @@ await test('a refused guest merge keeps the selected trip and day', async () => 
     let signedIn = false;
     await hostJournal(page, route => {
       if (!signedIn) return route.fulfill({ status: 401 });
-      if (route.request().method() === 'GET') return route.fulfill({ json: { trips: [], rev: '' } });
+      if (route.request().method() === 'GET') return route.fulfill({ json: { schemaVersion: journalSchemaVersion, trips: [], rev: '' } });
       return route.fulfill({ status: 400, json: { error: 'Invalid journal' } });
     });
     await page.goto(origin + '/journal.html?lang=en');
@@ -392,7 +394,7 @@ await test('when the journal cannot take a guest trip, the traveler can back it 
     const account = { id: 'account', title: 'Account trip', start: '2026-06-14', end: '2026-06-14', stops: [] };
     await hostJournal(page, route => {
       if (!signedIn) return route.fulfill({ status: 401, json: { error: 'Authentication required' } });
-      if (route.request().method() === 'GET') return route.fulfill({ json: { trips: [account], rev: 'r1' } });
+      if (route.request().method() === 'GET') return route.fulfill({ json: { schemaVersion: journalSchemaVersion, trips: [account], rev: 'r1' } });
       return route.fulfill({ status: 400, json: { error: 'Invalid journal' } });
     });
     await page.goto(origin + '/journal.html?lang=en');
@@ -428,7 +430,7 @@ await test('overlapping refreshes share one load: one save, one status, and the 
       if (!signedIn) return route.fulfill({ status: 401, json: { error: 'Authentication required' } });
       if (route.request().method() === 'GET') {
         reads++;
-        return route.fulfill({ json: { trips: account, rev: 'r' + rev } });
+        return route.fulfill({ json: { schemaVersion: journalSchemaVersion, trips: account, rev: 'r' + rev } });
       }
       const body = route.request().postDataJSON();
       if (body.rev !== 'r' + rev) return route.fulfill({ status: 409, json: { error: 'CONFLICT' } });
@@ -465,7 +467,7 @@ await test('a refresh started before a save keeps the saved trip and revision', 
     let trips = [{ title: 'First', id: 'first', start: '2026-06-14', end: '2026-06-14', stops: [] }];
     await hostJournal(page, async route => {
       if (route.request().method() === 'GET') {
-        const snapshot = { trips, rev };
+        const snapshot = { schemaVersion: journalSchemaVersion, trips, rev };
         if (++reads === 2) await held;
         return route.fulfill({ json: snapshot });
       }
@@ -501,21 +503,12 @@ await test('failed sign-in preparation keeps the draft available for backup and 
       let signedIn = false, writes = 0;
       await hostJournal(page, route => {
         if (route.request().method() === 'POST') writes++;
-        return route.fulfill(signedIn ? { json: { trips: [], rev: 'r1' } } : { status: 401 });
+        return route.fulfill(signedIn ? { json: { schemaVersion: journalSchemaVersion, trips: [], rev: 'r1' } } : { status: 401 });
       });
       await page.goto(origin + '/journal.html?lang=en');
       await createTrip(page, 'Guest trip');
-      await page.evaluate(failure => {
-        const key = 'hayiti-guest-merge';
-        if (failure === 'corrupt') localStorage.setItem(key, '{broken');
-        else {
-          const set = Storage.prototype.setItem;
-          Storage.prototype.setItem = function (keyToWrite, value) {
-            if (keyToWrite === key) throw new DOMException('Storage full', 'QuotaExceededError');
-            set.call(this, keyToWrite, value);
-          };
-        }
-      }, failure);
+      if (failure === 'corrupt') await patchGuestRecord(page, { attempts: '{broken' });
+      else await refuseGuestWrites(page);
       await chooseSignIn(page);
       signedIn = true;
       await refreshJournal(page);
@@ -541,7 +534,7 @@ await test('a non-JSON sign-in failure leaves the guest backup available and ref
     let signedIn = false, writes = 0;
     await hostJournal(page, route => {
       if (!signedIn) return route.fulfill({ status: 401 });
-      if (route.request().method() === 'GET') return route.fulfill({ json: { trips: [], rev: '' } });
+      if (route.request().method() === 'GET') return route.fulfill({ json: { schemaVersion: journalSchemaVersion, trips: [], rev: '' } });
       if (++writes === 1) return route.fulfill({ status: 503, contentType: 'text/html', body: '<p>Unavailable</p>' });
       assert.equal(route.request().postDataJSON().trips[0].title, 'Guest trip');
       return route.fulfill({ json: { rev: 'r1' } });
@@ -561,7 +554,7 @@ await test('a non-JSON sign-in failure leaves the guest backup available and ref
     await refreshJournal(page);
     await page.locator('#status').filter({ hasText: 'is now in your journal' }).waitFor();
     assert.equal(writes, 2);
-    assert.equal(await page.evaluate(key => localStorage.getItem(key), draftKey), null);
+    assert.deepEqual(await guestTitles(page), []);
   } finally {
     await browser.close();
   }
@@ -576,7 +569,7 @@ await test('a sign-in conflict keeps the guest draft until the traveler chooses 
     let signedIn = false, writes = 0;
     await hostJournal(page, async route => {
       if (!signedIn) return route.fulfill({ status: 401 });
-      if (route.request().method() === 'GET') return route.fulfill({ json: { trips: [], rev: writes ? 'r2' : 'r1' } });
+      if (route.request().method() === 'GET') return route.fulfill({ json: { schemaVersion: journalSchemaVersion, trips: [], rev: writes ? 'r2' : 'r1' } });
       if (++writes === 1) {
         await held;
         return route.fulfill({ status: 409 });
@@ -608,7 +601,7 @@ await test('a sign-in conflict keeps the guest draft until the traveler chooses 
     await refreshJournal(page);
     await page.locator('#status').filter({ hasText: 'is now in your journal' }).waitFor();
     assert.equal(writes, 2);
-    assert.equal(await page.evaluate(key => localStorage.getItem(key), draftKey), null);
+    assert.deepEqual(await guestTitles(page), []);
   } finally {
     release();
     await browser.close();
@@ -624,7 +617,7 @@ await test('an import acknowledged after refresh closes the dialog and reports i
     let trips = [{ id: 'ta', title: 'Tel Aviv', start: '2026-06-14', end: '2026-06-14', stops: [] }];
     let writes = 0;
     await hostJournal(page, async route => {
-      if (route.request().method() === 'GET') return route.fulfill({ json: { trips, rev: writes ? 'newer' : 'original' } });
+      if (route.request().method() === 'GET') return route.fulfill({ json: { schemaVersion: journalSchemaVersion, trips, rev: writes ? 'newer' : 'original' } });
       const body = route.request().postDataJSON();
       trips = body.trips;
       if (++writes === 1) {
@@ -674,7 +667,7 @@ await test('a conflicting edit reads past a stale refresh before reporting the l
       const read = ++reads;
       if (read === 2) await stale;
       const title = read < 3 ? 'Old title' : 'New title';
-      return route.fulfill({ json: { rev: read < 3 ? 'r1' : 'r2', trips: [
+      return route.fulfill({ json: { schemaVersion: journalSchemaVersion, rev: read < 3 ? 'r1' : 'r2', trips: [
         { id: 'trip', title, start: '2026-06-14', end: '2026-06-14', stops: [] }
       ] } });
     });
@@ -708,7 +701,7 @@ await test('a guest can edit after a lost sign-in reply and refresh the same acc
     const saves: { id: string; title: string }[][] = [];
     await hostJournal(page, route => {
       if (!signedIn) return route.fulfill({ status: 401 });
-      if (route.request().method() === 'GET') return route.fulfill({ json: { trips: saves.at(-1) ?? [], rev: 'r' + saves.length } });
+      if (route.request().method() === 'GET') return route.fulfill({ json: { schemaVersion: journalSchemaVersion, trips: saves.at(-1) ?? [], rev: 'r' + saves.length } });
       saves.push(route.request().postDataJSON().trips);
       return saves.length === 1 ? route.abort() : route.fulfill({ json: { rev: 'r2' } });
     });
@@ -727,7 +720,7 @@ await test('a guest can edit after a lost sign-in reply and refresh the same acc
     await page.locator('#status').filter({ hasText: 'now in your journal' }).waitFor();
     assert.deepEqual(saves.map(trips => trips.map(trip => trip.title)), [['Guest trip'], ['Edited guest trip']]);
     assert.equal(saves[0][0].id, saves[1][0].id);
-    assert.equal(await page.evaluate(key => localStorage.getItem(key), draftKey), null);
+    assert.deepEqual(await guestTitles(page), []);
   } finally {
     await browser.close();
   }
@@ -740,10 +733,10 @@ await test('an unreadable guest draft is retained until the traveler confirms di
     let posts = 0;
     await hostJournal(page, route => {
       if (route.request().method() === 'POST') posts++;
-      return route.fulfill({ json: { trips: [], rev: 'r1' } });
+      return route.fulfill({ json: { schemaVersion: journalSchemaVersion, trips: [], rev: 'r1' } });
     });
     await page.goto(origin + '/journal.html?lang=en');
-    await page.evaluate(key => localStorage.setItem(key, '{broken'), draftKey);
+    await patchGuestRecord(page, { trips: [null] });
     await page.reload();
     const discard = page.getByRole('button', { name: 'Discard unreadable draft' });
     const newTrip = page.getByRole('button', { name: 'New trip', exact: true });
@@ -756,7 +749,7 @@ await test('an unreadable guest draft is retained until the traveler confirms di
     assert.equal(await page.locator('[data-tab="paste"]').isDisabled(), true);
     await discard.click();
     await page.locator('#confirmNo').click();
-    assert.equal(await page.evaluate(key => localStorage.getItem(key), draftKey), '{broken');
+    assert.deepEqual((await readGuestRecord(page))?.trips, [null]);
     assert.equal(await newTrip.isDisabled(), true);
     await discard.click();
     await page.locator('#confirmYes').click();
@@ -764,7 +757,7 @@ await test('an unreadable guest draft is retained until the traveler confirms di
     assert.equal(await discard.isVisible(), false);
     assert.equal(await newTrip.isEnabled(), true);
     assert.equal(await page.locator('#import').isEnabled(), true);
-    assert.equal(await page.evaluate(key => localStorage.getItem(key), draftKey), null);
+    assert.deepEqual(await guestTitles(page), []);
     assert.equal(posts, 0);
   } finally {
     await browser.close();
@@ -808,7 +801,7 @@ await test('a hosted journal restores backup routes and reports pins without a l
     const route = { a: 'museum', b: 'market', type: 'walk', line: [[52, 4], [52.001, 4.0005], [52.002, 4.002]], m: 285 };
     let saved = [trip];
     await hostJournal(page, route => {
-      if (route.request().method() === 'GET') return route.fulfill({ json: { trips: saved, rev: '1' } });
+      if (route.request().method() === 'GET') return route.fulfill({ json: { schemaVersion: journalSchemaVersion, trips: saved, rev: '1' } });
       saved = route.request().postDataJSON().trips;
       return route.fulfill({ json: { rev: '2' } });
     });
@@ -835,14 +828,15 @@ await test('a hosted journal restores backup routes and reports pins without a l
   }
 });
 
-await test('a backup exceeding actual guest storage is rejected in the preview', async () => {
+await test('a guest backup save reports storage failures without changing the stored journal', async () => {
   const browser = await chromium.launch();
   try {
     const page = await browser.newPage();
     await hostJournal(page, route => route.fulfill({ status: 401 }));
     await page.goto(origin + '/journal.html?lang=en');
     await createTrip(page, 'Small trip');
-    const previous = await page.evaluate(key => localStorage.getItem(key), draftKey);
+    const previous = await readGuestRecord(page);
+    await refuseGuestWrites(page);
     const photo = 'data:image/jpeg;base64,/9j/' + 'A'.repeat(280000);
     const date = '2026-06-14';
     const stops = Array.from({ length: 24 }, (_, i) => ({ id: 'p' + i, name: 'Visit ' + i, date, photos: [photo] }));
@@ -851,9 +845,10 @@ await test('a backup exceeding actual guest storage is rejected in the preview',
     await page.locator('#file').setInputFiles({ name: 'photos.json', mimeType: 'application/json', buffer: Buffer.from(
       JSON.stringify({ format: 'hayiti/1', trip: { id: 'photos', title: 'Photo trip', start: date, end: date, stops } })
     ) });
-    await page.locator('#preview').filter({ hasText: 'This browser cannot store the imported backup' }).waitFor();
-    assert.equal(await page.locator('#preview button').count(), 0);
-    assert.equal(await page.evaluate(key => localStorage.getItem(key), draftKey), previous);
+    await page.locator('#preview button').click();
+    await page.locator('#sources .form-error').filter({ hasText: 'could not save the edit' }).waitFor();
+    assert.equal(await page.locator('#title').textContent(), 'Small trip');
+    assert.deepEqual(await readGuestRecord(page), previous);
   } finally {
     await browser.close();
   }
@@ -928,7 +923,7 @@ await test('double-clicking Save in trip settings submits once without an alert'
         await held;
         return route.fulfill({ json: { rev: 'r2' } });
       }
-      return route.fulfill({ json: { rev: 'r1', trips: [
+      return route.fulfill({ json: { schemaVersion: journalSchemaVersion, rev: 'r1', trips: [
         { id: 'ta', title: 'My trip', start: '2026-06-14', end: '2026-06-14', stops: [] }
       ] } });
     });
@@ -994,7 +989,7 @@ await test('a trip made without signing in is still there in a new tab, and both
     await createTrip(second, 'Made in the second tab');
     await first.locator('#trips option').filter({ hasText: 'Made in the second tab' }).waitFor({ state: 'attached' });
     await createTrip(first, 'Made in the first tab');
-    const saved = await first.evaluate(key => JSON.parse(localStorage.getItem(key)!).trips.map((trip: { title: string }) => trip.title), draftKey);
+    const saved = await guestTitles(first);
     assert.deepEqual(saved.sort(), ['Guest trip', 'Made in the first tab', 'Made in the second tab']);
   } finally {
     await browser.close();
@@ -1013,7 +1008,7 @@ await test('a draft left in a tab by an earlier version moves into the browser',
     await page.reload();
     await page.locator('#title').filter({ hasText: 'Started last week' }).waitFor();
     assert.equal(await page.evaluate(key => sessionStorage.getItem(key), draftKey), null);
-    assert.equal(await page.evaluate(key => JSON.parse(localStorage.getItem(key)!).trips[0].title, draftKey), 'Started last week');
+    assert.deepEqual(await guestTitles(page), ['Started last week']);
   } finally {
     await browser.close();
   }
@@ -1083,7 +1078,7 @@ await test('a form opened for a trip that was deleted elsewhere saves nothing on
         writes++;
         return route.fulfill({ json: { rev: 'r3' } });
       }
-      const answer = { trips, rev };
+      const answer = { schemaVersion: journalSchemaVersion, trips, rev };
       if (held) await held;
       await route.fulfill({ json: answer });
     });
@@ -1127,7 +1122,7 @@ await test('a form whose trip changed elsewhere says so before it saves over the
         writes.push(route.request().postData() ?? '');
         return route.fulfill({ json: { rev: 'r3' } });
       }
-      const answer = { trips: [trip], rev };
+      const answer = { schemaVersion: journalSchemaVersion, trips: [trip], rev };
       if (held) await held;
       await route.fulfill({ json: answer });
     });
@@ -1185,7 +1180,7 @@ await test('stops saved elsewhere appear when the traveler returns to the tab', 
     const page = await browser.newPage();
     const trip = { id: 'ta', title: 'Tel Aviv', start: '2026-06-14', end: '2026-06-14', stops: [] as unknown[] };
     let rev = 'r1';
-    await hostJournal(page, route => route.fulfill({ json: { trips: [trip], rev } }));
+    await hostJournal(page, route => route.fulfill({ json: { schemaVersion: journalSchemaVersion, trips: [trip], rev } }));
     await page.goto(origin + '/journal.html?lang=en');
     await page.locator('#status').filter({ hasText: 'up to date' }).waitFor();
     assert.equal(await page.locator('#stops .stopname').count(), 0);
@@ -1234,7 +1229,7 @@ await test('a draft found by someone who did not sign in from its tab is shown a
     await page.locator('#status').filter({ hasText: 'left out of your journal' }).waitFor();
     assert.equal(writes, 0);
     assert.equal(await page.locator('#trips option').filter({ hasText: 'Left by an earlier visitor' }).count(), 0);
-    assert.equal(await page.evaluate(key => JSON.parse(localStorage.getItem(key)!).trips.length, draftKey), 1);
+    assert.equal((await readGuestRecord(page))?.trips.length, 1);
 
     // Returning to the tab checks the journal again without asking twice.
     const read = page.waitForResponse(response => response.url().endsWith('/api/journal'));
@@ -1247,7 +1242,7 @@ await test('a draft found by someone who did not sign in from its tab is shown a
     await page.locator('#confirmYes').click();
     await page.locator('#status').filter({ hasText: 'is now in your journal' }).waitFor();
     assert.equal(writes, 1);
-    assert.equal(await page.evaluate(key => localStorage.getItem(key), draftKey), null);
+    assert.deepEqual(await guestTitles(page), []);
   } finally {
     await browser.close();
   }
@@ -1259,7 +1254,7 @@ await test('Sign out is offered only while the account journal is open', async (
     const page = await browser.newPage();
     let signedIn = true;
     await hostJournal(page, route => signedIn
-      ? route.fulfill({ json: { trips: [], rev: 'r1' } })
+      ? route.fulfill({ json: { schemaVersion: journalSchemaVersion, trips: [], rev: 'r1' } })
       : route.fulfill({ status: 401, json: { error: 'Authentication required' } }));
     await page.goto(origin + '/journal.html?lang=en');
     const signOut = page.getByRole('button', { name: 'Sign out', exact: true });
@@ -1280,7 +1275,7 @@ await test('the mobile trip toolbar keeps the overview beside the daily actions 
   try {
     const page = await browser.newPage({ hasTouch: true });
     const trip = { id: 'toolbar', title: 'Toolbar trip', start: '2026-06-14', end: '2026-06-16', stops: [] };
-    await hostJournal(page, route => route.fulfill({ json: { trips: [trip], rev: 'r1' } }));
+    await hostJournal(page, route => route.fulfill({ json: { schemaVersion: journalSchemaVersion, trips: [trip], rev: 'r1' } }));
     for (const lang of ['he', 'en']) {
       await page.goto(origin + '/journal.html?lang=' + lang);
       const toolbar = page.locator('.toolbar');
@@ -1338,7 +1333,7 @@ await test('the mobile day count shares the walking summary row and follows the 
   try {
     const page = await browser.newPage({ hasTouch: true });
     const trip = { id: 'ordinal', start: '2026-10-20', end: '2026-11-19', stops: [] };
-    await hostJournal(page, route => route.fulfill({ json: { trips: [trip], rev: 'r1' } }));
+    await hostJournal(page, route => route.fulfill({ json: { schemaVersion: journalSchemaVersion, trips: [trip], rev: 'r1' } }));
     const reel = page.locator('#dayReel');
     const progress = page.locator('#dayProgress');
     for (const lang of ['he', 'en']) {
@@ -1381,7 +1376,7 @@ await test('the signed-in mobile header fits on one row and sign-out requires co
   try {
     const page = await browser.newPage({ viewport: { width: 375, height: 812 } });
     const trip = { id: 'a', title: 'My trip', start: '2026-06-14', end: '2026-06-14', stops: [] };
-    await hostJournal(page, route => route.fulfill({ json: { trips: [trip], rev: 'r1' } }));
+    await hostJournal(page, route => route.fulfill({ json: { schemaVersion: journalSchemaVersion, trips: [trip], rev: 'r1' } }));
     const signOutUrl = origin + '/signout-with-chatgpt?return_to=%2Fjournal.html';
     await page.route(signOutUrl, route => route.fulfill({ contentType: 'text/html', body: 'Signed out' }));
     for (const language of ['he', 'en']) {
@@ -1428,10 +1423,7 @@ const hostBucket = (page: Page, bucket: MemoryBucket, signedIn: () => boolean, o
   }), bucket, 'web', signedIn() ? 'traveler' : null);
   await route.fulfill({ status: response.status, contentType: 'application/json', body: await response.text() });
 });
-const storedTitles = (page: Page) => page.evaluate(key => {
-  const raw = localStorage.getItem(key);
-  return raw ? JSON.parse(raw).trips.map((trip: { title: string }) => trip.title).sort() : [];
-}, draftKey);
+const storedTitles = guestTitles;
 
 await test('a trip made in another tab while sign-in asks about the draft stays in the browser', async () => {
   const browser = await chromium.launch();
@@ -1590,11 +1582,11 @@ await test('a signed-in journal opens in a browser that blocks storage', async (
       Storage.prototype.removeItem = blocked;
     });
     await hostJournal(page, route => route.fulfill({
-      json: { trips: [{ id: 'a', title: 'Saved in the account', start: '2026-06-14', end: '2026-06-14', stops: [] }], rev: 'r1' }
+      json: { schemaVersion: journalSchemaVersion, trips: [{ id: 'a', title: 'Saved in the account', start: '2026-06-14', end: '2026-06-14', stops: [] }], rev: 'r1' }
     }));
     await page.goto(origin + '/journal.html?lang=en');
     await page.locator('#title').filter({ hasText: 'Saved in the account' }).waitFor();
-    await page.locator('#status').filter({ hasText: 'up to date' }).waitFor();
+    await page.locator('#status[data-tone="warning"]').filter({ hasText: 'draft in this browser could not be read' }).waitFor();
     assert.equal(await page.locator('#retryLoad').isVisible(), false);
   } finally {
     await browser.close();
@@ -1640,34 +1632,35 @@ await test('two guest tabs that save at the same moment both keep their trip', a
   }
 });
 
-await test('trips from the earlier version that do not fit in the browser stay in their tab until there is room', async () => {
+await test('a failed tab-draft migration retains both originals and reload can retry it', async () => {
   const browser = await chromium.launch();
   try {
     const page = await browser.newPage();
     await hostJournal(page, guestAPI);
     await page.goto(origin + '/journal.html?lang=en');
     await createTrip(page, 'Already in the browser');
-    const stored = await page.evaluate(key => localStorage.getItem(key), draftKey);
+    const stored = await readGuestRecord(page);
     const legacy = JSON.stringify({ trips: [{ id: 'old', title: 'Still in its tab', start: '2026-06-14', end: '2026-06-14', stops: [] }] });
+    await page.addInitScript(() => {
+      if (sessionStorage.getItem('fail-guest-migration') !== 'yes') return;
+      const put = IDBObjectStore.prototype.put;
+      IDBObjectStore.prototype.put = function (value: unknown, key?: IDBValidKey) {
+        if (this.transaction.db.name === 'hayiti-guest') throw new DOMException('Storage full', 'QuotaExceededError');
+        return key === undefined ? put.call(this, value) : put.call(this, value, key);
+      };
+    });
     await page.evaluate(({ key, draft }) => {
       sessionStorage.setItem(key, draft);
-      // Fill the browser's storage so that the two drafts no longer fit together.
-      let filler = 'x'.repeat(4_000_000);
-      for (let size = filler.length; size >= 1; size = Math.floor(size / 2)) {
-        try {
-          localStorage.setItem('filler', filler + 'x'.repeat(size));
-          filler += 'x'.repeat(size);
-        } catch { /* The next, smaller step is tried. */ }
-      }
+      sessionStorage.setItem('fail-guest-migration', 'yes');
     }, { key: draftKey, draft: legacy });
 
     await page.reload();
-    await page.locator('#title').filter({ hasText: 'Already in the browser' }).waitFor();
-    await page.locator('#status[data-tone="warning"]').filter({ hasText: 'This tab still holds trips from before an update' }).waitFor();
-    assert.equal(await page.evaluate(key => localStorage.getItem(key), draftKey), stored);
+    await page.locator('#retryLoad').waitFor();
+    assert.equal(await page.locator('#newTrip').isDisabled(), true);
+    assert.deepEqual(await readGuestRecord(page), stored);
     assert.equal(await page.evaluate(key => sessionStorage.getItem(key), draftKey), legacy);
 
-    await page.evaluate(() => localStorage.removeItem('filler'));
+    await page.evaluate(() => sessionStorage.removeItem('fail-guest-migration'));
     await page.reload();
     await page.locator('#trips option').filter({ hasText: 'Still in its tab' }).waitFor({ state: 'attached' });
     assert.deepEqual(await storedTitles(page), ['Already in the browser', 'Still in its tab']);
@@ -1717,7 +1710,7 @@ await test('two tabs that upgrade at the same moment both keep the trips from th
       await page.goto(origin + '/journal.html?lang=en');
     }
     for (let round = 0; round < 5; round++) {
-      await tabs[0].evaluate(key => localStorage.removeItem(key), draftKey);
+      await patchGuestRecord(tabs[0], { trips: [], importedTabs: [] });
       for (const [tab, page] of tabs.entries()) {
         await page.evaluate(({ key, draft }) => sessionStorage.setItem(key, draft), {
           key: draftKey,
@@ -1746,11 +1739,11 @@ await test('a signed-in journal opens in a browser that blocks only tab storage'
       });
     });
     await hostJournal(page, route => route.fulfill({
-      json: { trips: [{ id: 'a', title: 'Saved in the account', start: '2026-06-14', end: '2026-06-14', stops: [] }], rev: 'r1' }
+      json: { schemaVersion: journalSchemaVersion, trips: [{ id: 'a', title: 'Saved in the account', start: '2026-06-14', end: '2026-06-14', stops: [] }], rev: 'r1' }
     }));
     await page.goto(origin + '/journal.html?lang=en');
     await page.locator('#title').filter({ hasText: 'Saved in the account' }).waitFor();
-    await page.locator('#status').filter({ hasText: 'up to date' }).waitFor();
+    await page.locator('#status[data-tone="warning"]').filter({ hasText: 'draft in this browser could not be read' }).waitFor();
     assert.equal(await page.locator('#retryLoad').isVisible(), false);
   } finally {
     await browser.close();
@@ -1764,7 +1757,7 @@ await test('the hosted journal draws the street map and makes route files from t
       errors: string[] = [];
     page.on('pageerror', error => errors.push(error.message));
     const trip = { id: 'ta', title: 'Tel Aviv', start: '2026-06-14', end: '2026-06-14', stops: [{ id: 'a', date: '2026-06-14', name: 'Dinner', xy: [32.07, 34.78] }] };
-    await hostJournal(page, route => route.fulfill({ json: { trips: [trip], rev: 'r1' } }));
+    await hostJournal(page, route => route.fulfill({ json: { schemaVersion: journalSchemaVersion, trips: [trip], rev: 'r1' } }));
     await page.route('https://tiles.openfreemap.org/styles/liberty', route => route.fulfill({
       headers: { 'access-control-allow-origin': '*' },
       json: {
@@ -1808,7 +1801,7 @@ await test('the hosted journal opens without the street map library and draws th
       errors: string[] = [];
     page.on('pageerror', error => errors.push(error.message));
     const trip = { id: 'ta', title: 'Tel Aviv', start: '2026-06-14', end: '2026-06-14', stops: [{ id: 'a', date: '2026-06-14', name: 'Dinner', xy: [32.07, 34.78] }] };
-    await hostJournal(page, route => route.fulfill({ json: { trips: [trip], rev: 'r1' } }));
+    await hostJournal(page, route => route.fulfill({ json: { schemaVersion: journalSchemaVersion, trips: [trip], rev: 'r1' } }));
     await page.route('https://tiles.openfreemap.org/styles/liberty', route => route.fulfill({
       headers: { 'access-control-allow-origin': '*' },
       json: { version: 8, sources: {}, layers: [{ id: 'land', type: 'background', paint: { 'background-color': '#e8efe9' } }] }
@@ -1844,7 +1837,7 @@ await test('the traveler can apply multiple days of street routes in one account
     };
     const written: unknown[] = [];
     await hostJournal(page, async route => {
-      if (route.request().method() === 'GET') return route.fulfill({ json: { trips: [trip], rev: 'v1' } });
+      if (route.request().method() === 'GET') return route.fulfill({ json: { schemaVersion: journalSchemaVersion, trips: [trip], rev: 'v1' } });
       written.push(route.request().postDataJSON());
       return route.fulfill({ json: { rev: 'v2' } });
     });
@@ -1905,7 +1898,7 @@ await test('taxi dashes and the walking path are both visible on a shared street
         { a: date + '-out', b: date + '-back', type: index === 0 ? 'walk' : 'taxi', line: [market, home] }
       ])
     };
-    await hostJournal(page, route => route.fulfill({ json: { trips: [trip], rev: 'r1' } }));
+    await hostJournal(page, route => route.fulfill({ json: { schemaVersion: journalSchemaVersion, trips: [trip], rev: 'r1' } }));
     await page.goto(origin + '/journal.html?lang=en');
     await page.locator('#title').filter({ hasText: trip.title }).waitFor();
     for (const date of dates) {
@@ -1944,7 +1937,7 @@ await test('an unlocated in-person purchase shows its address action in daily de
         { id: 'online', name: 'Online order', date, kind: 'remote', sources: ['card'] }
       ]
     };
-    await hostJournal(page, route => route.fulfill({ json: { trips: [trip], rev: 'r1' } }));
+    await hostJournal(page, route => route.fulfill({ json: { schemaVersion: journalSchemaVersion, trips: [trip], rev: 'r1' } }));
     for (const [lang, name] of [['he', 'קנייה'], ['en', 'Purchase']]) {
       await page.goto(origin + '/journal.html?lang=' + lang);
       await showDayDetails(page);
