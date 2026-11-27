@@ -220,6 +220,30 @@ await test('competing edits conflict; request headers alone never establish an i
     rev
   }, 'alice', base, 'https://unrelated.example')).status, 403);
 });
+await test('an older recipient link omits private unpinned names and dangling segments while keeping published IDs', async () => {
+  const { env, trip, dispatch } = fixture();
+  const token = 'a'.repeat(64), id = crypto.randomUUID();
+  const stops = [
+    { ...trip.stops[0], id: 's1' }, { ...trip.stops[0], id: 's2', xy: null, name: 'Private shop', notes: 'Private note' },
+    { ...trip.stops[1], id: 's3' }
+  ];
+  const edges = [
+    { a: 's1', b: 's2', type: 'gap' }, { a: 's2', b: 's3', type: 'gap' },
+    { a: 's1', b: 's3', type: 'walk', m: 340, line: [stops[0].xy, stops[2].xy] }
+  ];
+  const key = 'route-links/' + token + '/' + id;
+  const snapshot = JSON.stringify({ ...trip, id: 'shared-route', stops, edges });
+  await env.BUCKET.put(key, snapshot, { customMetadata: { created: '2026-06-15', origin: 'no' } });
+  const reply = await dispatch(new Request(base + '/api/route-links', { headers: { 'X-Hayiti-View': token + '.' + id } }), null);
+  assert.equal(reply.status, 200);
+  const text = await reply.text();
+  assert.doesNotMatch(text, /Private shop|Private note|"s2"/);
+  const route = JSON.parse(text);
+  assert.deepEqual(route.stops.map((stop: { id: string }) => stop.id), ['s1', 's3']);
+  assert.deepEqual(route.edges, [edges[2]]);
+  assert.equal(await (await env.BUCKET.get(key))?.text(), snapshot);
+});
+
 for (const site of [base, companion]) await test('redacted route, isolation, retry and revocation via ' + site, async () => {
   const {
     env,
@@ -371,4 +395,115 @@ await test('agent retries respect private Google Pin removals without creating a
   assert.equal((await loadState(env.BUCKET, 'alice')).rev, rev);
   const list = await (await tool('list_google_pins', { tripId: trip.id })).json();
   assert.deepEqual(JSON.parse(list.result.content[0].text).pins, []);
+});
+
+await test('chat retains unlocated purchases as private evidence outside the mapped stop count', async () => {
+  const { tool, trip } = fixture();
+  const stops = [
+    { kind: 'visit', id: 'in-store' }, { kind: 'remote', id: 'online' }, { id: 'unknown' }
+  ].map(stop => ({ ...stop, date: trip.start, sources: ['card'], refs: [stop.id] }));
+  const args = { tripId: trip.id, start: trip.start, end: trip.end, stops };
+  const saved = await (await tool('add_trip_stops', args)).json();
+  assert.equal(JSON.parse(saved.result.content[0].text).added, 3);
+  const day = JSON.parse((await (await tool('get_day', { tripId: trip.id, date: trip.start })).json()).result.content[0].text);
+  assert.equal(day.walking.stopCount, 0);
+  assert.deepEqual(day.routeStopIds, []);
+  assert.deepEqual(day.routes, []);
+  assert.deepEqual(day.stops.map((stop: { name: string, kind: string, xy: unknown }) => [stop.name, stop.kind, stop.xy]), [
+    ['Unidentified merchant', 'visit', null], ['Unidentified merchant', 'remote', null], ['Unidentified merchant', 'uncertain', null]
+  ]);
+  const retried = await (await tool('add_trip_stops', args)).json();
+  assert.equal(JSON.parse(retried.result.content[0].text).skipped, 3);
+});
+
+await test('chat corrects an existing stop by revision and confirms attendance separately from its address', async () => {
+  const { env, trip, tool } = fixture();
+  const [first, last] = trip.stops;
+  const candidate = { ...first, id: 'pending', name: 'Unidentified merchant', xy: null, kind: 'uncertain' as const, rank: 1.5 };
+  trip.stops.push(candidate);
+  trip.edges.push({ a: first.id, b: last.id, type: 'walk', m: 300, line: [first.xy!, last.xy!] });
+  await storeState(env.BUCKET, 'alice', [trip], '');
+  const dayArgs = { tripId: trip.id, date: trip.start };
+  const day = JSON.parse((await (await tool('get_day', dayArgs)).json()).result.content[0].text);
+  const args = { ...dayArgs, stopId: candidate.id, expectedRevision: day.revision, address: 'Museum district' };
+  const correct = async (input: Record<string, unknown>) => (await (await tool('correct_stop_location', input)).json()).result;
+  const added = JSON.parse((await correct(args)).content[0].text);
+  assert.equal(added.updated, true);
+  assert.deepEqual(JSON.parse((await correct(args)).content[0].text), { ...added, updated: false });
+  assert.equal((await correct({ ...args, address: 'Other district' })).isError, true);
+  assert.equal((await correct({ ...args, expectedRevision: added.revision, xy: [0, 0] })).isError, true);
+  const [intermediate] = (await loadState(env.BUCKET, 'alice')).trips;
+  assert.deepEqual(intermediate.stops[2], { ...candidate, address: args.address });
+  assert.deepEqual(intermediate.edges, trip.edges);
+
+  const attendance = JSON.parse((await correct({ ...args, expectedRevision: added.revision, confirmVisit: true })).content[0].text);
+  const stillUnpinned = JSON.parse((await (await tool('get_day', dayArgs)).json()).result.content[0].text);
+  assert.deepEqual(stillUnpinned.routeStopIds, [first.id, last.id]);
+  assert.equal(stillUnpinned.stops.find((stop: { id: string }) => stop.id === candidate.id).kind, 'visit');
+  assert.equal(stillUnpinned.walking.estimatedWalkingMeters, 300);
+  const changed = JSON.parse((await correct({ ...args, expectedRevision: attendance.revision, name: 'Local market',
+    xy: [51.923, 4.481], approx: true })).content[0].text);
+  assert.equal(changed.updated, true);
+  const [saved] = (await loadState(env.BUCKET, 'alice')).trips;
+  assert.deepEqual(saved.stops[2], { ...candidate, name: 'Local market', address: '',
+    xy: [51.923, 4.481], approx: true, kind: 'visit' });
+  assert.deepEqual(routeStops(saved, trip.start).map(stop => stop.id), [first.id, candidate.id, last.id]);
+  assert.deepEqual(saved.edges, []);
+  const remapped = JSON.parse((await (await tool('get_day', dayArgs)).json()).result.content[0].text);
+  assert.deepEqual(remapped.routeStopIds, [first.id, candidate.id, last.id]);
+  assert.equal(remapped.walking.stopCount, 3);
+});
+
+await test('generalizing a stop removes its old path and keeps the taxi ride and unrelated route', async () => {
+  const { env, trip, tool } = fixture();
+  const [first, last] = trip.stops;
+  first.sources.push('photo');
+  first.photoAnchor = first.xy!;
+  trip.homeXY = [51.9, 4.5];
+  trip.stops.push({ ...last, id: 'next' });
+  const unaffected = { a: last.id, b: 'next', type: 'same' as const, line: [], m: 0 };
+  trip.edges.push({ a: 'base', b: first.id, type: 'walk', line: [trip.homeXY, first.xy!], m: 120 },
+    { a: first.id, b: last.id, type: 'taxi', line: [first.xy!, last.xy!], m: 600 }, unaffected);
+  const revision = await storeState(env.BUCKET, 'alice', [trip], '');
+  const args = { tripId: trip.id, date: trip.start, stopId: first.id, expectedRevision: revision,
+    name: 'Neighborhood visit', address: 'City center', xy: [51.924, 4.48], approx: true };
+  const result = await (await tool('correct_stop_location', args)).json();
+  assert.equal(JSON.parse(result.result.content[0].text).updated, true);
+  const [saved] = (await loadState(env.BUCKET, 'alice')).trips;
+  assert.equal(saved.stops[0].photoAnchor, undefined);
+  assert.equal(saved.stops[0].edited, true);
+  assert.deepEqual(saved.edges, [{ a: first.id, b: last.id, type: 'taxi', line: [], m: 0 }, unaffected]);
+});
+
+await test('confirming a stop between known taxi endpoints places it after the ride', async () => {
+  const { env, trip, tool } = fixture();
+  const [first, last] = trip.stops;
+  trip.stops.push({ ...first, id: 'pending', rank: 1.5, kind: 'uncertain' });
+  trip.edges.push({ a: first.id, b: last.id, type: 'taxi', line: [first.xy!, last.xy!], m: 600 });
+  const revision = await storeState(env.BUCKET, 'alice', [trip], '');
+  const result = await (await tool('correct_stop_location', { tripId: trip.id, date: trip.start,
+    stopId: 'pending', expectedRevision: revision, address: 'City center', confirmVisit: true })).json();
+  assert.equal(JSON.parse(result.result.content[0].text).updated, true);
+  const [saved] = (await loadState(env.BUCKET, 'alice')).trips;
+  assert.deepEqual(routeStops(saved, trip.start).map(stop => stop.id), [first.id, last.id, 'pending']);
+  assert.deepEqual(saved.edges, trip.edges);
+});
+
+await test('adding the first pin puts the stop after an independently recorded taxi ride', async () => {
+  const { env, trip, tool } = fixture();
+  const [first, last] = trip.stops;
+  trip.stops.push({ ...first, id: 'unlocated', name: 'Unidentified merchant', rank: 1.5, xy: null });
+  const ride = { a: first.id, b: last.id, type: 'taxi' as const, line: [first.xy!, last.xy!], m: 450 };
+  trip.edges.push(ride);
+  const revision = await storeState(env.BUCKET, 'alice', [trip], '');
+  const args = { tripId: trip.id, date: trip.start, stopId: 'unlocated', expectedRevision: revision,
+    address: 'Museum square', xy: [51.922, 4.48] };
+  const result = await (await tool('correct_stop_location', args)).json();
+  assert.equal(JSON.parse(result.result.content[0].text).updated, true);
+  const saved = await loadState(env.BUCKET, 'alice');
+  assert.deepEqual(routeStops(saved.trips[0], trip.start).map(stop => stop.id), [first.id, last.id, 'unlocated']);
+  assert.deepEqual(saved.trips[0].edges, [ride]);
+  const retried = await (await tool('correct_stop_location', args)).json();
+  assert.equal(JSON.parse(retried.result.content[0].text).updated, false);
+  assert.deepEqual(await loadState(env.BUCKET, 'alice'), saved);
 });

@@ -1,4 +1,5 @@
 export const journalCharacterLimit = 7_000_000;
+export const unidentifiedMerchant = 'Unidentified merchant';
 export const sources = ['card', 'email', 'calendar', 'ticket', 'whatsapp', 'manual', 'taxi', 'transfer', 'diary', 'photo'] as const;
 export const reportSources = ['finances', 'gmail', 'calendar', 'drive'] as const;
 const commonReportStates = ['checked', 'disconnected', 'syncing', 'failed', 'unavailable', 'partial'] as const;
@@ -28,6 +29,7 @@ export interface Stop {
   /** The traveler set this stop's time or place by hand. An import adds its evidence and leaves both alone. */
   edited?: true;
   notes: string;
+  reviewReason?: string;
   band: string;
   sources: Source[];
   refs: string[];
@@ -277,7 +279,12 @@ export function photosOf(value: unknown): string[] {
   return [...new Set(value)];
 }
 export function cleanStop(value: unknown): Stop {
-  if (!isRecord(value) || !safeDate(value.date) || !text(value.name, 160)) throw Error('נדרשים תאריך תקין ושם תחנה');
+  if (!isRecord(value) || !safeDate(value.date)) throw Error('נדרשים תאריך תקין ושם תחנה');
+  const sourceKeys = [...new Set(Array.isArray(value.sources) ? value.sources.filter((s): s is Source => member(sources, s)) : [])];
+  const name = text(value.name, 160);
+  const kind = member(kinds, value.kind) ? value.kind : name ? 'visit' : 'uncertain';
+  if (!name && (!sourceKeys.includes('card') || !['visit', 'uncertain', 'remote'].includes(kind))) throw Error('נדרשים תאריך תקין ושם תחנה');
+  const reviewReason = kind === 'uncertain' ? text(value.reviewReason, 240) : '';
   const captureTime = text(value.captureTime, 16);
   if (captureTime && !/^([01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,3})?$/.test(captureTime)) throw Error('Invalid local capture time');
   const time = text(value.time, 5) || captureTime.slice(0, 5);
@@ -286,7 +293,7 @@ export function cleanStop(value: unknown): Stop {
   if (time && !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) throw Error('שעה לא תקינה');
   return {
     id: text(value.id, 140) || crypto.randomUUID(),
-    name: text(value.name, 160),
+    name: name || unidentifiedMerchant,
     date: value.date,
     time,
     ...(captureTime ? { captureTime } : {}),
@@ -295,10 +302,11 @@ export function cleanStop(value: unknown): Stop {
     address: text(value.address),
     xy: point(value.xy),
     notes: text(value.notes, 1200),
+    ...(reviewReason ? { reviewReason } : {}),
     band: text(value.band, 180),
-    sources: [...new Set(Array.isArray(value.sources) ? value.sources.filter((s): s is Source => member(sources, s)) : [])],
+    sources: sourceKeys,
     refs: [...new Set(Array.isArray(value.refs) ? value.refs.map(r => text(r, 180)).filter(Boolean) : [])].slice(0, 100),
-    kind: member(kinds, value.kind) ? value.kind : 'visit',
+    kind,
     count: typeof value.count === 'number' && Number.isSafeInteger(value.count) ? Math.min(10000, Math.max(0, value.count)) : 0,
     rank: typeof value.rank === 'number' && Number.isFinite(value.rank) ? value.rank : 0,
     slot: member(slots, value.slot) ? value.slot : '',
@@ -381,14 +389,17 @@ export function combineEvidence(target: Stop, source: Stop): void {
   target.sources = [...new Set([...target.sources, ...source.sources])];
   target.refs = [...new Set([...target.refs, ...source.refs])];
   target.address ||= source.address;
-  target.xy ||= source.xy;
+  if (!target.xy && source.xy) {
+    target.xy = source.xy;
+    target.approx = source.approx;
+  }
   target.time ||= source.time;
   target.count += source.count;
   if (source.notes && !target.notes.includes(source.notes)) target.notes = [target.notes, source.notes].filter(Boolean).join(' · ');
 }
 const normalized = (value: string) => value.toLowerCase().replace(/[^\p{L}\d]+/gu, '');
 function corroborates(existing: Stop, incoming: Stop): boolean {
-  return existing.kind === 'visit' && incoming.kind === 'visit' && normalized(existing.name) === normalized(incoming.name) && (!existing.time || !incoming.time || existing.time === incoming.time) && (!existing.address || !incoming.address || normalized(existing.address) === normalized(incoming.address)) && incoming.sources.length > 0 && existing.sources.every(s => !incoming.sources.includes(s));
+  return existing.kind === 'visit' && incoming.kind === 'visit' && incoming.name !== unidentifiedMerchant && existing.name !== unidentifiedMerchant && normalized(existing.name) === normalized(incoming.name) && (!existing.time || !incoming.time || existing.time === incoming.time) && (!existing.address || !incoming.address || normalized(existing.address) === normalized(incoming.address)) && incoming.sources.length > 0 && existing.sources.every(s => !incoming.sources.includes(s));
 }
 export function mergeStops(trip: Trip, incoming: readonly unknown[], restoredIds?: Map<string, string>): MergeResult {
   const result = {
@@ -438,7 +449,11 @@ export function mergeStops(trip: Trip, incoming: readonly unknown[], restoredIds
       else if (restoredIds && sameId && (!stop.refs.length || !sameId.refs.length) && normalized(sameId.name) === normalized(stop.name)) {
         restoredIds.set(stop.id, sameId.id);
       }
-      result.skipped++;
+      const saved = repeated ?? (sameId?.date === stop.date && normalized(sameId.name) === normalized(stop.name) ? sameId : undefined);
+      if (saved?.kind === 'uncertain' && !saved.reviewReason && stop.reviewReason) {
+        saved.reviewReason = stop.reviewReason;
+        result.linked++;
+      } else result.skipped++;
       continue;
     }
     // Backup records without references have only their own ID to identify them on a repeat restore.

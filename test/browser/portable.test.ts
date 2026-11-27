@@ -8,6 +8,13 @@ import { pathToFileURL } from 'node:url';
 import { strFromU8, unzipSync } from 'fflate';
 import { chromium, type Page } from 'playwright-core';
 
+async function showDayDetails(page: Page) {
+  await page.locator('#otherSummary').waitFor();
+  if (!await page.locator('#other').evaluate(element => (element as HTMLDetailsElement).open)) {
+    await page.locator('#otherSummary').click();
+  }
+}
+
 // Reads the single HTML file out of a ZIP that the Share dialog offers for download.
 async function offeredFile(page: Page, link: string) {
   await page.waitForFunction(id => document.querySelector<HTMLAnchorElement>(id)?.href.startsWith('blob:'), link);
@@ -233,8 +240,9 @@ await test('retrying a failed import applies the selected records exactly once',
     await page.locator('#preview button').click();
     await page.locator('#sources').waitFor({ state: 'hidden' });
     await page.reload();
-    await page.getByRole('button', { name: 'Ferry Terminal', exact: true }).waitFor();
-    assert.equal(await page.locator('#stops .stopname').count(), 3);
+    const ferry = page.locator('#unlocatedList').getByText('Ferry Terminal', { exact: true });
+    assert.equal(await ferry.count(), 1);
+    assert.equal(await page.locator('#stops .stopname').count(), 2);
   } finally {
     await browser.close();
   }
@@ -261,14 +269,17 @@ await test('a photo-heavy portable journal survives localStorage quota and reloa
     await page.locator('#sources').waitFor({ state: 'hidden' });
     assert.equal(await page.evaluate(() => localStorage.getItem('masluli-portable-v2')), 'hayiti:indexeddb:1');
     await page.reload();
-    await page.getByRole('button', { name: 'Visit 23', exact: true }).click();
+    await showDayDetails(page);
+    await page.locator('#unlocatedList').getByRole('button', { name: 'Add address · Visit 23', exact: true }).click();
     assert.equal(await page.locator('#photoPanel img').getAttribute('src'), photo);
     await page.locator('#editForm [name=name]').fill('Edited after migration');
     await page.locator('#editForm .primary').click();
     await page.locator('#edit').waitFor({ state: 'hidden' });
     await page.reload();
-    await page.getByRole('button', { name: 'Edited after migration', exact: true }).waitFor();
-    assert.equal(await page.locator('#stops .stopname').count(), 24);
+    await showDayDetails(page);
+    await page.locator('#unlocatedList').getByText('Edited after migration', { exact: true }).waitFor();
+    assert.equal(await page.locator('#unlocatedList .detail-row').count(), 24);
+    assert.equal(await page.locator('#stops .stopname').count(), 0);
   } finally {
     await browser.close();
   }
@@ -289,20 +300,23 @@ await test('missing sources and the last removed photo show Not recorded', async
     await page.goto(new URL('../../dist/web/Hayiti.html?lang=en', import.meta.url).href);
     const source = page.locator('#editForm [name=source]');
     const selected = source.locator('option:checked');
-    await page.getByRole('button', { name: 'Park', exact: true }).click();
+    await showDayDetails(page);
+    await page.locator('#unlocatedList').getByRole('button', { name: 'Add address · Park', exact: true }).click();
     assert.deepEqual(await selected.allTextContents(), ['Not recorded']);
     await source.selectOption('manual');
     await source.selectOption('');
     await page.locator('#editForm .primary').click();
     await page.locator('#edit').waitFor({ state: 'hidden' });
-    await page.getByRole('button', { name: 'Beach', exact: true }).click();
+    await showDayDetails(page);
+    await page.locator('#unlocatedList').getByRole('button', { name: 'Add address · Beach', exact: true }).click();
     await page.locator('#photoPanel button').click();
     assert.deepEqual(await selected.allTextContents(), ['Not recorded']);
     await page.locator('#editForm .primary').click();
     await page.locator('#edit').waitFor({ state: 'hidden' });
     const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('masluli-portable-v2')!).trips[0]);
     assert.deepEqual(saved.stops.map((stop: { sources: string[] }) => stop.sources), [[], []]);
-    await page.getByRole('button', { name: 'Beach', exact: true }).click();
+    await showDayDetails(page);
+    await page.locator('#unlocatedList').getByRole('button', { name: 'Add address · Beach', exact: true }).click();
     assert.deepEqual(await selected.allTextContents(), ['Not recorded']);
   } finally {
     await browser.close();
@@ -323,12 +337,14 @@ await test('correcting a stop\'s source replaces the old one and keeps corrobora
     };
     await page.addInitScript(data => localStorage.setItem('masluli-portable-v2', JSON.stringify({ trips: [data] })), trip);
     await page.goto(new URL('../../dist/web/Hayiti.html?lang=en', import.meta.url).href);
-    await page.getByRole('button', { name: 'Markthal', exact: true }).click();
+    await showDayDetails(page);
+    await page.locator('#unlocatedList').getByRole('button', { name: 'Add address · Markthal', exact: true }).click();
     assert.equal(await page.locator('#editForm [name=source]').inputValue(), 'card');
     await page.locator('#editForm [name=source]').selectOption('manual');
     await page.locator('#editForm .primary').click();
     await page.locator('#edit').waitFor({ state: 'hidden' });
-    await page.getByRole('button', { name: 'Beach', exact: true }).click();
+    await showDayDetails(page);
+    await page.locator('#unlocatedList').getByRole('button', { name: 'Add address · Beach', exact: true }).click();
     assert.equal(await page.locator('#editForm [name=source]').inputValue(), 'photo');
     await page.locator('#editForm [name=notes]').fill('Evening visit');
     await page.locator('#editForm .primary').click();
@@ -832,11 +848,13 @@ await test('the traveler re-times and moves a photo pin, and a new home base dro
     const page = await browser.newPage();
     await page.route('https://**/*', route => route.abort());
     const date = '2026-06-14';
-    const home = [32.07, 34.77], camera = [32.08, 34.78], anchor = [32.0805, 34.78];
+    const home = [32.07, 34.77], camera = [32.08, 34.78], anchor = [32.0805, 34.78], museum = [32.085, 34.784];
+    const ride = { a: 'pin', b: 'museum', type: 'taxi', m: 900, line: [camera, museum] };
     await page.addInitScript(trip => localStorage.setItem('masluli-portable-v2', JSON.stringify({ trips: [trip] })), {
       id: 'trip', title: 'Day out', start: date, end: date, home: 'Hotel', homeXY: home,
-      stops: [{ id: 'pin', date, name: 'Camera pin', xy: camera, photoAnchor: anchor, captureTime: '14:00:10', sources: ['photo'], refs: ['asset-1'] }],
-      edges: [{ a: 'base', b: 'pin', type: 'walk', m: 1500, line: [home, camera] }]
+      stops: [{ id: 'pin', date, name: 'Camera pin', xy: camera, photoAnchor: anchor, captureTime: '14:00:10', sources: ['photo'], refs: ['asset-1'] },
+        { id: 'museum', date, name: 'Museum', xy: museum, rank: 1 }],
+      edges: [{ a: 'base', b: 'pin', type: 'walk', m: 1500, line: [home, camera] }, ride]
     });
     await page.goto(new URL('../../dist/web/Hayiti.html?lang=en', import.meta.url).href);
     const saved = () => page.evaluate(() => JSON.parse(localStorage.getItem('masluli-portable-v2')!).trips[0]);
@@ -852,14 +870,14 @@ await test('the traveler re-times and moves a photo pin, and a new home base dro
     await save('#edit', '#editForm');
     let trip = await saved();
     assert.deepEqual([trip.stops[0].time, trip.stops[0].captureTime, trip.stops[0].edited, trip.stops[0].photoAnchor, trip.edges.length],
-      ['14:30', undefined, true, anchor, 1]);
+      ['14:30', undefined, true, anchor, 2]);
 
     await page.locator('#settings').click();
     await page.locator('#moreTrip').evaluate((more: HTMLDetailsElement) => { more.open = true; });
     await page.locator('#tripForm [name=coords]').fill('32.06, 34.76');
     await save('#config', '#tripForm');
     trip = await saved();
-    assert.deepEqual([trip.homeXY, trip.edges], [[32.06, 34.76], []]);
+    assert.deepEqual([trip.homeXY, trip.edges], [[32.06, 34.76], [ride]]);
 
     await openPin();
     await page.locator('#moreStop').evaluate((more: HTMLDetailsElement) => { more.open = true; });
@@ -867,6 +885,7 @@ await test('the traveler re-times and moves a photo pin, and a new home base dro
     await save('#edit', '#editForm');
     trip = await saved();
     assert.deepEqual([trip.stops[0].xy, trip.stops[0].photoAnchor, trip.stops[0].time], [[32.09, 34.79], undefined, '14:30']);
+    assert.deepEqual(trip.edges, [{ ...ride, m: 0, line: [] }]);
   } finally {
     await browser.close();
   }
@@ -1163,6 +1182,186 @@ await test('a removed Google Pin stays off the map after reload and reimport unt
     await page.locator('#preview').getByText(/2 already saved/).waitFor();
     await page.locator('#sources [data-close]').click();
     assert.equal(await page.locator('.google-pin').count(), 2);
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('a traveler can mark a map pin approximate and later confirm its location', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await page.route('https://**/*', route => route.abort());
+    const date = '2026-06-14';
+    const trip = { id: 'trip', title: 'Weekend', start: date, end: date,
+      stops: [{ id: 'stop', date, name: 'Market hall', xy: [52.1, 4.3] }] };
+    await page.goto(new URL('../../dist/web/Hayiti.html?lang=en', import.meta.url).href);
+    await page.locator('#import').click();
+    await page.locator('[data-tab="files"]').click();
+    await page.locator('#file').setInputFiles({ name: 'weekend.json', mimeType: 'application/json',
+      buffer: Buffer.from(JSON.stringify({ format: 'hayiti/1', trip })) });
+    await page.getByRole('button', { name: 'Load trip' }).click();
+    const open = () => page.getByRole('button', { name: 'Market hall', exact: true }).click();
+    const save = async () => {
+      await page.locator('#editForm .primary').click();
+      await page.locator('#edit').waitFor({ state: 'hidden' });
+    };
+    await open();
+    await page.getByRole('checkbox', { name: 'Approximate location' }).check();
+    await page.locator('#editForm [name=coords]').fill('52.101, 4.301');
+    await save();
+    assert.match(await page.locator('#stops').innerText(), /Approximate location/);
+    await page.reload();
+    await page.locator('#stops').getByText(/Approximate location/).waitFor();
+    await page.locator('#languageSwitch').selectOption('he');
+    await open();
+    const approximate = page.getByRole('checkbox', { name: 'מיקום משוער' });
+    assert.equal(await approximate.isChecked(), true);
+    await approximate.uncheck();
+    await save();
+    await open();
+    assert.equal(await approximate.isChecked(), false);
+    await approximate.check();
+    await page.locator('#editForm [name=coords]').fill('');
+    await save();
+    assert.equal(await page.locator('#stops .stopname').count(), 0);
+    await showDayDetails(page);
+    await page.locator('#unlocatedList').getByRole('button', { name: 'הוספת כתובת · Market hall', exact: true }).click();
+    assert.equal(await approximate.isChecked(), false);
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('one daily details panel keeps unlocated visits, unconfirmed attendance, and remote activities distinct', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true });
+    await page.route('https://**/*', route => route.abort());
+    const date = '2026-01-20';
+    const reason = 'The ticket and calendar list different venues. The entrance address and attendance have not been confirmed.';
+    const trip = {
+      id: 'review-ui', title: 'Weekend', start: date, end: '2026-01-21', stops: [
+        { id: 'park', name: 'Park', date, xy: [32, 34] },
+        { id: 'workshop', name: 'Workshop', date, kind: 'uncertain', sources: ['ticket'], reviewReason: reason, notes: 'Private reference 732.' },
+        { id: 'diary', name: 'Tasting', date, kind: 'visit', sources: ['diary'] },
+        { id: 'shop', name: 'Grocer', date, kind: 'visit', sources: ['card'], count: 1 },
+        { id: 'ride', name: 'Lyft · מסלול בישראל לא אומת', date, kind: 'remote', sources: ['email'] },
+        { id: 'stay', name: 'הזמנת לינה ב-Airbnb', date, kind: 'remote', sources: ['email'] }
+      ]
+    };
+    await page.addInitScript(seed => {
+      const key = 'masluli-portable-v2';
+      if (!localStorage.getItem(key)) localStorage.setItem(key, JSON.stringify({ trips: [seed] }));
+    }, trip);
+    await page.goto(new URL('../../dist/web/Hayiti.html?lang=he', import.meta.url).href);
+    await page.locator('#reviewDay').click();
+    assert.equal(await page.locator('#otherSummary').innerText(), 'מידע נוסף לאותו יום (5)');
+    assert.equal(await page.locator('#otherSummary').evaluate(el => document.activeElement === el), true);
+    assert.deepEqual(await page.locator('#stops .stopname').allTextContents(), ['Park']);
+    assert.deepEqual(await page.locator('#unlocatedList .detail-reason').allTextContents(), ['כתובת הביקור חסרה', 'חסר מיקום לסיכה']);
+    assert.equal(await page.locator('#reviewList .detail-reason').innerText(), reason);
+    assert.doesNotMatch(await page.locator('#other').innerText(), /732/);
+    assert.deepEqual(await page.locator('#otherList .detail-name').allTextContents(), ['Lyft', 'הזמנת לינה ב-Airbnb']);
+    assert.deepEqual(await page.locator('#otherList .detail-reason').allTextContents(), ['מסלול בישראל לא אומת', 'לא תועד ביקור במקום']);
+    for (const selector of ['#unlocatedEntries', '#reviewEntries', '#remoteEntries']) {
+      assert.ok(await page.locator('#other > ' + selector).isVisible());
+    }
+    const layout = await page.locator('#other').evaluate(el => ({
+      top: el.getBoundingClientRect().top, stopsEnd: document.getElementById('stops')!.getBoundingClientRect().bottom,
+      actionHeight: el.querySelector('.detail-action')!.getBoundingClientRect().height,
+      overflow: document.documentElement.scrollWidth > innerWidth ||
+        [...el.querySelectorAll('.detail-row,.detail-reason')].some(node => node.scrollWidth > node.clientWidth + 1)
+    }));
+    assert.ok(layout.top >= layout.stopsEnd && layout.actionHeight >= 44 && !layout.overflow);
+    await page.locator('#reviewList .detail-action').click();
+    const edit = page.locator('#editForm');
+    const field = edit.locator('[name="reviewReason"]');
+    assert.equal(await field.inputValue(), reason);
+    await field.fill('Door number missing');
+    await edit.locator('button.primary').click();
+    await page.getByText('Door number missing', { exact: true }).waitFor();
+    await page.locator('#languageSwitch').selectOption('en');
+    assert.equal(await page.locator('#reviewHeading').innerText(), 'Visits to confirm (1)');
+    await page.locator('#reviewList .detail-action').click();
+    await edit.locator('[name="kind"]').selectOption('visit');
+    await edit.locator('button.primary').click();
+    await showDayDetails(page);
+    await page.locator('#unlocatedList').getByText('Workshop', { exact: true }).waitFor();
+    assert.equal(await page.locator('#reviewEntries').isVisible(), false);
+    await showDayDetails(page);
+    await page.locator('#unlocatedList').getByRole('button', { name: 'Add address · Grocer' }).click();
+    assert.ok(await edit.locator('[name="address"]').evaluate(field => field === document.activeElement));
+    await edit.locator('[name="coords"]').fill('32.01, 34.02');
+    await edit.locator('button.primary').click();
+    await page.locator('#stops .stopname').filter({ hasText: 'Grocer' }).waitFor();
+    assert.deepEqual(await page.locator('#stops .num').allTextContents(), ['1', '2']);
+    assert.equal(await page.locator('#count').innerText(), '2 stops');
+    await page.locator('#wholeTrip').click();
+    assert.equal(await page.locator('#other').isVisible(), false);
+    assert.equal(await page.locator('#reviewDay').isVisible(), false);
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('day details start collapsed, retain same-day choices, and keep an unpinned starting point accessible', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await page.route('https://**/*', route => route.abort());
+    const first = '2026-06-14', second = '2026-06-15';
+    const trip = {
+      id: 'unlocated-days', title: 'Unlocated days', start: first, end: second,
+      stops: [
+        { id: 'origin', date: first, kind: 'origin', name: 'Hotel' },
+        { id: 'market', date: first, kind: 'visit', name: 'Market' },
+        { id: 'gallery', date: second, kind: 'visit', name: 'Gallery' }
+      ]
+    };
+    await page.addInitScript(seed => {
+      const key = 'masluli-portable-v2';
+      if (!localStorage.getItem(key)) localStorage.setItem(key, JSON.stringify({ trips: [seed] }));
+    }, trip);
+    await page.goto(new URL('../../dist/web/Hayiti.html?lang=en', import.meta.url).href);
+    const isOpen = () => page.locator('#other').evaluate(element => (element as HTMLDetailsElement).open);
+    await page.locator('#otherSummary').waitFor();
+    assert.equal(await isOpen(), false);
+    assert.equal(await page.locator('#unlocatedList').isVisible(), false);
+    assert.match(await page.locator('#tripDate option').nth(0).textContent() ?? '', /2 entries/);
+    assert.match(await page.locator('#tripDate option').nth(1).textContent() ?? '', /1 entry/);
+    assert.equal(await page.locator('#count').innerText(), '0 stops');
+    assert.equal(await page.locator('#stops .stopname').count(), 0);
+
+    await showDayDetails(page);
+    assert.deepEqual(await page.locator('#unlocatedList .detail-name').allTextContents(), ['Hotel', 'Market']);
+    await page.locator('#unlocatedList').getByRole('button', { name: 'Add address · Hotel', exact: true }).click();
+    assert.equal(await page.locator('#editForm [name=kind]').inputValue(), 'origin');
+    await page.locator('#editForm [name=name]').fill('Riverside hotel');
+    await page.locator('#editForm .primary').click();
+    await page.locator('#edit').waitFor({ state: 'hidden' });
+    assert.equal(await isOpen(), true);
+    await page.locator('#unlocatedList').getByText('Riverside hotel', { exact: true }).waitFor();
+
+    await page.locator('#otherSummary').click();
+    await page.locator('#languageSwitch').selectOption('he');
+    assert.equal(await isOpen(), false);
+    await page.locator('#languageSwitch').selectOption('en');
+    await showDayDetails(page);
+    await page.locator('#tripDate').selectOption(second);
+    assert.equal(await isOpen(), false);
+    await page.locator('#tripDate').selectOption(first);
+    assert.equal(await isOpen(), false);
+    await showDayDetails(page);
+    await page.locator('#unlocatedList').getByRole('button', { name: 'Add address · Riverside hotel', exact: true }).click();
+    await page.locator('#removeStop').click();
+    await page.locator('#confirmYes').click();
+    await page.locator('#edit').waitFor({ state: 'hidden' });
+    assert.deepEqual(await page.locator('#unlocatedList .detail-name').allTextContents(), ['Market']);
+    assert.match(await page.locator('#tripDate option').nth(0).textContent() ?? '', /1 entry/);
+    await page.reload();
+    await page.locator('#otherSummary').waitFor();
+    assert.equal(await isOpen(), false);
   } finally {
     await browser.close();
   }

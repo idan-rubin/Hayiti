@@ -1,6 +1,6 @@
 import { distanceMeters, isRecord, member, point, safeDate } from './core.ts';
 import type { Edge, Stop, Trip } from './core.ts';
-import { routeStops } from './daily-route.ts';
+import { dayDetails, offRoute, routeStops } from './daily-route.ts';
 
 const modes = ['walk', 'taxi', 'same', 'gap'] as const;
 
@@ -62,14 +62,17 @@ function sameOrder(a: readonly string[], b: readonly string[]): boolean {
 }
 
 // Keep each slot's rank and its position in the backing list. Older trips can have equal ranks.
-function orderedTripStops(trip: Trip, today: Stop[], order: DayOrder): Stop[] {
+function orderedTripStops(trip: Trip, date: string, today: Stop[], order: DayOrder): Stop[] {
+  // Previous clients included unpinned visits and ride endpoints in both lists. Keep their stored ranks.
+  const legacyIds = new Set(dayDetails(trip, date).filter(stop => !offRoute(stop)).map(stop => stop.id));
+  const previous = order.previous.filter(id => !legacyIds.has(id)), next = order.next.filter(id => !legacyIds.has(id));
   const places = today.filter(stop => stop.kind !== 'origin');
   const current = places.map(stop => stop.id);
-  if (sameOrder(current, order.next)) return trip.stops;
-  if (!sameOrder(current, order.previous)) throw Error('סדר התחנות השתנה. יש לקרוא שוב את נתוני היום.');
+  if (sameOrder(current, next)) return trip.stops;
+  if (!sameOrder(current, previous)) throw Error('סדר התחנות השתנה. יש לקרוא שוב את נתוני היום.');
   const byId = new Map(places.map(stop => [stop.id, stop]));
   const replacements = new Map(places.map((slot, index) => {
-    const stop = byId.get(order.next[index])!;
+    const stop = byId.get(next[index])!;
     return [slot.id, { ...stop, rank: slot.rank }];
   }));
   return trip.stops.map(stop => replacements.get(stop.id) ?? stop);
@@ -159,7 +162,7 @@ export function setDayRoutes(target: Trip, date: unknown, routes: unknown, order
   if (!Array.isArray(routes) || routes.length > 200) throw Error('ניתן לייבא עד 200 מקטעים ביום');
   const { trip, correctedRides } = prepareTaxiCorrections(target, date, routes);
   const before = routeStops(trip, date);
-  const ordered = order === undefined ? trip.stops : orderedTripStops(trip, before, readDayOrder(order));
+  const ordered = order === undefined ? trip.stops : orderedTripStops(trip, date, before, readDayOrder(order));
   const reordered = ordered !== trip.stops;
   const stops = reordered ? routeStops({ ...trip, stops: ordered }, date) : before;
   const after = nextStops(stops);

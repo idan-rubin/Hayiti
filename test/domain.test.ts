@@ -3,9 +3,22 @@ import { test } from 'node:test';
 import { cleanTrip, mergeGooglePins, removeGooglePin, restoreGooglePin, mergeStops, safeDate } from '../src/domain/core.ts';
 import { shareableTrip } from '../src/domain/share-format.ts';
 import { importCsv, importEvidencePackage, importIcs, prepareTripBackup } from '../src/domain/importers.ts';
-import { indexEdges, routeStops, suggest, walkingStats } from '../src/domain/daily-route.ts';
+import { dayDetails, indexEdges, routeStops, suggest, walkingStats } from '../src/domain/daily-route.ts';
 import { readFileSync } from 'node:fs';
 export const sample = () => cleanTrip(JSON.parse(readFileSync(new URL('./fixtures/rotterdam.json', import.meta.url), 'utf8')).trip);
+await test('an approximate pin keeps its precision when linked to an unpinned visit', () => {
+  const trip = sample();
+  const visit = trip.stops[0];
+  visit.xy = null;
+  visit.sources = ['card'];
+  const evidence = { ...visit, id: 'area', sources: ['email'], refs: ['area'], xy: [52.1, 4.3], approx: true };
+  assert.equal(mergeStops(trip, [evidence]).linked, 1);
+  assert.deepEqual(visit.xy, evidence.xy);
+  assert.equal(visit.approx, true);
+  assert.equal(mergeStops(trip, [{ ...evidence, sources: ['calendar'], refs: ['venue'], xy: [52.2, 4.4], approx: false }]).linked, 1);
+  assert.deepEqual(visit.xy, evidence.xy);
+  assert.equal(visit.approx, true);
+});
 await test('email and card evidence corroborate a unique visit; an identical receipt can be retried', () => {
   const trip = sample(),
     first = trip.stops[0];
@@ -467,4 +480,117 @@ await test('Google Pin removals survive repeat imports and backups without suppr
   assert.equal(live.googlePins?.find(pin => pin.id === repeat.id)?.name, 'New title');
   assert.equal(prepareTripBackup(restored, [live]).trip.removedGooglePinIds, undefined);
   assert.throws(() => cleanTrip({ ...live, removedGooglePinIds: [repeat.id] }), /also be saved/);
+});
+
+await test('CSV purchases use the payment channel to record attendance when a merchant or branch is missing', async () => {
+  const raw = ['Transaction Date,Merchant,Payment Channel,Description',
+    '2026-06-14,,in store,BANK DESCRIPTOR',
+    '2026-06-14,,in store,BANK DESCRIPTOR',
+    '2026-06-14,Bookshop,card-present,no branch',
+    '2026-06-14,,online,',
+    '2026-06-14,,other,'
+  ].join('\n');
+  const { stops, omitted } = await importCsv(raw);
+  assert.equal(omitted, 0);
+  assert.deepEqual(stops.map(s => [s.name, s.kind, s.xy]), [
+    ['Unidentified merchant', 'visit', null], ['Unidentified merchant', 'visit', null],
+    ['Bookshop', 'visit', null], ['Unidentified merchant', 'remote', null], ['Unidentified merchant', 'uncertain', null]
+  ]);
+  assert.equal(new Set(stops.flatMap(s => s.refs)).size, 5);
+  const trip = sample();
+  trip.stops = [];
+  assert.equal(mergeStops(trip, stops).added, 5);
+  assert.equal(mergeStops(trip, (await importCsv(raw)).stops).skipped, 5);
+  assert.equal(routeStops(trip, trip.start).length, 0);
+  assert.equal(dayDetails(trip, trip.start).length, 5);
+  assert.doesNotMatch(JSON.stringify(stops), /BANK DESCRIPTOR/);
+  const noMerchantColumn = await importCsv('Date,Name,Description,payment_channel\n2026-06-14,Cardholder,Canal Bakery,in_person');
+  assert.equal(noMerchantColumn.stops[0].name, 'Canal Bakery');
+  assert.doesNotMatch(JSON.stringify(noMerchantColumn.stops), /Cardholder/);
+});
+
+await test('a confirmed purchase without a location is private day evidence and never interrupts a saved walk', () => {
+  const trip = sample();
+  const [before, after] = trip.stops;
+  before.rank = 1;
+  after.rank = 3;
+  trip.edges = [{ a: before.id, b: after.id, type: 'walk', m: 350, line: [] }];
+  const record = { date: trip.start, sources: ['card'], refs: ['register-1'], kind: 'visit', notes: 'private descriptor' };
+  const preview = importEvidencePackage({ format: 'hayiti-stops/1', stops: [record] }, trip);
+  assert.equal(mergeStops(trip, preview.stops).added, 1);
+  const purchase = trip.stops.at(-1)!;
+  purchase.rank = 2;
+  assert.equal(purchase.name, 'Unidentified merchant');
+  const route = routeStops(trip, trip.start);
+  assert.deepEqual(route.map(s => s.id), [before.id, after.id]);
+  assert.deepEqual(dayDetails(trip, trip.start).map(s => s.id), [purchase.id]);
+  const stats = walkingStats(route, indexEdges(trip));
+  assert.deepEqual([stats.stopCount, stats.unknownLegs, stats.estimatedWalkingMeters], [2, 0, 350]);
+  assert.equal(importEvidencePackage({ format: 'hayiti-stops/1', stops: [{ ...record, kind: undefined }] }, trip).stops[0].kind, 'uncertain');
+  assert.throws(() => importEvidencePackage({ format: 'hayiti-stops/1', stops: [{ ...record, sources: ['manual'] }] }, trip));
+  purchase.name = 'Central market';
+  const shared = shareableTrip(trip, false);
+  assert.doesNotMatch(JSON.stringify(shared), /private descriptor|register-1|Central market/);
+  assert.deepEqual(shared.stops.map(stop => stop.name), [before.name, after.name]);
+  assert.deepEqual(shared.edges.map(edge => edge.m), [350]);
+});
+
+await test('a home with no pin stays in private day details and creates no route leg', () => {
+  const trip = sample();
+  trip.home = 'Private lodging';
+  trip.stops.push({ ...trip.stops[0], id: 'daily-home', name: 'Private daily origin', kind: 'origin', xy: null });
+  const visits = ['sample-1', 'sample-2'];
+  assert.deepEqual(routeStops(trip, trip.start).map(stop => stop.id), visits);
+  assert.deepEqual(dayDetails(trip, trip.start).map(stop => stop.id), ['daily-home']);
+  for (const includeOrigin of [false, true]) {
+    const shared = shareableTrip(trip, includeOrigin);
+    assert.doesNotMatch(JSON.stringify(shared), /Private lodging|Private daily origin/);
+  }
+  trip.homeXY = [51.91, 4.48];
+  assert.deepEqual(routeStops(trip, trip.start).map(stop => stop.id), ['base', ...visits]);
+  trip.stops[2].xy = [51.94, 4.48];
+  assert.deepEqual(routeStops(trip, trip.start).map(stop => stop.id), ['daily-home', ...visits]);
+});
+
+await test('a financial statement without payment channels preserves charges without implying a visit', async () => {
+  const raw = [
+    'Transaction Date,Merchant,Name,Description,Debit,Credit',
+    '2026-06-14,Bakery,Account holder,PRIVATE DESCRIPTOR,15,',
+    '2026-06-14,,Account holder,PRIVATE DESCRIPTOR,,10',
+    '2026-06-14,,Account holder,PRIVATE DESCRIPTOR,,'
+  ].join('\n');
+  const { stops, omitted } = await importCsv(raw);
+  assert.equal(omitted, 1);
+  assert.deepEqual(stops.map(s => [s.name, s.kind]), [['Bakery', 'uncertain'], ['Unidentified merchant', 'uncertain']]);
+  assert.doesNotMatch(JSON.stringify(stops), /Account holder|PRIVATE DESCRIPTOR/);
+  for (const metadata of ['Amount (USD)\n2026-06-14,12.34', 'Clearing Date\n2026-06-14,06/15/2026']) {
+    const result = await importCsv('Date,' + metadata);
+    assert.deepEqual(result.stops.map(s => [s.name, s.kind]), [['Unidentified merchant', 'uncertain']]);
+  }
+  const places = await importCsv('Date,Name\n2026-06-14,Park');
+  assert.deepEqual(places.stops.map(s => [s.name, s.kind]), [['Park', 'visit']]);
+  // A traveler may already have confirmed a purchase saved using the same legacy CSV ref.
+  const trip = sample();
+  trip.stops = [{ ...stops[0], kind: 'visit', refs: ['csv:deaaf21185216c3d137b318a'] }];
+  assert.deepEqual(mergeStops(trip, stops), { added: 1, linked: 0, skipped: 1 });
+  assert.equal(trip.stops[0].kind, 'visit');
+  assert.deepEqual(mergeStops(trip, (await importCsv(raw)).stops), { added: 0, linked: 0, skipped: 2 });
+});
+
+await test('a private review reason survives import and backup, and clears when a visit is confirmed', () => {
+  const trip = sample();
+  const entry = { id: 'pending', name: 'Workshop', date: trip.start, kind: 'uncertain', sources: ['calendar'], refs: ['workshop'] };
+  const note = 'The ticket and the calendar list different venues.';
+  mergeStops(trip, [entry]);
+  const draft = importEvidencePackage({ format: 'hayiti-stops/1', stops: [{ ...entry, reviewReason: note }] }, trip);
+  assert.equal(mergeStops(trip, draft.stops).linked, 1);
+  assert.equal(mergeStops(trip, [{ ...entry, reviewReason: 'New guess' }]).skipped, 1);
+  const reload = cleanTrip(JSON.parse(JSON.stringify(trip)));
+  assert.equal(reload.stops.find(stop => stop.id === entry.id)?.reviewReason, note);
+  assert.doesNotMatch(JSON.stringify(shareableTrip(reload, true)), /Workshop|different venues/);
+  const confirmed = cleanTrip({ ...reload, stops: reload.stops.map(stop => stop.id === entry.id ? { ...stop, kind: 'visit' } : stop) });
+  const visit = confirmed.stops.find(stop => stop.id === entry.id);
+  assert.equal(visit?.kind, 'visit');
+  assert.equal(visit?.reviewReason, undefined);
+  assert.doesNotMatch(JSON.stringify(shareableTrip(confirmed, true)), /different venues/);
 });

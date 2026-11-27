@@ -1,6 +1,9 @@
 import { cleanStop, distanceMeters } from './core.ts';
-import type { Stop, Trip, Edge } from './core.ts';
+import type { Stop, Trip, Edge, Point } from './core.ts';
 export const offRoute = (stop: Stop) => stop.kind === 'uncertain' || stop.kind === 'remote';
+export const hasMapLocation = (xy: Point | null): xy is Point => xy !== null && (xy[0] !== 0 || xy[1] !== 0);
+export const isMappedStop = (stop: Stop) => hasMapLocation(stop.xy) && !offRoute(stop);
+
 export function dayStops(trip: Trip, day: string) {
   return trip.stops.filter(stop => stop.date === day).sort((a, b) => {
     if (a.kind === 'origin' && b.kind !== 'origin') return -1;
@@ -8,10 +11,13 @@ export function dayStops(trip: Trip, day: string) {
     return a.rank - b.rank;
   });
 }
+export function dayDetails(trip: Trip | null, day: string) {
+  return trip ? dayStops(trip, day).filter(stop => !isMappedStop(stop)) : [];
+}
 export function routeStops(trip: Trip | null, day: string, defaultOrigin = 'נקודת מוצא') {
   if (!trip) return [];
-  const stops = dayStops(trip, day).filter(stop => !offRoute(stop));
-  if (!stops.some(stop => stop.kind === 'origin') && (trip.home || trip.homeXY)) {
+  const stops = dayStops(trip, day).filter(isMappedStop);
+  if (!stops.some(stop => stop.kind === 'origin') && hasMapLocation(trip.homeXY)) {
     stops.unshift(cleanStop({
       id: 'base',
       date: day,
@@ -37,14 +43,15 @@ function walkingLength(edge: Edge) {
   return length;
 }
 export function walkingStats(stops: Stop[], edges: Map<string, Edge>) {
+  const route = stops.filter(isMappedStop);
   let total = 0,
     walkingLegs = 0,
     taxiLegs = 0,
     unknownLegs = 0,
     longest = null;
-  for (let i = 1; i < stops.length; i++) {
-    const from = stops[i - 1],
-      to = stops[i],
+  for (let i = 1; i < route.length; i++) {
+    const from = route[i - 1],
+      to = route[i],
       edge = edges.get(from.id + '|' + to.id);
     if (edge?.type === 'same') continue;
     if (edge?.type === 'taxi') {
@@ -69,7 +76,7 @@ export function walkingStats(stops: Stop[], edges: Map<string, Edge>) {
     walkingLegs,
     taxiLegs,
     unknownLegs,
-    stopCount: stops.filter(stop => stop.kind !== 'origin').length,
+    stopCount: route.filter(stop => stop.kind !== 'origin').length,
     longest
   };
 }
@@ -107,7 +114,7 @@ export function suggest(stops: Stop[], trip: Trip) {
     }
     return s.slot ? slots[s.slot] : null;
   }
-  const list = stops.filter(s => s.kind === 'visit');
+  const list = stops.filter(s => s.kind === 'visit' && isMappedStop(s));
   let xy = trip.homeXY;
   const ordered: Stop[] = [];
   while (list.length) {
@@ -124,5 +131,5 @@ export function suggest(stops: Stop[], trip: Trip) {
     xy = chosen.xy || xy;
   }
   let j = 0;
-  return stops.map(s => s.kind === 'visit' ? ordered[j++] : s);
+  return stops.map(s => s.kind === 'visit' && isMappedStop(s) ? ordered[j++] : s);
 }

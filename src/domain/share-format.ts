@@ -1,7 +1,8 @@
-import { distanceMeters, photoPinRadiusMeters } from './core.ts';
+import { cleanTrip, distanceMeters, photoPinRadiusMeters } from './core.ts';
 import type { Point, Stop, Trip } from './core.ts';
+import { hasMapLocation, isMappedStop } from './daily-route.ts';
 // Only location and itinerary fields belong in a route that another person can open.
-export function shareableTrip(trip: Trip, includeOrigin: boolean, day: string | null = null) {
+function selectSharedRoute(trip: Trip, includeOrigin: boolean, day: string | null, publicId: (id: string, index: number) => string) {
   const origins = trip.stops.filter(stop => stop.kind === 'origin');
   const points = [trip.homeXY, ...origins.map(stop => stop.xy)].filter((p): p is Point => p !== null);
   const labels = [trip.home, ...origins.flatMap(stop => [stop.address, stop.name])].filter(Boolean).map(value => value.trim().toLowerCase()).filter(Boolean);
@@ -15,7 +16,7 @@ export function shareableTrip(trip: Trip, includeOrigin: boolean, day: string | 
     return [stop.name, stop.address].some(value => value && labels.some(label => value.trim().toLowerCase() === label || label.length >= 6 && value.toLowerCase().includes(label)));
   }
   const ids = new Map<string, string>();
-  const stops = trip.stops.filter(stop => (!day || stop.date === day) && stop.kind !== 'uncertain' && stop.kind !== 'remote' && (includeOrigin || !isOrigin(stop))).map(({
+  const stops = trip.stops.filter(stop => (!day || stop.date === day) && isMappedStop(stop) && (includeOrigin || !isOrigin(stop))).map(({
     id,
     name,
     date,
@@ -26,21 +27,22 @@ export function shareableTrip(trip: Trip, includeOrigin: boolean, day: string | 
     rank,
     approx
   }) => {
-    const shareId = 's' + (ids.size + 1);
+    const shareId = publicId(id, ids.size + 1);
     ids.set(id, shareId);
     return {
       id: shareId,
-      name,
+      name: approx ? 'Approximate location' : name,
       date,
       time,
-      address,
+      address: approx ? '' : address,
       xy,
       kind,
       rank,
       approx
     };
   });
-  if (includeOrigin && trip.homeXY && !ids.has('base')) ids.set('base', 'base');
+  const shareHome = includeOrigin && hasMapLocation(trip.homeXY);
+  if (shareHome && !ids.has('base')) ids.set('base', 'base');
   const edges = trip.edges.filter(edge => ids.has(edge.a) && ids.has(edge.b)).map(({
     a,
     b,
@@ -61,10 +63,19 @@ export function shareableTrip(trip: Trip, includeOrigin: boolean, day: string | 
     end: day || trip.end,
     stops,
     edges,
-    home: includeOrigin ? trip.home : '',
-    homeXY: includeOrigin ? trip.homeXY : null
+    home: shareHome ? trip.home : '',
+    homeXY: shareHome ? trip.homeXY : null
   };
 }
+export function shareableTrip(trip: Trip, includeOrigin: boolean, day: string | null = null) {
+  return selectSharedRoute(trip, includeOrigin, day, (_, index) => 's' + index);
+}
+
+// Previous links already have anonymous stop IDs. Filter their own snapshot without reading the owner's journal.
+export function readSharedRoute(value: unknown, includeOrigin: boolean) {
+  return selectSharedRoute(cleanTrip(value), includeOrigin, null, id => id);
+}
+
 // Code and styles that the portable file holds once. The pristine copy it carries leaves their text out,
 // and a file made from a journal takes that text from the document the journal runs in.
 const part = /(<(script|style) data-part="([\w-]+)"[^>]*>)[\s\S]*?(<\/\2>)/g;

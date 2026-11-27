@@ -1,4 +1,4 @@
-import { cleanTrip, cleanStop, isRecord, member, mergeGooglePins, mergeStops, safeDate, sources, type GooglePinResult, type Stop, type Trip } from './core.ts';
+import { cleanTrip, cleanStop, isRecord, member, mergeGooglePins, mergeStops, point, safeDate, sources, type GooglePinResult, type Stop, type Trip } from './core.ts';
 import { restoreMissingRoutes } from './route-update.ts';
 import { dayStops } from './daily-route.ts';
 
@@ -153,8 +153,16 @@ export async function importCsv(txt: string, order?: DateOrder): Promise<ImportR
   };
   // A transaction date says when the purchase happened. A bare "date" may be the posting date.
   const date = col('transaction date', 'תאריך עסקה', 'תאריך העסקה', 'date', 'תאריך');
-  const name = col('merchant', 'merchant name', 'שם עסק', 'שם בית העסק', 'בית עסק', 'name', 'שם', 'description', 'תיאור');
-  if (date < 0 || name < 0) throw Error('חסרות עמודות תאריך ושם עסק');
+  const channel = col('payment channel', 'payment_channel', 'purchase channel', 'channel', 'ערוץ העסקה', 'ערוץ עסקה');
+  const clearingDate = col('clearing date', 'posting date', 'posted date', 'post date', 'תאריך חיוב', 'תאריך החיוב', 'תאריך קליטה');
+  const amountColumns = labels.flatMap((heading, index) =>
+    /^(?:(?:transaction )?amount|debit|credit)(?: \([a-z]{3}\))?$/.test(heading) ||
+    ['סכום', 'סכום עסקה', 'סכום העסקה', 'סכום חיוב', 'סכום החיוב', 'חובה', 'זכות'].includes(heading) ? [index] : []);
+  const statement = channel >= 0 || clearingDate >= 0 || amountColumns.length > 0;
+  const merchant = col('merchant', 'merchant name', 'שם עסק', 'שם בית העסק', 'בית עסק');
+  // Statement exports commonly call the merchant "Description". A generic "Name" may be the cardholder.
+  const name = merchant >= 0 ? merchant : statement ? col('description', 'תיאור') : col('name', 'שם', 'description', 'תיאור');
+  if (date < 0 || (name < 0 && !statement)) throw Error('חסרות עמודות תאריך ושם עסק');
   const out = [],
     seen = new Map();
   let omitted = 0;
@@ -175,7 +183,10 @@ export async function importCsv(txt: string, order?: DateOrder): Promise<ImportR
     const dt = dateOrder === 'month-first' ? monthFirst || dayFirst : dayFirst || monthFirst;
     const title = r[name]?.trim();
     const time = csvTime(r[timeColumn]);
-    if (!title || !dt || time === null) {
+    const paymentChannel = (r[channel] ?? '').trim().toLowerCase().replace(/[-_]/g, ' ');
+    const hasPurchase = paymentChannel || amountColumns.some(index => /\d/.test(r[index] ?? '')) ||
+      parseDate(r[clearingDate]) || parseDate(r[clearingDate], 'month-first');
+    if ((!title && !hasPurchase) || !dt || time === null) {
       omitted++;
       continue;
     }
@@ -184,11 +195,19 @@ export async function importCsv(txt: string, order?: DateOrder): Promise<ImportR
     seen.set(signature, seq + 1);
     const lat = r[col('latitude', 'lat', 'קו רוחב')],
       lon = r[col('longitude', 'lon', 'lng', 'קו אורך')];
+    const address = r[col('address', 'כתובת')];
+    const xy = lat?.trim() && lon?.trim() ? point([Number(lat), Number(lon)]) : null;
+    let kind: Stop['kind'] = 'visit';
+    if (statement) {
+      if (['online', 'remote', 'מקוון', 'מרחוק'].includes(paymentChannel)) kind = 'remote';
+      else if (!address?.trim() && !xy && !['in store', 'in person', 'card present', 'בחנות', 'בבית העסק'].includes(paymentChannel)) kind = 'uncertain';
+    }
     out.push({
       name: title,
+      kind,
       date: dt,
-      address: r[col('address', 'כתובת')],
-      xy: lat?.trim() && lon?.trim() ? [Number(lat), Number(lon)] : null,
+      address,
+      xy,
       time,
       sources: ['card'],
       count: 1,
