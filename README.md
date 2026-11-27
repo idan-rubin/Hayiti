@@ -48,7 +48,7 @@ On a phone, choose **Stops** to see the day’s visits in order.
 
 - **Imports.** Create or select a trip before importing transactions (`.csv`), calendar events (`.ics`) or email (`.eml`). A transaction CSV needs a date and merchant name. A trip backup (`.json`) can open a trip in an empty journal. You can also place a pin by hand.
 - **Matching.** hayiti checks the day and source reference before adding a stop. Independent records with matching places, compatible times and compatible addresses can corroborate one visit. Ambiguous matches stay separate for review.
-- **Order and distance.** Date, time, ordering rules and location inform the suggested order. Walking estimates use recorded walking segments. Taxi rides and unknown segments are accounted for separately.
+- **Order and distance.** Date, time, ordering rules and location inform the suggested order. Each adjacent pair can carry its own route. Walking directions follow pedestrian streets and paths. Taxi directions follow the driving network. When directions are unavailable, the journal keeps its existing route or estimated connector. Walking totals use recorded walking segments.
 - **Source status.** Each requested source has a dated status. Finances distinguishes a disconnected source, missing credit or debit accounts, zero transactions and purchases without a mappable place. Gmail and Calendar can contribute independently.
 - **Sharing.** Share a day or trip as a read-only route. The shared version omits notes, photos and source references. The home base is excluded by default. A hosted link can be revoked. A downloaded copy stays with its recipient.
 
@@ -86,7 +86,25 @@ Provide a private R2-compatible `BUCKET` and your HTTPS `PUBLISHER_ORIGIN`. To e
 
 ChatGPT connects to the hosted journal using OAuth and the [MCP connection manifest](directory/mcp.json). With hayiti connected, try asking “Which trips are in my journal?” or “Where did I go on the first day of my trip?” ChatGPT reads trips saved to your hosted account. The portable journal keeps its own copy.
 
-The MCP tools are `list_trips`, `get_day` and `add_trip_stops`. ChatGPT checks the sources you choose and sends hayiti the itinerary details you approve.
+ChatGPT uses `list_trips`, `get_day` and `add_trip_stops` to reconcile approved visits. After those stops are in order, `set_day_routes` saves estimated network paths for adjacent pairs on a specific day.
+
+### Generate directions with OSRM
+
+An agent with access to an OSRM-compatible router can use the bundled TypeScript adapter. Configure the route URLs for the pedestrian and driving datasets available to you. OSRM's travel mode depends on the profile used to prepare each dataset. The adapter also checks the travel mode returned by the router. [OSRM API documentation](https://project-osrm.org/docs/v5.24.0/api/)
+
+For example, two local OSRM instances might serve the pedestrian and driving datasets on ports 5001 and 5002. A plan contains only the pairs that need directions. Each pair identifies the adjacent stop IDs, mode and endpoints in latitude, longitude order.
+
+```json
+{"tripId":"example","days":[{"date":"2026-03-12","legs":[{"a":"cafe","b":"museum","type":"walk","from":[51.92,4.48],"to":[51.918,4.476]}]}]}
+```
+
+```sh
+HAYITI_WALK_ROUTE_URL=http://localhost:5001/route/v1/foot \
+HAYITI_DRIVE_ROUTE_URL=http://localhost:5002/route/v1/driving \
+node scripts/route-trip.ts < plan.json > routes.json
+```
+
+Save each day's `routes` with `set_day_routes`, or open **Sources and import → Files** and import the package into the matching trip. A routing service receives endpoint coordinates. The adapter makes sequential requests and reuses repeated coordinate pairs within the same run. Pairs with no usable route are omitted and reported on stderr, preserving their previous display. A service failure stops the run before it emits a package.
 
 ## Definition of done
 
