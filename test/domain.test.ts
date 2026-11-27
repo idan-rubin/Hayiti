@@ -145,3 +145,20 @@ await test('one column names the stops in a CSV, rows without it are skipped, an
   assert.equal((await importCsv('Date,Name\n2026-06-14,Markthal')).stops[0].name, 'Markthal');
   assert.equal((await importCsv('Date,Transaction Date,Merchant\n2026-06-16,2026-06-14,Markthal')).stops[0].date, '2026-06-14');
 });
+
+await test('photo metadata imports reuse fixed daily pins across batches and retries', () => {
+  const trip = sample();
+  trip.stops = [];
+  const photo = (ref: string, northMeters: number, date = trip.start) => ({
+    name: 'Photo location', date, xy: [northMeters / 111195, 4], sources: ['photo'], refs: [ref]
+  });
+  const first = photo('p1', 0);
+  const nearby = photo('p2', 95);
+  assert.deepEqual(mergeStops(trip, [first, nearby]), { added: 1, linked: 1, skipped: 0 });
+  assert.deepEqual(trip.stops[0].xy, first.xy);
+  assert.equal(mergeStops(trip, [nearby]).skipped, 1);
+  assert.equal(mergeStops(trip, [{ ...nearby, refs: ['p2', 'p3'] }]).linked, 1);
+  assert.deepEqual(trip.stops[0].refs, ['p1', 'p2', 'p3']);
+  assert.equal(mergeStops(trip, [photo('beyond-anchor', 105), photo('far', 500)]).added, 2);
+  assert.equal(mergeStops(trip, [photo('another-day', 0, trip.end)]).added, 1);
+});
