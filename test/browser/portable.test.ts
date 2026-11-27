@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { strFromU8, unzipSync } from 'fflate';
 import { chromium, type Page } from 'playwright-core';
+import { readPortableRecord, waitForPortableTrip } from './portable-storage-helpers.ts';
 
 async function showDayDetails(page: Page) {
   await page.locator('#otherSummary').waitFor();
@@ -88,10 +89,10 @@ await test('a portable route package previews and saves a new stop order without
     await page.locator('#preview').getByText('Taxi rides to reclassify · 1').waitFor();
     await page.getByRole('button', { name: 'Save routes' }).click();
     await page.locator('#sources').waitFor({ state: 'hidden' });
-    const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('masluli-portable-v2')!).trips[0]);
+    const saved = (await readPortableRecord(page))!.trips[0];
     assert.deepEqual(saved.stops.filter((stop: { id: string }) => ['pickup', 'dropoff'].includes(stop.id))
       .map((stop: { kind: string }) => stop.kind), ['visit', 'visit']);
-    assert.equal(saved.edges.find((edge: { a: string, b: string }) => edge.a === 'pickup' && edge.b === 'dropoff').type, 'gap');
+    assert.equal(saved.edges.find((edge: { a: string, b: string }) => edge.a === 'pickup' && edge.b === 'dropoff')?.type, 'gap');
   } finally {
     await browser.close();
   }
@@ -179,7 +180,7 @@ await test('editing the default home preserves a separate overnight stop', async
     await page.locator('#tripForm [name=coords]').fill('53, 6');
     await page.locator('#tripForm .primary').click();
     await page.locator('#config').waitFor({ state: 'hidden' });
-    const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('masluli-portable-v2')!).trips[0]);
+    const saved = (await readPortableRecord(page))!.trips[0];
     assert.equal(saved.stops[0].name, 'New home');
     assert.deepEqual(saved.stops[0].xy, [53, 6]);
     assert.equal(saved.stops[1].name, 'Hotel B');
@@ -228,10 +229,13 @@ await test('retrying a failed import applies the selected records exactly once',
       name: 'stops.csv', mimeType: 'text/csv', buffer: Buffer.from('date,merchant\n2026-06-14,Ferry Terminal')
     });
     await page.evaluate(() => {
-      const write = Storage.prototype.setItem;
-      Storage.prototype.setItem = function () {
-        Storage.prototype.setItem = write;
-        throw new Error('Transient write failure');
+      const put = IDBObjectStore.prototype.put;
+      IDBObjectStore.prototype.put = function (value: unknown, key?: IDBValidKey) {
+        if (this.transaction.db.name === 'hayiti-portable' && key === 'current-v3') {
+          IDBObjectStore.prototype.put = put;
+          throw new DOMException('Transient write failure', 'QuotaExceededError');
+        }
+        return key === undefined ? put.call(this, value) : put.call(this, value, key);
       };
     });
     await page.locator('#preview button').click();
@@ -266,7 +270,7 @@ await test('a photo-heavy portable journal survives localStorage quota and reloa
     });
     await page.locator('#preview button').click();
     await page.locator('#sources').waitFor({ state: 'hidden' });
-    assert.equal(await page.evaluate(() => localStorage.getItem('masluli-portable-v2')), 'hayiti:indexeddb:1');
+    assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem('masluli-portable-v2')!)), { hayitiUpgradeRequired: true });
     await page.reload();
     await showDayDetails(page);
     await page.locator('#unlocatedList').getByRole('button', { name: 'Add address · Visit 23', exact: true }).click();
@@ -312,7 +316,7 @@ await test('missing sources and the last removed photo show Not recorded', async
     assert.deepEqual(await selected.allTextContents(), ['Not recorded']);
     await page.locator('#editForm .primary').click();
     await page.locator('#edit').waitFor({ state: 'hidden' });
-    const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('masluli-portable-v2')!).trips[0]);
+    const saved = (await readPortableRecord(page))!.trips[0];
     assert.deepEqual(saved.stops.map((stop: { sources: string[] }) => stop.sources), [[], []]);
     await showDayDetails(page);
     await page.locator('#unlocatedList').getByRole('button', { name: 'Add address · Beach', exact: true }).click();
@@ -348,7 +352,7 @@ await test('correcting a stop\'s source replaces the old one and keeps corrobora
     await page.locator('#editForm [name=notes]').fill('Evening visit');
     await page.locator('#editForm .primary').click();
     await page.locator('#edit').waitFor({ state: 'hidden' });
-    const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('masluli-portable-v2')!).trips[0]);
+    const saved = (await readPortableRecord(page))!.trips[0];
     assert.deepEqual(saved.stops[0].sources, ['manual', 'email']);
     assert.deepEqual(saved.stops[1].sources, ['photo']);
     assert.equal(saved.stops[1].notes, 'Evening visit');
@@ -853,7 +857,7 @@ await test('the traveler re-times and moves a photo pin, and a new home base dro
       edges: [{ a: 'base', b: 'pin', type: 'walk', m: 1500, line: [home, camera] }, ride]
     });
     await page.goto(new URL('../../dist/web/Hayiti.html?lang=en', import.meta.url).href);
-    const saved = () => page.evaluate(() => JSON.parse(localStorage.getItem('masluli-portable-v2')!).trips[0]);
+    const saved = async () => (await readPortableRecord(page))!.trips[0];
     const openPin = () => page.getByRole('button', { name: 'Camera pin', exact: true }).first().click();
     const save = async (dialog: string, form: string) => {
       await page.locator(form + ' .primary').click();
@@ -1075,9 +1079,9 @@ await test('the map controls leave pins and an opened popup uncovered, and a Goo
 
     await popup.getByRole('button', { name: 'Remove from trip' }).click();
     await page.locator('#confirmYes').click();
-    await page.waitForFunction(() => JSON.parse(localStorage.getItem('masluli-portable-v2')!).trips[0].googlePins.length === 1);
-    const trip = await page.evaluate(() => JSON.parse(localStorage.getItem('masluli-portable-v2')!).trips[0]);
-    assert.deepEqual([trip.googlePins.map((pin: { id: string }) => pin.id), trip.stops.length], [['south'], 3]);
+    await waitForPortableTrip(page, { googlePinCount: 1 });
+    const trip = (await readPortableRecord(page))!.trips[0];
+    assert.deepEqual([trip.googlePins?.map((pin: { id: string }) => pin.id), trip.stops.length], [['south'], 3]);
     assert.equal(await page.locator('#map .google-pin').count(), 1);
   } finally {
     await browser.close();
@@ -1129,7 +1133,7 @@ await test('a photo-backed visit the traveler moves to another day is marked as 
     await page.locator('#editForm [name=date]').fill(second);
     await page.locator('#editForm .primary').click();
     await page.locator('#edit').waitFor({ state: 'hidden' });
-    const [stop] = await page.evaluate(() => JSON.parse(localStorage.getItem('masluli-portable-v2')!).trips[0].stops);
+    const [stop] = (await readPortableRecord(page))!.trips[0].stops;
     // A retry of the same photo finds the visit on its corrected day because of this mark.
     assert.deepEqual([stop.date, stop.edited], [second, true]);
   } finally {
@@ -1156,7 +1160,7 @@ await test('a removed Google Pin stays off the map after reload and reimport unt
     await page.getByRole('button', { name: 'Remove from trip' }).click();
     await page.locator('#confirmYes').click();
     await page.locator('.google-pin').waitFor({ state: 'detached' });
-    await page.waitForFunction(id => JSON.parse(localStorage.getItem('masluli-portable-v2')!).trips[0].removedGooglePinIds?.includes(id), pin.id);
+    await waitForPortableTrip(page, { removedPinId: pin.id });
     await page.reload();
     await page.locator('#title').filter({ hasText: trip.title }).waitFor();
     assert.equal(await page.locator('.google-pin').count(), 0);
@@ -1432,11 +1436,11 @@ await test('a backup restores a missing middle visit in place with both saved wa
     await page.getByRole('button', { name: 'Load trip' }).click();
     await page.locator('#sources').waitFor({ state: 'hidden' });
     assert.deepEqual(await page.locator('#stops .stopname').allTextContents(), ['Cafe', 'Museum', 'Park']);
-    await page.waitForFunction(() => JSON.parse(localStorage.getItem('masluli-portable-v2')!).trips[0].edges.length === 2);
+    await waitForPortableTrip(page, { edgeCount: 2 });
     await page.reload();
     await page.locator('#title').filter({ hasText: trip.title }).waitFor();
     assert.deepEqual(await page.locator('#stops .stopname').allTextContents(), ['Cafe', 'Museum', 'Park']);
-    const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('masluli-portable-v2')!).trips[0]);
+    const saved = (await readPortableRecord(page))!.trips[0];
     assert.deepEqual(saved.edges, edges);
     assert.equal(await page.locator('#map svg path.leaflet-interactive').count(), 2);
   } finally {

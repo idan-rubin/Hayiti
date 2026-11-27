@@ -677,10 +677,17 @@ function reveal(id: string, target: 'row' | 'pin') {
     if (popupFor === id) popupFor = '';
   }, 600);
 }
-// A portable journal whose browser storage is blocked lives only in its tab and is lost when the tab closes.
-const tabOnly = () => session.mode === 'memory';
-const saveTone = (): Tone => tabOnly() && session.trips.length ? 'warning' : '';
+// Temporary memory edits need a backup before leaving this document.
+const tabOnly = () => session.mode === 'memory' || (session.mode === 'guest' && session.guestPersistence === 'memory');
+const saveTone = (): Tone => (tabOnly() || (session.mode === 'guest' && session.guestPersistence !== 'shared')) && session.trips.length ? 'warning' : '';
 function noTimeCopy() {
+  if (session.mode === 'guest' && session.guestPersistence !== 'shared') {
+    return session.guestPersistence === 'tab'
+      ? ui('This temporary trip is saved only in this tab. Other saved drafts are unchanged. Back it up or sign in to keep it.',
+        'הטיול הזמני נשמר רק בלשונית הזאת. הטיוטות השמורות האחרות לא השתנו. גבו אותו או היכנסו לחשבון כדי לשמור אותו.')
+      : ui('This temporary trip is only in memory. Other saved drafts are unchanged. Back it up before reloading, closing this tab or signing in.',
+        'הטיול הזמני נשמר רק בזיכרון. הטיוטות השמורות האחרות לא השתנו. גבו אותו לפני רענון, סגירת הלשונית או כניסה לחשבון.');
+  }
   return portable ? session.mode === 'portable' ? 'נשמר בדפדפן הזה.' : 'השינויים בזיכרון הלשונית. לשמירה יש להוריד גיבוי.' : session.mode === 'account' ? 'השינויים נשמרו ביומן האישי.' : 'השינויים נשמרו בדפדפן הזה. כדי לשמור אותם בין מכשירים נכנסים עם ChatGPT.';
 }
 let viewRequest = 0,
@@ -805,7 +812,7 @@ async function load(afterConflict = false, quiet = false) {
       msg(() => ui('You are signed out. Sign in with ChatGPT to open your journal.', 'יצאת מהחשבון. כדי לפתוח את היומן נכנסים שוב עם ChatGPT.'));
       break;
     case 'guest':
-      msg(session.trips.length ? noTimeCopy() : 'אפשר להתנסות כאן. לשמירה בין מכשירים נכנסים עם ChatGPT.', saveTone());
+      msg(session.trips.length || session.guestPersistence !== 'shared' ? noTimeCopy() : 'אפשר להתנסות כאן. לשמירה בין מכשירים נכנסים עם ChatGPT.', saveTone());
       break;
     case 'account':
       msg('היומן האישי מעודכן.');
@@ -905,7 +912,15 @@ async function change(edit: () => void, fromFile = false) {
     return false;
   }
 }
-for (const id of ['login', 'hostedSignIn'] as const) $(id).addEventListener('click', () => requestGuestMerge(true, session.mode === 'guest' ? session.trips : []));
+for (const id of ['login', 'hostedSignIn'] as const) $(id).addEventListener('click', event => {
+  if (session.mode === 'guest' && session.guestPersistence === 'memory' && unbacked.size) {
+    event.preventDefault();
+    msg(() => ui('Back up each temporary trip before signing in. After signing in, import the backups to keep them in your journal.',
+      'גבו כל טיול זמני לפני הכניסה לחשבון. לאחר הכניסה, ייבאו את הגיבויים כדי לשמור אותם ביומן.'), 'warning');
+    return;
+  }
+  requestGuestMerge(true, session.mode === 'guest' ? session.trips : []);
+});
 window.addEventListener('beforeunload', event => {
   if (!tabOnly() || !unbacked.size) return;
   event.preventDefault();

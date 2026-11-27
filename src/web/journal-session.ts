@@ -1,7 +1,9 @@
 import { cleanTrip, type Trip } from '../domain/core.ts';
 import { GuestConflict, prepareGuestMerge, UnreadableDraft } from './guest-draft.ts';
-import type { GuestDraft } from './guest-storage.ts';
+import type { LoadedGuestDraft as GuestDraft } from './guest-storage.ts';
 import { journalStorage, SaveRejected } from './journal-storage.ts';
+import { PortableConflict } from './portable-storage.ts';
+import { JournalSchemaError } from '../domain/journal-schema.ts';
 
 type Mode = 'initial' | 'snapshot' | 'portable' | 'memory' | 'guest' | 'account';
 type LoadResult =
@@ -21,6 +23,7 @@ export class JournalSession {
   trips: Trip[] = [];
   day = localToday();
   mode: Mode = 'initial';
+  guestPersistence: 'shared' | 'tab' | 'memory' = 'shared';
   private selectedId?: string;
   private rev = '';
   private epoch = 0;
@@ -70,6 +73,7 @@ export class JournalSession {
   private takeDraft(draft: GuestDraft) {
     this.replace('guest', draft.trips);
     this.draftSeen = draft.version;
+    this.guestPersistence = draft.persistence ?? 'shared';
     this.adopted++;
   }
 
@@ -99,8 +103,8 @@ export class JournalSession {
   private async read(portable: boolean, copyTitle: (title: string) => string, approveMerge: (draft: Trip[]) => Promise<boolean>): Promise<LoadResult> {
     if (portable) {
       if (this.mode !== 'memory') {
-        const trips = await this.storage.readPortable();
-        if (trips) this.replace('portable', trips);
+        const draft = await this.storage.readPortable();
+        if (draft) this.replace('portable', draft.trips, draft.version);
         else this.mode = 'memory';
       }
       return { kind: 'portable' };
@@ -132,6 +136,7 @@ export class JournalSession {
       if (superseded()) return { kind: 'unchanged' };
       guest = draft.trips;
       this.draftSeen = draft.version;
+      this.guestPersistence = draft.persistence ?? 'shared';
     }
     catch (error) {
       if (superseded()) return { kind: 'unchanged' };
@@ -201,9 +206,13 @@ export class JournalSession {
           if (this.mode === 'guest') {
             const saved = await this.storage.writeGuest(this.trips, this.draftSeen);
             this.draftSeen = saved.version;
-          } else await this.storage.writePortable(this.trips);
+            this.guestPersistence = saved.persistence ?? 'shared';
+          } else {
+            const saved = await this.storage.writePortable(this.trips, this.rev);
+            if (epoch === this.epoch) this.rev = saved.version;
+          }
         } catch (error) {
-          if (error instanceof GuestConflict) throw error;
+          if (error instanceof GuestConflict || error instanceof PortableConflict || error instanceof JournalSchemaError) throw error;
           throw new LocalSaveFailed();
         }
       }
@@ -214,6 +223,10 @@ export class JournalSession {
       if (epoch !== this.epoch) return 'superseded';
       if (error instanceof GuestConflict) {
         this.takeDraft(error.draft);
+        return 'conflict';
+      }
+      if (error instanceof PortableConflict) {
+        this.replace('portable', error.draft.trips, error.draft.version);
         return 'conflict';
       }
       this.trips = previous;

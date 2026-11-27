@@ -1,5 +1,6 @@
 import { type Trip, isRecord } from '../domain/core.ts';
-import { GuestConflict, discardUnreadableGuest, readGuest, readGuestRecord, updateGuest } from './guest-storage.ts';
+import { GuestConflict, discardUnreadableGuest, guestPersistence, readGuest, readGuestRecord, updateGuest } from './guest-storage.ts';
+import type { LoadedGuestDraft } from './guest-storage.ts';
 export { guestKey, readGuest, onGuestChange, UnreadableDraft, GuestConflict } from './guest-storage.ts';
 
 const requestKey = 'hayiti-guest-merge-requested';
@@ -25,9 +26,11 @@ export async function writeGuest(trips: Trip[], expectedVersion: string) {
     if (!trips.length) record.attempts = [];
     return { write: true, result: { conflict: false, draft: { version: record.version, trips }, covered } };
   });
-  if (saved.conflict) throw new GuestConflict(saved.draft);
+  const persistence = guestPersistence();
+  const draft: LoadedGuestDraft = { ...saved.draft, ...(persistence !== 'shared' ? { persistence } : {}) };
+  if (saved.conflict) throw new GuestConflict(draft);
   if (saved.covered) requestGuestMerge(true, trips);
-  return saved.draft;
+  return draft;
 }
 
 export async function discardGuest() {
