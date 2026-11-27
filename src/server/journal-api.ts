@@ -22,7 +22,11 @@ async function callTool(bucket: Bucket, owner: string, name: unknown, args: Reco
   const trip = journal.trips.find(t => t.id === args.tripId);
   if (name === 'list_google_pins') {
     if (!trip) throw Error('טיול לא נמצא');
-    return trip.googlePins ?? [];
+    const offset = args.offset ?? 0;
+    if (typeof offset !== 'number' || !Number.isInteger(offset) || offset < 0) throw Error('Supply offset as a whole number of pins to skip');
+    // A long saved list is read a page at a time, so one reply stays small enough for a conversation.
+    const pins = trip.googlePins ?? [];
+    return { total: pins.length, offset, pins: pins.slice(offset, offset + 200) };
   }
   if (name === 'get_day') {
     if (!trip || !safeDate(args.date)) throw Error('טיול או תאריך לא נמצא');

@@ -291,7 +291,7 @@ await test('the agent can import and list private Google Pins independently of r
   assert.deepEqual(JSON.parse(retry.result.content[0].text).googlePins, { added: 0, linked: 0, skipped: 2 });
   assert.equal((await loadState(env.BUCKET, 'alice')).rev, before.rev);
   const list = await (await tool('list_google_pins', { tripId: trip.id })).json();
-  assert.deepEqual(JSON.parse(list.result.content[0].text), [{ ...pins[0], date: trip.start }, pins[1]]);
+  assert.deepEqual(JSON.parse(list.result.content[0].text), { total: 2, offset: 0, pins: [{ ...pins[0], date: trip.start }, pins[1]] });
   const response = await (await tool('get_day', { tripId: trip.id, date: trip.start })).json();
   const day = JSON.parse(response.result.content[0].text);
   assert.deepEqual(day.googlePins, [{ ...pins[0], date: trip.start }]);
@@ -302,4 +302,20 @@ await test('the agent can import and list private Google Pins independently of r
   const invalid = await (await tool('add_trip_stops', { ...args, stops: trip.stops, googlePins: [{ ...pins[0], xy: null }] })).json();
   assert.equal(invalid.result.isError, true);
   assert.equal((await loadState(env.BUCKET, 'alice')).rev, before.rev);
+});
+
+await test('a long list of Google Pins is read 200 at a time, with the total in every reply', async () => {
+  const { tool, trip } = fixture();
+  const pin = (n: number) => ({ id: 'place-' + n, name: 'Place ' + n, xy: [51.9 + n / 10000, 4.48] });
+  const batch = (from: number, count: number) => Array.from({ length: count }, (_, i) => pin(from + i));
+  await tool('add_trip_stops', { tripId: trip.id, start: trip.start, end: trip.end, stops: [], googlePins: batch(0, 200) });
+  await tool('add_trip_stops', { tripId: trip.id, stops: [], googlePins: batch(200, 50) });
+  const read = async (args: Record<string, unknown>) => (await (await tool('list_google_pins', { tripId: trip.id, ...args })).json()).result;
+  const first = JSON.parse((await read({})).content[0].text);
+  assert.deepEqual([first.total, first.offset, first.pins.length, first.pins[199].id], [250, 0, 200, 'place-199']);
+  const rest = JSON.parse((await read({ offset: 200 })).content[0].text);
+  assert.deepEqual([rest.total, rest.offset, rest.pins.map((item: { id: string }) => item.id)], [250, 200, batch(200, 50).map(item => item.id)]);
+  assert.deepEqual(JSON.parse((await read({ offset: 250 })).content[0].text).pins, []);
+  assert.equal((await read({ offset: -1 })).isError, true);
+  assert.equal((await read({ offset: 1.5 })).isError, true);
 });

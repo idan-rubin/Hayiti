@@ -371,3 +371,29 @@ await test('portable evidence packages preview Google Pins without changing stop
   assert.deepEqual(mergeGooglePins(trip, preview.googlePins ?? []), { added: 0, linked: 1, skipped: 0 });
   assert.equal(trip.googlePins?.[0].date, trip.start);
 });
+
+await test('sending a saved Google Pin again corrects its name and location and keeps the traveler’s day', () => {
+  const trip = sample();
+  const wrong = { id: 'place', name: 'Café (wrong branch)', xy: [51.95, 4.5] };
+  mergeGooglePins(trip, [wrong]);
+  const saved = trip.googlePins?.[0];
+  assert.ok(saved);
+  Object.assign(saved, { date: trip.end, dayEdited: true });
+  const right = { id: 'place', name: 'Café', xy: [51.91, 4.48], date: trip.start };
+  assert.deepEqual(mergeGooglePins(trip, [right]), { added: 0, linked: 1, skipped: 0 });
+  assert.deepEqual(trip.googlePins, [{ id: 'place', name: 'Café', xy: [51.91, 4.48], date: trip.end, dayEdited: true }]);
+  assert.deepEqual(mergeGooglePins(trip, [right]), { added: 0, linked: 0, skipped: 1 });
+});
+
+await test('a Google Pin with no known location is refused, and a day outside the trip is reported', () => {
+  const trip = sample();
+  const pin = { id: 'park', name: 'Park', xy: [51.91, 4.48] };
+  // Google's export writes [0, 0] when it does not know where a place is.
+  assert.throws(() => mergeGooglePins(trip, [pin, { id: 'nowhere', name: 'Unknown place', xy: [0, 0] }]), /no known location/);
+  assert.equal(trip.googlePins, undefined);
+  assert.deepEqual(mergeGooglePins(trip, [{ ...pin, date: '2019-01-01' }, { ...pin, id: 'planned', savedAt: '2019-01-01' }]),
+    { added: 2, linked: 0, skipped: 0, datesOutsideTrip: 1 });
+  assert.deepEqual(cleanTrip(trip).googlePins?.map(item => item.date), [undefined, undefined]);
+  // A journal that already holds such a pin still opens.
+  assert.equal(cleanTrip({ ...trip, googlePins: [{ id: 'nowhere', name: 'Unknown place', xy: [0, 0] }] }).googlePins?.length, 1);
+});
