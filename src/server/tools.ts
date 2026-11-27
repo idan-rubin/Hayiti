@@ -143,7 +143,7 @@ export const tools = [{
   }
 }, {
   name: 'set_day_routes',
-  description: 'Save network routes between adjacent stops on a saved day. Use the actual pedestrian path for walk and legal road directions for taxi, including when the stops are photo pins. Omit unavailable or ambiguous routes to preserve their existing display. Supply same only for coincident stops. Use gap and an empty line only for an explicitly requested gap. Read get_day to verify the saved modes and vertex counts.',
+  description: 'Save network routes between adjacent stops on a saved day. Default to an estimated pedestrian route. Use road directions for a known taxi leg. Preserve legs with confirmed travel by other modes and omit unavailable directions. Supply same only for coincident stops. Use gap and an empty line only for an explicitly requested gap. Read get_day to verify the saved modes and vertex counts.',
   annotations: {
     readOnlyHint: false,
     destructiveHint: true,
