@@ -68,7 +68,7 @@ A photo knows the place but not what you did there. A charge knows what you boug
 
 > Map my trip to Tel Aviv last week. I stayed near the market. Use my photos, receipts and calendar to work out where I went each day.
 
-ChatGPT asks for anything missing, such as the dates or where you stayed. It cross-checks the sources you authorize, shows you the stops, and saves the ones you approve. Open the web app with the same account to see your days. From a photo, hayiti saves only the capture time and location, not the picture. For purchases, ChatGPT can use its [Finances tab](https://chatgpt.com/finances/).
+ChatGPT asks for anything missing, such as the dates or where you stayed. It cross-checks the sources you authorize, shows you the stops, and saves the ones you approve. Open the web app with the same account to see your days. ChatGPT reaches your photos through the photo library's app, or through the browser if needed, with your guidance. From a photo, hayiti saves only the capture time and location, not the picture. For purchases, ChatGPT can use its [Finances tab](https://chatgpt.com/finances/).
 
 **Without an account.** In the web app or the portable journal, open **Sources and import**, copy the sync request into your conversation, and import the file ChatGPT returns under **Files**.
 
