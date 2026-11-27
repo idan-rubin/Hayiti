@@ -1448,8 +1448,48 @@ await test('a trip made in another tab while sign-in asks about the draft stays 
     await account.locator('#status').filter({ hasText: 'is now in your journal' }).waitFor();
     assert.equal(writes, 1);
     assert.equal(await account.locator('#title').textContent(), 'Trip A');
+    assert.deepEqual((await loadState(bucket, 'traveler')).trips.map(trip => trip.title), ['Trip A']);
     // Only the trip that was shown and uploaded left the browser.
     assert.deepEqual(await storedTitles(account), ['Trip B']);
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('a draft edited in another tab during sign-in requires consent to its new contents', async () => {
+  const browser = await chromium.launch();
+  try {
+    const context = await browser.newContext();
+    const bucket = new MemoryBucket();
+    let writes = 0;
+    const guest = await context.newPage();
+    await hostBucket(guest, bucket, () => false);
+    await guest.goto(origin + '/journal.html?lang=en');
+    await createTrip(guest, 'Trip A');
+
+    const account = await context.newPage();
+    await hostBucket(account, bucket, () => true, () => writes++);
+    await account.goto(origin + '/journal.html?lang=en');
+    await account.locator('#confirmText').filter({ hasText: 'Trip A' }).waitFor();
+
+    await guest.locator('#settings').click();
+    await guest.locator('#tripForm [name=title]').fill('Trip A edited');
+    await guest.locator('#tripForm .primary').click();
+    await guest.locator('#config').waitFor({ state: 'hidden' });
+    await account.locator('#confirmYes').click();
+    await account.locator('#status').filter({ hasText: 'journal changed during sign-in' }).waitFor();
+    assert.equal(writes, 0);
+    assert.deepEqual((await loadState(bucket, 'traveler')).trips, []);
+    assert.deepEqual(await storedTitles(account), ['Trip A edited']);
+
+    await openConnectedAccounts(account);
+    await account.locator('#reload').click();
+    await account.locator('#confirmText').filter({ hasText: 'Trip A edited' }).waitFor();
+    await account.locator('#confirmYes').click();
+    await account.locator('#status').filter({ hasText: 'is now in your journal' }).waitFor();
+    assert.equal(writes, 1);
+    assert.deepEqual((await loadState(bucket, 'traveler')).trips.map(trip => trip.title), ['Trip A edited']);
+    assert.deepEqual(await storedTitles(account), []);
   } finally {
     await browser.close();
   }

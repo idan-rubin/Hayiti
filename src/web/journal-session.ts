@@ -107,8 +107,8 @@ export class JournalSession {
     }
     const revisionAtRead = this.rev;
     const epochAtRead = this.epoch;
-    const superseded = () => this.mode === 'account' && (this.rev !== revisionAtRead || this.epoch !== epochAtRead || this.saving);
     const account = await this.storage.readAccount();
+    const superseded = () => this.mode === 'account' && (this.rev !== revisionAtRead || this.epoch !== epochAtRead || (this.saving && account?.rev === this.rev));
     if (!account) {
       const expired = this.mode === 'account';
       if (expired) this.replace('guest', []);

@@ -73,8 +73,14 @@ export async function prepareGuestMerge(account: Trip[], guest: Trip[], copyTitl
   const changed: Trip[] = [];
   let copies = 0;
   if (!guest.length) return { changed, copies };
+  const approved = guest.map(trip => JSON.stringify(trip));
+  const stillApproved = (trips: Trip[]) => {
+    const current = new Set(trips.map(trip => JSON.stringify(trip)));
+    return approved.every(trip => current.has(trip));
+  };
   const stored = await readGuestRecord();
-  if (JSON.stringify(stored.trips) !== JSON.stringify(guest)) throw new GuestConflict(stored);
+  // Consent covers the trips shown, not a later trip another tab added to the browser.
+  if (!stillApproved(stored.trips)) throw new GuestConflict(stored);
   const previous = stored.attempts;
   if (!Array.isArray(previous)) throw Error('השמירה נכשלה');
   const attempts: Attempt[] = [];
@@ -111,8 +117,13 @@ export async function prepareGuestMerge(account: Trip[], guest: Trip[], copyTitl
   // Save small fingerprints before POST so a dropped reply or reload can be reconciled.
   if (changed.length) {
     const conflict = await updateGuest(record => {
-      if (record.version !== stored.version) return { result: { version: record.version, trips: record.trips } };
-      record.attempts = attempts;
+      if (!stillApproved(record.trips)) return { result: { version: record.version, trips: record.trips } };
+      if (!Array.isArray(record.attempts)) throw Error('השמירה נכשלה');
+      const approvedIds = new Set(guest.map(trip => trip.id));
+      record.attempts = [
+        ...record.attempts.filter(item => !isRecord(item) || !approvedIds.has(String(item.guestId))),
+        ...attempts
+      ];
       return { write: true, result: null };
     });
     if (conflict) throw new GuestConflict(conflict);

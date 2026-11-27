@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { cleanTrip } from '../src/domain/core.ts';
+import { cleanStop, cleanTrip } from '../src/domain/core.ts';
 import { journalSchemaVersion } from '../src/domain/journal-schema.ts';
 import { JournalSession } from '../src/web/journal-session.ts';
 import { journalStorage } from '../src/web/journal-storage.ts';
@@ -151,4 +151,41 @@ await test('an expired account followed by a failed draft read clears account da
   assert.deepEqual(session.trips, []);
   assert.equal(session.trip, null);
   assert.equal(await session.change(() => {}), 'loading');
+});
+
+await test('refresh adopts a newer server revision while an import acknowledgment is still pending', async () => {
+  const trip = cleanTrip({ id: 'trip', title: 'Day out', start: '2026-06-14', end: '2026-06-14', stops: [] });
+  let remote = { rev: 'original', trips: [trip] };
+  let writes = 0;
+  let posted = () => {}, release = () => {};
+  const request = new Promise<void>(resolve => { posted = resolve; });
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const session = new JournalSession({ ...journalStorage,
+    readAccount: async () => structuredClone(remote),
+    readGuest: async () => ({ version: 'guest', trips: [] }),
+    writeAccount: async journal => {
+      remote = { rev: 'newer', trips: structuredClone(journal.trips) };
+      if (++writes === 1) {
+        posted();
+        await held;
+        return 'imported';
+      }
+      assert.equal(journal.rev, 'newer');
+      return 'next';
+    }
+  });
+  await session.load(false, title => title, async () => true);
+  const save = session.change(() => {
+    session.trip!.stops.push(cleanStop({ id: 'cafe', name: 'Cafe', date: trip.start }));
+  });
+  try {
+    await request;
+    assert.equal((await session.load(false, title => title, async () => true)).kind, 'account');
+    assert.deepEqual(session.trip?.stops.map(stop => stop.name), ['Cafe']);
+    release();
+    assert.equal(await save, 'saved-after-refresh');
+    assert.match(session.revision, /^newer\//);
+    assert.equal(await session.change(() => { session.trips.push({ ...trip, id: 'next' }); }), 'saved');
+    assert.equal(writes, 2);
+  } finally { release(); }
 });
