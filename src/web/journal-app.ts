@@ -9,7 +9,7 @@ import { routeStops, dayDetails, isMappedStop, indexEdges, suggest, walkingStats
 import { createDateReel } from './date-reel.ts';
 import { cleanTrip, cleanStop, mergeGooglePins, removeGooglePin, restoreGooglePin, mergeStops, combineEvidence, journalCharacterLimit, unidentifiedMerchant } from '../domain/core.ts';
 import { importEvidencePackage, prepareTripBackup, importCsv, importIcs, pastedStop } from '../domain/importers.ts';
-import { checkGuestBackup, discardGuest, guestKey, guestMergeRequested, requestGuestMerge, tripsWaitingInTab } from './guest-draft.ts';
+import { checkGuestBackup, discardGuest, onGuestChange, guestMergeRequested, requestGuestMerge, tripsWaitingInTab } from './guest-draft.ts';
 import { prepareApproximateLocation, updateRoutesForStopEdit } from '../domain/stop-location.ts';
 import { prepareRouteImport } from '../domain/route-update.ts';
 import { JournalSession, localToday } from './journal-session.ts';
@@ -739,7 +739,7 @@ let journalReady = false;
 // when the traveler chose Sign in from the tab showing it. Anyone else is shown the trips and asked.
 const mergeAnswers = new Map<string, boolean>();
 async function approveGuestMerge(draft: Trip[]) {
-  if (guestMergeRequested()) return true;
+  if (guestMergeRequested(draft)) return true;
   // The answer covers the trips that were shown. A draft another tab changes afterwards is asked about again.
   const shown = JSON.stringify(draft);
   const answered = mergeAnswers.get(shown);
@@ -775,16 +775,25 @@ async function load(afterConflict = false, quiet = false) {
   // The request to keep a draft ends once it is in the account, or once sign-in was abandoned.
   if (result.kind === 'merged' || result.kind === 'account' || result.kind === 'guest') requestGuestMerge(false);
   const unreadable = result.kind === 'unreadable-draft';
-  journalReady = !unreadable;
-  $('retryLoad').hidden = true;
-  for (const control of document.querySelectorAll<HTMLButtonElement>('[data-requires-journal]')) control.disabled = unreadable;
+  const unavailable = result.kind === 'guest-unavailable';
+  journalReady = !unreadable && !unavailable;
+  $('retryLoad').hidden = !unavailable;
+  for (const control of document.querySelectorAll<HTMLButtonElement>('[data-requires-journal]')) control.disabled = unreadable || unavailable;
   if (unreadable) tab('connected');
-  $('range').hidden = unreadable;
+  $('range').hidden = unreadable || unavailable;
   $('discardDraft').hidden = !unreadable;
-  $('login').hidden = result.kind !== 'guest' && result.kind !== 'signed-out';
+  $('login').hidden = result.kind !== 'guest' && result.kind !== 'signed-out' && !unavailable;
   $('logout').hidden = session.mode !== 'account';
   renderSelection();
   switch (result.kind) {
+    case 'guest-unavailable':
+      msg(() => ui('This browser could not read the saved draft. Your saved data has not been changed. Choose Try again. ',
+        'לא ניתן לקרוא את הטיוטה השמורה בדפדפן הזה. הנתונים השמורים לא שונו. בחרו בניסיון נוסף. ') + result.reason, 'error');
+      break;
+    case 'draft-unavailable':
+      msg(() => ui('Your account journal is open, but the draft in this browser could not be read. It has not been merged. ',
+        'היומן בחשבון פתוח, אך לא ניתן לקרוא את הטיוטה בדפדפן הזה. היא לא מוזגה. ') + result.reason, 'warning');
+      break;
     case 'unreadable-draft':
       msg(() => t(result.reason) + ui(' Choose Discard unreadable draft to continue.',
         ' כדי להמשיך, בחרו ב״מחיקת טיוטה שלא ניתן לקרוא״.'));
@@ -831,10 +840,9 @@ async function load(afterConflict = false, quiet = false) {
           ? ui('The trip you started before signing in is now in your journal.', 'הטיול שהתחלת לפני הכניסה נוסף ליומן האישי.')
           : ui('The trips you started before signing in are now in your journal.', 'הטיולים שהתחלת לפני הכניסה נוספו ליומן האישי.'));
   }
-  // Trips from the earlier version that do not fit next to the ones stored in this browser stay in the tab.
-  if (!portable && !unreadable && tripsWaitingInTab()) {
-    msg(() => ui('This tab still holds trips from before an update, and this browser has no room to store them with your other trips. Keep this tab open. Free space by backing up and deleting a trip or its photos, or sign in, then reload this tab.',
-      'בלשונית הזאת עדיין שמורים טיולים מלפני עדכון, ואין בדפדפן מקום לשמור אותם לצד הטיולים האחרים. השאירו את הלשונית פתוחה. אפשר לפנות מקום על ידי גיבוי ומחיקה של טיול או של תמונות, או להיכנס לחשבון, ואז לטעון מחדש את הלשונית.'), 'warning');
+  if (!portable && !unreadable && !unavailable && tripsWaitingInTab()) {
+    msg(() => ui('This tab still has trips from an earlier version waiting to be imported. Keep it open and choose Refresh journal to finish importing them.',
+      'בלשונית הזאת עדיין יש טיולים מגרסה קודמת שממתינים לייבוא. השאירו אותה פתוחה ובחרו ברענון היומן כדי להשלים את הייבוא.'), 'warning');
   }
   return result.kind;
 }
@@ -897,21 +905,21 @@ async function change(edit: () => void, fromFile = false) {
     return false;
   }
 }
-for (const id of ['login', 'hostedSignIn'] as const) $(id).addEventListener('click', () => requestGuestMerge(true));
+for (const id of ['login', 'hostedSignIn'] as const) $(id).addEventListener('click', () => requestGuestMerge(true, session.mode === 'guest' ? session.trips : []));
 window.addEventListener('beforeunload', event => {
   if (!tabOnly() || !unbacked.size) return;
   event.preventDefault();
 });
 // The guest draft is shared by every tab of this browser. A tab follows what another tab saved.
-window.addEventListener('storage', event => {
-  if (event.storageArea !== localStorage || event.key !== guestKey || portable || sharedRoute) return;
-  try {
-    if (session.adoptGuestDraft()) renderSelection();
-  } catch (error) {
+onGuestChange(() => {
+  if (portable || sharedRoute) return;
+  void session.adoptGuestDraft().then(changed => {
+    if (!changed) return;
+    renderSelection();
+    if (!session.trips.length) start();
+  }).catch(error => {
     msg(() => t(errorMessage(error)), 'error');
-  }
-  // An emptied draft may mean its trips joined an account after sign-in, so this tab checks whether it is signed in.
-  if (event.newValue === null) start();
+  });
 });
 
 $('trips').onchange = () => {
@@ -1497,7 +1505,7 @@ $('copyPrompt').onclick = async () => {
 $('discardDraft').onclick = async () => {
   if (!await ask(t('למחוק את טיוטת הטיול שלא ניתן לקרוא מהדפדפן הזה לצמיתות?'), t('מחיקת טיוטה שלא ניתן לקרוא'))) return;
   try {
-    discardGuest();
+    await discardGuest();
     $('discardDraft').hidden = true;
     await load();
   } catch (error) {
@@ -1603,7 +1611,7 @@ async function previewFile(f: File, order?: 'day-first' | 'month-first') {
       openStop(pastedStop(raw, session.day, /\.eml$/i.test(f.name) ? 'email' : 'manual'));
       return;
     }
-    if (backup && session.mode === 'guest') checkGuestBackup(session.trips, backup.trip);
+    if (backup && session.mode === 'guest') await checkGuestBackup();
     if (!backup && !session.trip) throw Error(t('יש ליצור טיול לפני ייבוא תחנות'));
     const active = session.trip;
     const valid = backup || !active ? [] : result.stops.filter(s => s.date >= active.start && s.date <= active.end);

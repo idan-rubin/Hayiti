@@ -101,7 +101,6 @@ export function correctStopLocation(trip: Trip, args: Record<string, unknown>, r
 
   if (promote) delete next.reviewReason;
   updateRoutesForStopEdit(trip, stop, next);
-  // Replace only this record, retaining the original storage order, references and independent evidence.
   trip.stops[index] = next;
   return true;
 }

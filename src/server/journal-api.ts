@@ -1,4 +1,5 @@
 import { journalErrors } from '../domain/journal-errors.ts';
+import { JournalSchemaError, journalSchemaVersion, requireJournalSchema } from '../domain/journal-schema.ts';
 import { cleanTrip, cleanStop, isRecord, member, mergeGooglePins, mergeStops, point, reportSources, restoreGooglePin, safeDate, validOutcome, type Trip } from '../domain/core.ts';
 import { dayStops, indexEdges, routeStops, walkingStats } from '../domain/daily-route.ts';
 import { loadState, storeState, type Bucket } from './storage.ts';
@@ -140,7 +141,7 @@ export async function journalAPI(req: Request, bucket: Bucket, mode: 'web' | 'mc
       if (!owner) return json({
         error: 'Authentication required'
       }, 401);
-      if (req.method === 'GET') return json(await loadState(bucket, owner));
+      if (req.method === 'GET') return json({ ...await loadState(bucket, owner), schemaVersion: journalSchemaVersion });
     }
     if (req.method !== 'POST') return json({
       error: 'Method not allowed'
@@ -163,9 +164,10 @@ export async function journalAPI(req: Request, bucket: Bucket, mode: 'web' | 'mc
     if (!isRecord(msg)) return json({
       error: 'Invalid request'
     }, 400);
-    if (mode === 'web' && owner) return json({
-      rev: await storeState(bucket, owner, msg.trips, msg.rev)
-    });
+    if (mode === 'web' && owner) {
+      requireJournalSchema(msg.schemaVersion);
+      return json({ rev: await storeState(bucket, owner, msg.trips, msg.rev) });
+    }
     id = msg.id ?? null;
     const params = isRecord(msg.params) ? msg.params : {};
     switch (msg.method) {
@@ -236,6 +238,6 @@ export async function journalAPI(req: Request, bucket: Bucket, mode: 'web' | 'mc
       }]
     }) : json({
       error: message
-    }, message === 'CONFLICT' ? 409 : 400);
+    }, error instanceof JournalSchemaError ? 426 : message === 'CONFLICT' ? 409 : 400);
   }
 }

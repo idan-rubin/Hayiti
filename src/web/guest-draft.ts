@@ -1,164 +1,65 @@
-import { cleanTrip, isRecord, type Trip } from '../domain/core.ts';
-
-export const guestKey = 'hayiti-unsigned-journal';
-const attemptsKey = 'hayiti-guest-merge';
-export class UnreadableDraft extends Error {
-  constructor() { super('לא ניתן לקרוא את טיוטת הטיול בדפדפן הזה.'); }
-}
-
-function parseDraft(raw: string): Trip[] | null {
-  try {
-    const data: unknown = JSON.parse(raw);
-    if (isRecord(data) && Array.isArray(data.trips)) return data.trips.map(cleanTrip);
-  } catch { /* The caller decides what an unreadable draft means. */ }
-  return null;
-}
-
-// Drafts used to live in their tab. Every tab that still holds one adds its trips to the browser's draft.
-function adoptTabDraft() {
-  const fromTab = sessionStorage.getItem(guestKey);
-  if (fromTab === null) return;
-  const stored = localStorage.getItem(guestKey);
-  if (stored === null) {
-    localStorage.setItem(guestKey, fromTab);
-    const attempts = sessionStorage.getItem(attemptsKey);
-    if (attempts !== null && localStorage.getItem(attemptsKey) === null) localStorage.setItem(attemptsKey, attempts);
-  } else {
-    const kept = parseDraft(stored),
-      mine = parseDraft(fromTab);
-    // An unreadable draft stays where it is until the traveler discards it.
-    if (!kept || !mine) return;
-    for (const trip of mine) {
-      const same = kept.find(other => other.id === trip.id);
-      if (!same) kept.push(trip);
-      else if (JSON.stringify(same) !== JSON.stringify(trip)) kept.push({ ...trip, id: crypto.randomUUID() });
-    }
-    localStorage.setItem(guestKey, JSON.stringify({ trips: kept }));
-  }
-  sessionStorage.removeItem(guestKey);
-  sessionStorage.removeItem(attemptsKey);
-}
-
-/** Legacy tab drafts that cannot yet fit beside the browser's stored trips. */
-export function tripsWaitingInTab(): number {
-  try {
-    const fromTab = sessionStorage.getItem(guestKey);
-    return fromTab === null ? 0 : parseDraft(fromTab)?.length ?? 0;
-  } catch {
-    return 0;
-  }
-}
-
-/** Migrate legacy tab drafts under the cross-tab save lock. */
-export async function moveTabDraft() {
-  let waiting: boolean;
-  try {
-    waiting = sessionStorage.getItem(guestKey) !== null;
-  } catch {
-    return; // A browser that blocks tab storage never held a draft there.
-  }
-  if (!waiting) return;
-  await withGuestLock(() => {
-    try {
-      adoptTabDraft();
-    } catch {
-      // The browser has no room for both drafts. Each stays where it is, and the next load tries again.
-    }
-  });
-}
-
-export function readGuest(): Trip[] {
-  let raw: string | null;
-  try {
-    raw = localStorage.getItem(guestKey);
-  } catch { return []; }
-  if (raw === null) return [];
-  // Keep the original until the traveler explicitly discards it.
-  const trips = parseDraft(raw);
-  if (!trips) throw new UnreadableDraft();
-  return trips;
-}
-
-/** The stored draft exactly as saved, to tell whether another tab has saved since this tab last looked. */
-export function guestSnapshot(): string | null {
-  try {
-    return localStorage.getItem(guestKey);
-  } catch {
-    return null;
-  }
-}
-
-/** Keep the draft version check and write atomic across browser tabs. */
-export function withGuestLock<T>(save: () => T | Promise<T>): Promise<T> {
-  const locks: LockManager | undefined = navigator.locks;
-  if (!locks) return Promise.resolve().then(save);
-  return locks.request('hayiti-guest-draft', async () => {
-    // A turn of the event loop lets this tab receive what the previous holder of the lock just saved.
-    await new Promise(resolve => setTimeout(resolve));
-    return save();
-  });
-}
-
-/** After sign-in, removes only the trips that were uploaded. One that another tab added or changed meanwhile stays. */
-export function retireGuest(uploaded: Trip[]) {
-  const sent = new Set(uploaded.map(trip => JSON.stringify(trip)));
-  writeGuest(readGuest().filter(trip => !sent.has(JSON.stringify(trip))));
-}
+import { type Trip, isRecord } from '../domain/core.ts';
+import { GuestConflict, discardUnreadableGuest, readGuest, readGuestRecord, updateGuest } from './guest-storage.ts';
+export { guestKey, readGuest, onGuestChange, UnreadableDraft, GuestConflict } from './guest-storage.ts';
 
 const requestKey = 'hayiti-guest-merge-requested';
-/**
- * Choosing Sign in from the tab that shows the draft is the traveler's request to keep that draft in their
- * account. The request records the draft as it was at that moment, so trips added afterwards are not covered.
- * A browser that blocks or cannot fit the record has no request, and the traveler is asked after sign-in instead.
- */
-export function requestGuestMerge(requested: boolean) {
+
+export function requestGuestMerge(requested: boolean, trips: Trip[] = []) {
   try {
     sessionStorage.removeItem(requestKey);
-    const draft = requested ? localStorage.getItem(guestKey) : null;
-    if (draft !== null) sessionStorage.setItem(requestKey, draft);
-  } catch { /* No request is recorded. */ }
+    if (requested) sessionStorage.setItem(requestKey, JSON.stringify(trips));
+  } catch {}
 }
 
-/** Whether the traveler asked, by choosing Sign in, to keep exactly the draft that is stored now. */
-export function guestMergeRequested() {
+export function guestMergeRequested(trips: Trip[]) {
+  try { return sessionStorage.getItem(requestKey) === JSON.stringify(trips); }
+  catch { return false; }
+}
+
+export async function writeGuest(trips: Trip[], expectedVersion: string) {
+  const saved = await updateGuest(record => {
+    if (record.version !== expectedVersion) return { result: { conflict: true, draft: { version: record.version, trips: record.trips }, covered: false } };
+    const covered = guestMergeRequested(record.trips);
+    record.trips = trips;
+    record.version = crypto.randomUUID();
+    if (!trips.length) record.attempts = [];
+    return { write: true, result: { conflict: false, draft: { version: record.version, trips }, covered } };
+  });
+  if (saved.conflict) throw new GuestConflict(saved.draft);
+  if (saved.covered) requestGuestMerge(true, trips);
+  return saved.draft;
+}
+
+export async function discardGuest() {
+  await discardUnreadableGuest();
+  requestGuestMerge(false);
+}
+
+export async function retireGuest(uploaded: Trip[]) {
+  const sent = new Set(uploaded.map(trip => JSON.stringify(trip)));
+  await updateGuest(record => {
+    const trips = record.trips.filter(trip => !sent.has(JSON.stringify(trip)));
+    if (trips.length === record.trips.length) return { result: undefined };
+    record.trips = trips;
+    record.version = crypto.randomUUID();
+    if (!trips.length) record.attempts = [];
+    return { write: true, result: undefined };
+  });
+}
+
+export function tripsWaitingInTab(): number {
   try {
-    const requested = sessionStorage.getItem(requestKey);
-    return requested !== null && requested === localStorage.getItem(guestKey);
-  } catch {
-    return false;
-  }
+    const raw = sessionStorage.getItem('hayiti-unsigned-journal');
+    if (raw === null) return 0;
+    try {
+      const value: unknown = JSON.parse(raw);
+      return isRecord(value) && Array.isArray(value.trips) ? value.trips.length : 0;
+    } catch { return 0; }
+  } catch { return 0; }
 }
 
-export function discardGuest() {
-  localStorage.removeItem(attemptsKey);
-  localStorage.removeItem(guestKey);
-}
-
-export function writeGuest(trips: Trip[]) {
-  const covered = guestMergeRequested();
-  if (trips.length) localStorage.setItem(guestKey, JSON.stringify({ trips }));
-  else discardGuest();
-  // The tab that asked to keep the draft in an account goes on asking as the traveler edits the draft there.
-  if (covered) requestGuestMerge(true);
-}
-
-// Test the extra space required by the same projected trip shown in the backup preview.
-export function checkGuestBackup(trips: Trip[], restored: Trip) {
-  const projected = [...trips];
-  const index = projected.findIndex(trip => trip.id === restored.id);
-  if (index < 0) projected.push(restored);
-  else projected[index] = restored;
-  const probe = 'hayiti-guest-space';
-  try {
-    const current = localStorage.getItem(guestKey);
-    const size = guestKey.length + JSON.stringify({ trips: projected }).length;
-    const extra = size - (current === null ? 0 : guestKey.length + current.length);
-    if (extra <= 0) return;
-    localStorage.setItem(probe, ' '.repeat(Math.max(0, extra - probe.length)));
-    localStorage.removeItem(probe);
-  } catch {
-    throw Error('אין מספיק מקום בדפדפן לייבוא הגיבוי. פתחו את הגיבוי ביומן הנייד או היכנסו לחשבון ונסו שוב.');
-  }
+export async function checkGuestBackup() {
+  await readGuest();
 }
 
 async function fingerprint(trip: Trip) {
@@ -172,20 +73,31 @@ export async function prepareGuestMerge(account: Trip[], guest: Trip[], copyTitl
   const changed: Trip[] = [];
   let copies = 0;
   if (!guest.length) return { changed, copies };
-  const raw = localStorage.getItem(attemptsKey);
-  const previous: unknown = raw === null ? [] : JSON.parse(raw);
+  const approved = guest.map(trip => JSON.stringify(trip));
+  const stillApproved = (trips: Trip[]) => {
+    const current = new Set(trips.map(trip => JSON.stringify(trip)));
+    return approved.every(trip => current.has(trip));
+  };
+  const stored = await readGuestRecord();
+  // Consent covers the trips shown, not a later trip another tab added to the browser.
+  if (!stillApproved(stored.trips)) throw new GuestConflict(stored);
+  const previous = stored.attempts;
   if (!Array.isArray(previous)) throw Error('השמירה נכשלה');
   const attempts: Attempt[] = [];
   for (const draft of guest) {
     let next = draft;
-    const attempt: unknown = previous.find(item => isRecord(item) && item.guestId === draft.id);
-    const target = isRecord(attempt) && account.find(trip => trip.id === attempt.targetId);
     const existing = account.find(trip => trip.id === draft.id);
     let replace: Trip | undefined;
-    if (target && isRecord(attempt)) {
+    for (const attempt of previous) {
+      if (!isRecord(attempt) || attempt.guestId !== draft.id) continue;
+      const target = account.find(trip => trip.id === attempt.targetId);
+      if (!target) continue;
       const hash = await fingerprint(target);
       // Only update the version previously submitted or its unchanged predecessor.
-      if (hash === attempt.sent || hash === attempt.before) replace = target;
+      if (hash === attempt.sent || hash === attempt.before) {
+        replace = target;
+        break;
+      }
     }
     if (replace && replace.id !== draft.id) next = { ...draft, id: replace.id, title: copyTitle(draft.title) };
     if (!replace && existing) {
@@ -203,6 +115,18 @@ export async function prepareGuestMerge(account: Trip[], guest: Trip[], copyTitl
     if (next.id !== draft.id) copies++;
   }
   // Save small fingerprints before POST so a dropped reply or reload can be reconciled.
-  if (changed.length) localStorage.setItem(attemptsKey, JSON.stringify(attempts));
+  if (changed.length) {
+    const conflict = await updateGuest(record => {
+      if (!stillApproved(record.trips)) return { result: { version: record.version, trips: record.trips } };
+      if (!Array.isArray(record.attempts)) throw Error('השמירה נכשלה');
+      const approvedIds = new Set(guest.map(trip => trip.id));
+      record.attempts = [
+        ...record.attempts.filter(item => !isRecord(item) || !approvedIds.has(String(item.guestId))),
+        ...attempts
+      ];
+      return { write: true, result: null };
+    });
+    if (conflict) throw new GuestConflict(conflict);
+  }
   return { changed, copies };
 }

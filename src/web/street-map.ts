@@ -12,7 +12,6 @@ export type Basemap = 'streets' | 'satellite' | 'terrain';
 export function isBasemap(value: string): value is Basemap {
   return value === 'streets' || value === 'satellite' || value === 'terrain';
 }
-/** Current basemap failure; null when no failure is reported. */
 export type StreetMapProblem = 'unreachable' | 'unsupported' | null;
 
 /** A label that prefers the journal's language and falls back to the name used locally. */

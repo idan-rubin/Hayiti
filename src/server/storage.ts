@@ -1,4 +1,5 @@
 import { cleanTrip, isRecord, journalCharacterLimit, type Journal } from '../domain/core.ts';
+import { journalSchemaVersion, requireJournalSchema } from '../domain/journal-schema.ts';
 export interface ObjectInfo {
   key: string;
   etag: string;
@@ -36,24 +37,33 @@ export interface Bindings {
   HAYITI_SHARE_RELAY?: string;
 }
 const journalKey = (owner: string) => 'journal/' + encodeURIComponent(owner);
+async function readStoredTrips(object: StoredObject): Promise<unknown[]> {
+  const stored: unknown = JSON.parse(await object.text());
+  if (!isRecord(stored)) throw Error('Invalid journal');
+  requireJournalSchema(stored.schemaVersion, true);
+  if (!Array.isArray(stored.trips)) throw Error('Invalid journal');
+  return stored.trips;
+}
 export async function loadState(bucket: Bucket, owner: string): Promise<Journal> {
   const object = await bucket.get(journalKey(owner));
   if (!object) return {
     trips: [],
     rev: ''
   };
-  const stored: unknown = JSON.parse(await object.text());
-  if (!isRecord(stored) || !Array.isArray(stored.trips)) throw Error('Invalid journal');
+  const trips = await readStoredTrips(object);
   return {
-    trips: stored.trips.map(cleanTrip),
+    trips: trips.map(cleanTrip),
     rev: object.etag
   };
 }
 export async function storeState(bucket: Bucket, owner: string, trips: unknown, rev: unknown): Promise<string> {
   if (typeof rev !== 'string' || !Array.isArray(trips) || trips.length > 60) throw Error('Invalid journal');
+  const existing = await bucket.get(journalKey(owner));
+  if (existing) await readStoredTrips(existing);
   const clean = trips.map(cleanTrip);
   if (new Set(clean.map(t => t.id)).size !== clean.length) throw Error('טיול כפול');
   const body = JSON.stringify({
+    schemaVersion: journalSchemaVersion,
     trips: clean
   });
   if (body.length > journalCharacterLimit) throw Error('היומן גדול מדי');

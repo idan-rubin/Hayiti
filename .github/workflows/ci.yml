@@ -34,4 +34,6 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npx --no-install playwright-core install --with-deps chromium
-      - run: npm run test:browser
+      - name: Browser regression tests
+        run: npm run test:browser
+        timeout-minutes: 4

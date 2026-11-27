@@ -5,6 +5,7 @@ import { cleanTrip, reportSources, reportStates, validOutcome } from '../src/dom
 import { routeStops } from '../src/domain/daily-route.ts';
 import { handleRequest } from '../src/server/app.ts';
 import { loadState, storeState } from '../src/server/storage.ts';
+import { journalSchemaVersion } from '../src/domain/journal-schema.ts';
 import { MemoryBucket } from './memory-bucket.ts';
 const base = 'https://maps.example',
   companion = 'https://journal.example';
@@ -203,6 +204,7 @@ await test('competing edits conflict; request headers alone never establish an i
   } = fixture();
   const rev = await storeState(env.BUCKET, 'alice', [trip], '');
   const writes = await Promise.all([1, 2].map(i => post('/api/journal', {
+    schemaVersion: journalSchemaVersion,
     trips: [{
       ...trip,
       title: 'Revision ' + i
@@ -216,6 +218,7 @@ await test('competing edits conflict; request headers alone never establish an i
     }
   }), null)).status, 401);
   assert.equal((await post('/api/journal', {
+    schemaVersion: journalSchemaVersion,
     trips: [],
     rev
   }, 'alice', base, 'https://unrelated.example')).status, 403);
