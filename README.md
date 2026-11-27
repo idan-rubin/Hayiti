@@ -27,7 +27,7 @@ This repository is the template around that work.
 | Puts the stops in order and finds the routes between them | A [playbook](skills/map-my-trip/SKILL.md) that tells the AI how to do the job |
 | Asks you when the evidence runs out | The lessons learned, written down as rules and tests |
 
-Today that AI is ChatGPT. The tools speak MCP and the playbook is plain Markdown, so the same template can serve another agent. Better models will do the job better. The template tells any of them what a good answer looks like.
+All the rest are standards: the tools speak MCP and the playbook is plain Markdown, so the same template can serve another agent. Better models will do the job better. The template tells any of them what a good answer looks like.
 
 ### What the playbook has learned
 
