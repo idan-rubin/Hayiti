@@ -89,17 +89,13 @@ export function correctStopLocation(trip: Trip, args: Record<string, unknown>, r
   if (stop.address && address && address !== stop.address && stop.xy && args.xy === undefined) throw Error('For a pinned stop, confirm its coordinates, supply the new point, or send xy: null to clear it');
   const xy = correctedPoint(args.xy, stop.xy);
   const approx = xy !== null && (args.approx ?? stop.approx);
+  if (approx && !stop.approx && args.address !== undefined && address) {
+    throw Error('Omit address or use an empty string when switching an exact location to approximate.');
+  }
   const moved = xy?.[0] !== stop.xy?.[0] || xy?.[1] !== stop.xy?.[1];
   const promote = args.confirmVisit === true && stop.kind === 'uncertain';
   const next: Stop = { ...stop, name, address, xy, approx, kind: promote ? 'visit' : stop.kind };
   prepareApproximateLocation(stop, next);
-  // A replay can still carry the street address discarded by the original exact-to-area edit.
-  // Normalize only a stale, explicit reassertion of that already-saved area; address-only edits
-  // and changes to the point, name or attendance still require the current revision.
-  if (args.expectedRevision !== revision && stop.approx && !stop.address && args.approx === true
-    && args.xy !== undefined && !moved && !promote && name === stop.name && approx === stop.approx) {
-    next.address = '';
-  }
   if (!moved && !promote && name === stop.name && next.address === stop.address && approx === stop.approx) return false;
   if (args.expectedRevision !== revision) throw Error('The journal changed. Read get_day again before correcting this stop.');
 

@@ -442,7 +442,7 @@ await test('chat corrects an existing stop by revision and confirms attendance s
   assert.equal(stillUnpinned.stops.find((stop: { id: string }) => stop.id === candidate.id).kind, 'visit');
   assert.equal(stillUnpinned.walking.estimatedWalkingMeters, 300);
   const changed = JSON.parse((await correct({ ...args, expectedRevision: attendance.revision, name: 'Local market',
-    xy: [51.923, 4.481], approx: true })).content[0].text);
+    address: '', xy: [51.923, 4.481], approx: true })).content[0].text);
   assert.equal(changed.updated, true);
   const [saved] = (await loadState(env.BUCKET, 'alice')).trips;
   assert.deepEqual(saved.stops[2], { ...candidate, name: 'Local market', address: '',
@@ -466,7 +466,7 @@ await test('generalizing a stop removes its old path and keeps the taxi ride and
     { a: first.id, b: last.id, type: 'taxi', line: [first.xy!, last.xy!], m: 600 }, unaffected);
   const revision = await storeState(env.BUCKET, 'alice', [trip], '');
   const args = { tripId: trip.id, date: trip.start, stopId: first.id, expectedRevision: revision,
-    name: 'Neighborhood visit', address: 'City center', xy: [51.924, 4.48], approx: true };
+    name: 'Neighborhood visit', xy: [51.924, 4.48], approx: true };
   const result = await (await tool('correct_stop_location', args)).json();
   assert.equal(JSON.parse(result.result.content[0].text).updated, true);
   const [saved] = (await loadState(env.BUCKET, 'alice')).trips;
