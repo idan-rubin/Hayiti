@@ -1433,12 +1433,18 @@ async function previewFile(f: File, order?: 'day-first' | 'month-first') {
         if (!active) throw Error(t('יש לבחור טיול תחילה'));
         const revision = session.revision;
         const plan = prepareRouteImport(active, o);
-        target.append(dom('p', quantity(plan.updated, ' מקטעים לעדכון', 'route segment to update', 'route segments to update') +
-          ' · ' + quantity(plan.unchanged, ' מקטעים כבר שמורים', 'segment already saved', 'segments already saved')));
-        if (plan.updated) target.append(button(ui('Save routes', 'שמירת מסלולים'), async () => {
+        if (plan.reorderedDays) {
+          target.append(dom('p', ui('Days with a new stop order', 'ימים עם סדר תחנות חדש') + ' · ' + plan.reorderedDays));
+        }
+        if (plan.updated || plan.unchanged || !plan.reorderedDays) {
+          target.append(dom('p', quantity(plan.updated, ' מקטעים לעדכון', 'route segment to update', 'route segments to update') +
+            ' · ' + quantity(plan.unchanged, ' מקטעים כבר שמורים', 'segment already saved', 'segments already saved')));
+        }
+        if (plan.updated || plan.reorderedDays) target.append(button(ui('Save routes', 'שמירת מסלולים'), async () => {
           const ok = await change(() => {
             const trip = session.trip;
             if (!trip || trip !== active || session.revision !== revision) throw Error(t('הטיול השתנה. יש לבחור את קובץ הייבוא מחדש.'));
+            trip.stops = plan.stops;
             trip.edges = plan.edges;
           });
           if (ok) $('sources').close();

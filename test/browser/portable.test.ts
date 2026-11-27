@@ -48,6 +48,40 @@ await test('a traveler imports a trip offline, sees its pins, reloads it and exp
   }
 });
 
+await test('a portable route package previews and saves a new stop order without new geometry', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await page.route('https://**/*', route => route.abort());
+    await page.goto(new URL('../../dist/web/Hayiti.html?lang=en', import.meta.url).href);
+    await page.getByRole('button', { name: 'Try the sample trip' }).click();
+    const previous = ['cafe', 'gelato', 'pickup', 'dropoff', 'museum', 'brewery', 'show'];
+    const next = ['gelato', 'cafe', 'pickup', 'dropoff', 'museum', 'brewery', 'show'];
+    const upload = async () => {
+      await page.locator('#import').click();
+      await page.locator('[data-tab="files"]').click();
+      await page.locator('#file').setInputFiles({
+        name: 'agent-routes.json', mimeType: 'application/json',
+        buffer: Buffer.from(JSON.stringify({ format: 'hayiti-routes/1', tripId: 'tel-aviv-sample',
+          days: [{ date: '2026-03-12', order: { previous, next }, routes: [] }] }))
+      });
+    };
+    const firstStop = page.locator('#stops .stopname').first();
+    await upload();
+    await page.locator('#preview').getByText('Days with a new stop order · 1').waitFor();
+    assert.equal(await firstStop.textContent(), 'Café Sonder');
+    await page.getByRole('button', { name: 'Save routes' }).click();
+    await page.locator('#sources').waitFor({ state: 'hidden' });
+    await page.reload();
+    await firstStop.filter({ hasText: 'Anita Gelato' }).waitFor();
+    await upload();
+    await page.locator('#preview').getByText('0 route segments to update', { exact: false }).waitFor();
+    assert.equal(await page.locator('#preview button').count(), 0);
+  } finally {
+    await browser.close();
+  }
+});
+
 await test('the journal honors language preferences and the public pages stay in English', async () => {
   const browser = await chromium.launch();
   try {

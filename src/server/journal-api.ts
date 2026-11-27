@@ -51,8 +51,8 @@ async function callTool(bucket: Bucket, owner: string, name: unknown, args: Reco
   }
   if (name === 'set_day_routes') {
     if (!trip) throw Error('טיול לא נמצא');
-    const counts = setDayRoutes(trip, args.date, args.routes);
-    if (counts.updated) await storeState(bucket, owner, journal.trips, journal.rev);
+    const counts = setDayRoutes(trip, args.date, args.routes, args.order);
+    if (counts.updated || counts.reordered) await storeState(bucket, owner, journal.trips, journal.rev);
     return counts;
   }
   if (name !== 'add_trip_stops') throw Error('Unknown tool');
@@ -146,8 +146,9 @@ export async function journalAPI(req: Request, bucket: Bucket, mode: 'web' | 'mc
             'Use the sources the traveler chooses. For photo evidence, search the actual photo library by local capture dates across albums. Google Drive and Google Photos are separate sources. Reuse authorized access and batch-read available timestamps and GPS. Photos and links are optional.',
             'For Google Maps bookmarks, list_google_pins first, then pass approved saved places in googlePins to add_trip_stops. Preserve the original save time only when the source identifies it. Use the verified local save date or the traveler’s chosen day. A save is not evidence of a visit.',
             'Read get_day for affected dates before writing. Count Live Photo pairs once. Group photo-only locations within 100 metres of a fixed pin on the same local day, even across separate bursts. Use the earliest capture for the pin coordinates and include captureTime when available. Compare against existing stops. Preserve distinct venues and revisit times. Use stable opaque refs so retries are safe.',
-            'After confirming the saved stop order, default to estimated pedestrian directions between consecutive stops, including across city boundaries. Honor travel modes tied to a specific leg and use road directions for known taxi rides. A day-level fare alone does not identify a leg. Call set_day_routes with verified network geometry and omit unavailable directions or unsupported travel modes.',
-            'Save approved stops to the owned trip. Keep remote purchases and uncertain venues off the route. Re-read changed days to verify the result. The write tool appends new stops; verify route order before claiming the route was rebuilt. Show what changed and open the private journal for review.'
+            'Work out the order before drawing paths. Preserve manual corrections and stated before/after rules. Distinguish a local purchase, photo, or ride time from a posting date or an unconfirmed reservation. For untimed venue visits, check opening hours for that branch, weekday and trip date, including holiday exceptions. Treat current hours as a clue for a historical date. Overlapping windows leave the order uncertain. Give the traveler’s recollection and timed evidence priority over proximity. Do not turn opening times into visit times.',
+            'Infer the order in chat from trip evidence and traveler rules. Read get_day, keep confirmed taxi pairs together, and pass previous and next stop IDs in set_day_routes.order together with verified directions for the new adjacent pairs. Honor travel modes tied to a specific leg and use road directions for known taxi rides. A day-level fare alone does not identify a leg. Call set_day_routes with verified network geometry and omit unavailable directions or unsupported travel modes.',
+            'Save approved stops to the owned trip. Keep remote purchases and uncertain venues off the route. Re-read changed days to verify the result. After appending stops, use set_day_routes for approved changes to the order and check the stored result. Show what changed and open the private journal for review.'
           ].join(' '),
           capabilities: {
             tools: {}

@@ -167,7 +167,7 @@ export const tools = [{
   }
 }, {
   name: 'set_day_routes',
-  description: 'Save network routes between adjacent stops on a saved day. Default to an estimated pedestrian route. Use road directions for a known taxi leg. Preserve legs with confirmed travel by other modes and omit unavailable directions. Supply same only for coincident stops. Use gap and an empty line only for an explicitly requested gap. Read get_day to verify the saved modes and vertex counts.',
+  description: 'Save the approved stop order and network routes between adjacent stops in one update. Read get_day before supplying an order; it may be omitted for routing-only writes. Default to an estimated pedestrian route. Use road directions for a known taxi leg. Preserve legs with confirmed travel by other modes and omit unavailable directions. Supply same only for coincident stops. Use gap and an empty line only for an explicitly requested gap. Read get_day to verify the saved modes and vertex counts.',
   annotations: {
     readOnlyHint: false,
     destructiveHint: true,
@@ -179,6 +179,15 @@ export const tools = [{
     properties: {
       tripId: { type: 'string' },
       date: { type: 'string', description: 'Local YYYY-MM-DD' },
+      order: {
+        type: 'object', additionalProperties: false,
+        description: 'Both lists contain every visit, pickup and drop-off ID for this date exactly once. Exclude origins, uncertain and remote records, and Google Pins. Preserve each taxi pair. Read the day again if its order has changed.',
+        properties: {
+          previous: { type: 'array', maxItems: 6500, uniqueItems: true, items: { type: 'string' }, description: 'Current ordered stop IDs from get_day.' },
+          next: { type: 'array', maxItems: 6500, uniqueItems: true, items: { type: 'string' }, description: 'Proposed order of the same IDs.' }
+        },
+        required: ['previous', 'next']
+      },
       routes: {
         type: 'array', maxItems: 200,
         items: {

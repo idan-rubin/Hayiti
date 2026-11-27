@@ -3,6 +3,8 @@
 import { readFileSync } from 'node:fs';
 import { distanceMeters, isRecord, point, safeDate, type Edge, type Point } from '../src/domain/core.ts';
 
+import { readDayOrder, type DayOrder } from '../src/domain/route-update.ts';
+
 type Mode = 'walk' | 'taxi';
 
 const maxPoints = 1000;
@@ -111,10 +113,11 @@ async function routedPath(mode: Mode, from: Point, to: Point): Promise<Pick<Edge
 async function main() {
   const plan: unknown = JSON.parse(readFileSync(0, 'utf8'));
   if (!isRecord(plan) || typeof plan.tripId !== 'string' || !plan.tripId.trim() || !Array.isArray(plan.days)) throw Error('Expected a tripId and days array on stdin.');
-  const days: { date: string; routes: Edge[] }[] = [];
+  const days: { date: string; routes: Edge[]; order?: DayOrder }[] = [];
   const cache = new Map<string, Pick<Edge, 'line' | 'm'> | null>();
   for (const day of plan.days) {
     if (!isRecord(day) || !safeDate(day.date) || !Array.isArray(day.legs)) throw Error('Expected a local date and legs array.');
+    const order = day.order === undefined ? undefined : readDayOrder(day.order);
     const routes: Edge[] = [];
     for (const leg of day.legs) {
       if (!isRecord(leg) || typeof leg.a !== 'string' || typeof leg.b !== 'string') throw Error('Expected adjacent stop IDs.');
@@ -130,7 +133,7 @@ async function main() {
       if (shape) routes.push({ a: leg.a, b: leg.b, type: mode, ...shape });
       else process.stderr.write('Keeping existing route for ' + day.date + ' ' + leg.a + ' → ' + leg.b + '\n');
     }
-    if (routes.length) days.push({ date: day.date, routes });
+    if (routes.length || order) days.push({ date: day.date, routes, ...(order ? { order } : {}) });
   }
   if (!days.length) throw Error('No usable directions to import.');
   console.log(JSON.stringify({ format: 'hayiti-routes/1', tripId: plan.tripId, days }));

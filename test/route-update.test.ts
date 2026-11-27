@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { cleanTrip } from '../src/domain/core.ts';
+import { routeStops } from '../src/domain/daily-route.ts';
 import { prepareRouteImport, setDayRoutes } from '../src/domain/route-update.ts';
 import { journalAPI } from '../src/server/journal-api.ts';
 import { loadState, storeState } from '../src/server/storage.ts';
@@ -83,4 +84,100 @@ await test('authenticated route writes are isolated, idempotent and verified by 
   const result = JSON.parse((await (await call('get_day', 'alice')).json()).result.content[0].text);
   assert.deepEqual(result.routes.map((route: { type: string; points: number }) => [route.type, route.points]),
     [['walk', 3], ['gap', 0], ['taxi', 3]]);
+});
+
+const order = { previous: ['cafe', 'pickup', 'dropoff'], next: ['pickup', 'dropoff', 'cafe'] };
+const afterRide = { a: 'dropoff', b: 'cafe', type: 'same', line: [] };
+
+await test('a new order retains the taxi ride and other days, dropping precisely the displaced links', () => {
+  const trip = example();
+  setDayRoutes(trip, date, [walking, cab, { a: 'cafe', b: 'pickup', type: 'walk', line: [b, bend, a] }]);
+  setDayRoutes(trip, end, [{ ...walking, b: 'park' }]);
+  const retained = trip.edges.filter(edge => edge.type === 'taxi' || edge.b === 'park');
+  const offRoute = structuredClone(trip.stops.filter(stop => stop.kind === 'remote' || stop.date === end));
+  setDayRoutes(trip, date, [], order);
+  assert.deepEqual(routeStops(trip, date).map(stop => stop.id), ['base', ...order.next]);
+  assert.deepEqual(trip.edges, retained);
+  assert.deepEqual(trip.stops.filter(stop => stop.kind === 'remote' || stop.date === end), offRoute);
+  // An order already in effect still allows a subsequent successful directions lookup.
+  setDayRoutes(trip, date, [afterRide], order);
+  const saved = structuredClone(trip);
+  assert.equal(setDayRoutes(trip, date, [afterRide], order).unchanged, 1);
+  assert.deepEqual(trip, saved);
+});
+
+await test('each order must match a complete day snapshot and keep adjacent taxi endpoints together', () => {
+  const trip = example();
+  const origin = { ...trip.stops[0], id: 'hotel', kind: 'origin' as const, rank: 0 };
+  trip.stops.push(origin, { ...trip.stops[0], id: 'unsure', kind: 'uncertain' });
+  const invalid = [
+    { previous: ['pickup', 'cafe', 'dropoff'], next: order.next },
+    { previous: order.previous, next: ['dropoff', 'pickup', 'cafe'] },
+    { previous: order.previous, next: ['pickup', 'cafe', 'dropoff'] },
+    { previous: order.previous, next: ['cafe', 'cafe', 'pickup'] },
+    { previous: ['cafe', 'pickup'], next: order.previous },
+    ...['park', 'hotel', 'base', 'remote', 'unsure'].map(extra => ({
+      previous: [...order.previous, extra], next: [...order.next, extra]
+    }))
+  ];
+  for (const invalidOrder of invalid) {
+    const before = structuredClone(trip);
+    assert.throws(() => setDayRoutes(trip, date, [], invalidOrder));
+    assert.deepEqual(trip, before);
+  }
+  const before = structuredClone(trip);
+  assert.throws(() => setDayRoutes(trip, date, [{ a: 'cafe', b: 'pickup', type: 'walk', line: [b, bend, a] }], order));
+  assert.deepEqual(trip, before);
+  setDayRoutes(trip, date, [], order);
+  assert.deepEqual(routeStops(trip, date).map(stop => stop.id), ['hotel', ...order.next]);
+});
+
+await test('equal ranks in a legacy day can be reordered while excluded records keep their rank', () => {
+  const trip = example();
+  for (const stop of trip.stops) stop.rank = 0;
+  setDayRoutes(trip, date, [], order);
+  assert.deepEqual(routeStops(cleanTrip(trip), date).map(stop => stop.id), ['base', ...order.next]);
+  assert.equal(trip.stops.find(stop => stop.id === 'remote')?.rank, 0);
+  assert.equal(trip.stops.find(stop => stop.id === 'park')?.rank, 0);
+});
+
+await test('a taxi recorded between ordinary stops also protects their order', () => {
+  const trip = example();
+  for (const stop of trip.stops) if (stop.id === 'pickup' || stop.id === 'dropoff') stop.kind = 'visit';
+  setDayRoutes(trip, date, [cab]);
+  const before = structuredClone(trip);
+  assert.throws(() => setDayRoutes(trip, date, [], { previous: order.previous, next: ['pickup', 'cafe', 'dropoff'] }));
+  assert.throws(() => setDayRoutes(trip, date, [{ ...cab, type: 'walk' }], order));
+  assert.deepEqual(trip, before);
+});
+
+await test('portable order previews validate every day before changing any ranks or geometry', () => {
+  const trip = example();
+  setDayRoutes(trip, date, [walking, cab]);
+  const before = structuredClone(trip);
+  const firstDay = { date, order, routes: [] };
+  const file = { tripId: trip.id, days: [firstDay] };
+  const plan = prepareRouteImport(trip, file);
+  assert.equal(plan.reorderedDays, 1);
+  assert.deepEqual(routeStops({ ...trip, stops: plan.stops }, date).map(stop => stop.id), ['base', ...order.next]);
+  assert.deepEqual(plan.edges, before.edges.filter(edge => edge.type === 'taxi'));
+  assert.deepEqual(trip, before);
+  assert.throws(() => prepareRouteImport(trip, { ...file, days: [firstDay, { date: end, order, routes: [] }] }));
+  assert.deepEqual(trip, before);
+});
+
+await test('an agent can persist a new order with no replacement geometry and safely retry', async () => {
+  const bucket = new MemoryBucket(), trip = example();
+  const revision = await storeState(bucket, 'alice', [trip], '');
+  const args = { tripId: trip.id, date, routes: [], order };
+  const save = () => journalAPI(new Request('https://example.test/mcp', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'set_day_routes', arguments: args } })
+  }), bucket, 'mcp', 'alice');
+  assert.ok(!(await (await save()).json()).result.isError);
+  const saved = await loadState(bucket, 'alice');
+  assert.notEqual(saved.rev, revision);
+  assert.deepEqual(routeStops(saved.trips[0], date).map(stop => stop.id), ['base', ...order.next]);
+  assert.ok(!(await (await save()).json()).result.isError);
+  assert.equal((await loadState(bucket, 'alice')).rev, saved.rev);
 });
