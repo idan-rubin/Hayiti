@@ -90,9 +90,11 @@ export function setDayRoutes(trip: Trip, date: unknown, routes: unknown, order?:
   const after = nextStops(stops);
   const oldNext = nextStops(before);
   if (reordered) {
+    // A ride already saved as a pair stays together. A pickup and drop-off saved apart can be brought together:
+    // pairing a pickup with another ride's drop-off would separate that ride, which this also refuses.
     for (const pickup of before.filter(stop => stop.kind === 'pickup')) {
       const oldDrop = oldNext.get(pickup.id), newDrop = after.get(pickup.id);
-      if ((oldDrop?.kind === 'dropoff' || newDrop?.kind === 'dropoff') && newDrop?.id !== oldDrop?.id) {
+      if (oldDrop?.kind === 'dropoff' && newDrop?.id !== oldDrop.id) {
         throw Error('נקודת האיסוף של המונית צריכה להופיע מיד לפני נקודת ההורדה שלה.');
       }
     }

@@ -181,3 +181,18 @@ await test('an agent can persist a new order with no replacement geometry and sa
   assert.ok(!(await (await save()).json()).result.isError);
   assert.equal((await loadState(bucket, 'alice')).rev, saved.rev);
 });
+
+await test('a pickup and drop-off saved apart can be brought together, and then stay together', () => {
+  const trip = example();
+  const ids = () => routeStops(trip, date).filter(stop => stop.kind !== 'origin').map(stop => stop.id);
+  // A visit was saved between the two ends of the ride.
+  for (const stop of trip.stops) {
+    if (stop.id === 'cafe') stop.rank = 3.5;
+  }
+  assert.deepEqual(ids(), ['pickup', 'cafe', 'dropoff']);
+  assert.deepEqual(setDayRoutes(trip, date, [], { previous: ['pickup', 'cafe', 'dropoff'], next: ['cafe', 'pickup', 'dropoff'] }),
+    { updated: 0, unchanged: 0, reordered: true });
+  assert.deepEqual(ids(), ['cafe', 'pickup', 'dropoff']);
+  assert.throws(() => setDayRoutes(trip, date, [], { previous: ['cafe', 'pickup', 'dropoff'], next: ['pickup', 'cafe', 'dropoff'] }));
+  assert.deepEqual(ids(), ['cafe', 'pickup', 'dropoff']);
+});
