@@ -1284,6 +1284,13 @@ await test('the mobile trip toolbar keeps the overview beside the daily actions 
       await overview.waitFor();
       for (const width of [320, 375, 390, 430]) {
         await page.setViewportSize({ width, height: 852 });
+        const [left, right] = await page.locator('#settings, #newTrip').evaluateAll(buttons =>
+          buttons.map(button => {
+            const { left, right, top } = button.getBoundingClientRect();
+            return { left, right, top };
+          }).sort((a, b) => a.left - b.left));
+        assert.equal(left.top, right.top);
+        assert.equal(right.left - left.right, 4, `${lang} ${width}px: trip settings and new trip spacing`);
         for (const pressed of [false, true]) {
           assert.equal(await overview.getAttribute('aria-pressed'), String(pressed));
           const boxes = await toolbar.locator('button:visible').evaluateAll(buttons => buttons.map(button => {
@@ -1308,13 +1315,11 @@ await test('the mobile trip toolbar keeps the overview beside the daily actions 
           assert.ok(boxes.every(box => box.left >= bounds.x - 1 && box.right <= bounds.x + bounds.width + 1));
           const leadingSpace = lang === 'he' ? bounds.x + bounds.width - boxes[0].right : boxes[0].left - bounds.x;
           assert.ok(Math.abs(leadingSpace) < 1);
-          const gap = await toolbar.evaluate(row => parseFloat(getComputedStyle(row).columnGap));
-          assert.ok(gap > 0 && gap <= 8);
           for (let i = 1; i < boxes.length; i++) {
             const previous = boxes[i - 1];
             const next = boxes[i];
             const space = lang === 'he' ? previous.left - next.right : next.left - previous.right;
-            assert.ok(Math.abs(space - gap) < 1, `${lang} ${width}px: expected ${gap}px between actions, got ${space}px`);
+            assert.ok(Math.abs(space - 4) < 1, `${lang} ${width}px: expected 4px between actions, got ${space}px`);
           }
           assert.equal(await page.locator('.mapcard #mapStyle').isVisible(), true);
           await overview.click();
