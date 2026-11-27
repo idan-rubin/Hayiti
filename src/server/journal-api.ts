@@ -121,7 +121,7 @@ export async function journalAPI(req: Request, bucket: Bucket, mode: 'web' | 'mc
           instructions: [
             'Start in chat. Read list_trips and reuse the matching trip. Resolve dates, destination and optional home base from authorized context. Ask only for missing details that affect the route.',
             'Use the sources the traveler chooses. For photo evidence, search the actual photo library by local capture dates across albums. Google Drive and Google Photos are separate sources. Reuse authorized access and batch-read available timestamps and GPS. Photos and links are optional.',
-            'Read get_day for affected dates before writing. Count Live Photo pairs once. Group nearby captures and compare against all pins for that day, including earlier visits to the same coordinates. Preserve distinct venues and revisit times. Use stable opaque refs so retries are safe.',
+            'Read get_day for affected dates before writing. Count Live Photo pairs once. Group photo-only locations within 100 metres of a fixed pin on the same local day, even across separate bursts. Compare against existing stops. Preserve distinct venues and revisit times. Use stable opaque refs so retries are safe.',
             'Save approved stops to the owned trip. Keep remote purchases and uncertain venues off the route. Re-read changed days to verify the result. The write tool appends new stops; verify route order before claiming the route was rebuilt. Show what changed and open the private journal for review.'
           ].join(' '),
           capabilities: {
