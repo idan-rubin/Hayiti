@@ -1418,7 +1418,6 @@ await test('the signed-in mobile header fits on one row and sign-out requires co
   }
 });
 
-// Answers the journal API from a bucket, signed in or not as each tab's own flag says.
 const hostBucket = (page: Page, bucket: MemoryBucket, signedIn: () => boolean, onWrite = () => {}) => hostJournal(page, async route => {
   const request = route.request();
   if (request.method() === 'POST') onWrite();

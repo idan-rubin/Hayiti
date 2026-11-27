@@ -143,7 +143,6 @@ export async function importCsv(txt: string, order?: DateOrder): Promise<ImportR
   const [heads, ...rows] = csvRows(txt);
   if (!heads) throw Error('קובץ ריק');
   const labels = heads.map(h => h.trim().toLowerCase());
-  // Candidate headers are listed by preference: the first one present in the file wins.
   const col = (...v: string[]) => {
     for (const candidate of v) {
       const index = labels.indexOf(candidate);

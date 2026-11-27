@@ -1,4 +1,3 @@
-// Shared by the bilingual editor and the English-language MCP interface.
 export const journalErrors: Readonly<Record<string, string>> = {
   "יש לבחור נקודה אחרת במפה עבור האזור המשוער.": "Choose a different point on the map for the approximate area.",
   "התחנה נמצאת בין האיסוף להורדה של המונית. יש למקם אותה לפני האיסוף או אחרי ההורדה.": "This stop falls between the taxi pickup and drop-off. Place it before the pickup or after the drop-off.",

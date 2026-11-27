@@ -64,7 +64,6 @@ export function createDateReel(reel: HTMLElement, menu: HTMLSelectElement, progr
     jump(index);
   });
   menu.addEventListener('change', () => jump(menu.selectedIndex));
-  // `notes` adds a short remark to each date in the list, such as how many stops the day holds.
   return (days: string[], selected: string, notes: string[] = []) => {
     dates = days;
     const labels = days.map(day => format(day, 'full'));

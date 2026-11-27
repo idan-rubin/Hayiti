@@ -276,7 +276,6 @@ await test('an agent can persist a new order with no replacement geometry and sa
 await test('a pickup and drop-off saved apart can be brought together, and then stay together', () => {
   const trip = example();
   const ids = () => routeStops(trip, date).filter(stop => stop.kind !== 'origin').map(stop => stop.id);
-  // A visit was saved between the two ends of the ride.
   for (const stop of trip.stops) {
     if (stop.id === 'cafe') stop.rank = 3.5;
   }

@@ -51,12 +51,11 @@ interface MapMarker {
   openPopup(): MapMarker;
   on(type: 'click', callback: () => void): MapMarker;
 }
-/** A tile of the street map, of any kind. The library counts the views that use it, and none do once it has left the view. */
+/** MapLibre tile references; uses === 0 means the tile has left the view. */
 interface StreetTile {
   state: string;
   uses: number;
 }
-/** The vector street map that the Leaflet layer draws. */
 interface StreetMap {
   on(type: 'style.load', callback: () => void): void;
   on(type: 'error', callback: (event: {

@@ -1,6 +1,5 @@
 import { isRecord } from '../domain/core.ts';
 
-/** The street map under the journal's pins: OpenFreeMap vector tiles, with place names in the journal's language. */
 const styleURL = 'https://tiles.openfreemap.org/styles/liberty';
 
 // The credit line is written here. The style and its tile sources carry their own credit text, which the
@@ -13,7 +12,7 @@ export type Basemap = 'streets' | 'satellite' | 'terrain';
 export function isBasemap(value: string): value is Basemap {
   return value === 'streets' || value === 'satellite' || value === 'terrain';
 }
-/** Why the street map is missing, or null when it is drawn. */
+/** Current basemap failure; null when no failure is reported. */
 export type StreetMapProblem = 'unreachable' | 'unsupported' | null;
 
 /** A label that prefers the journal's language and falls back to the name used locally. */
@@ -45,7 +44,7 @@ export function prepareStyle(style: unknown, language: Language): string[] {
   return names;
 }
 
-// The hosted journal downloads the map library as these files, in this order. The portable journal carries them.
+// Hosted builds load MapLibre before its Leaflet bridge; portable builds embed both.
 const libraryFiles = ['vendor/maplibre-gl.js', 'vendor/leaflet-maplibre-gl.js'];
 
 function download(file: string) {
@@ -90,7 +89,7 @@ function startStreets(map: JournalMap, language: () => Language, report: (proble
   };
   async function load() {
     if (layer || loading) return;
-    // The library draws with the second version of WebGL only.
+    // MapLibre requires WebGL2.
     supportsWebGL ??= Boolean(document.createElement('canvas').getContext('webgl2'));
     if (!supportsWebGL) {
       report('unsupported');
@@ -158,7 +157,6 @@ function startStreets(map: JournalMap, language: () => Language, report: (proble
     });
   }
   function reconnect() {
-    // Streets that failed to load are drawn again from the start.
     if (layer && (sourceFailed || tilesMissing())) {
       map.removeLayer(layer);
       layer = street = null;

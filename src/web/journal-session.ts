@@ -62,10 +62,7 @@ export class JournalSession {
     this.select(trips.find(trip => trip.id === preferredId) ?? trips[0], this.day);
   }
 
-  /**
-   * Another tab saved or removed the guest draft. Show its version so this tab never writes over it with an
-   * older one. The revision changes, so a form opened on the older version says so before it saves.
-   */
+  /** Adopt another tab's draft and change the revision so open forms detect the conflict. */
   adoptGuestDraft() {
     if (this.mode !== 'guest' || this.saving) return false;
     this.takeDraft();
@@ -162,8 +159,7 @@ export class JournalSession {
   }
 
   private async apply(edit: () => void): Promise<EditResult> {
-    // Another tab saved since this one last looked. Its version is shown, and the edit is not applied to a
-    // draft the traveler has not seen.
+    // Adopt a newer draft without applying an edit based on the old version.
     if (this.mode === 'guest' && this.storage.guestSnapshot() !== this.draftSeen) {
       this.takeDraft();
       return 'conflict';

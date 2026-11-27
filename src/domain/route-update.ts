@@ -156,7 +156,7 @@ function prepareTaxiCorrections(trip: Trip, date: string, routes: unknown[]) {
   return { trip: { ...trip, stops: stopsAfter, edges: trip.edges.filter(edge => !removed.has(edge)) }, correctedRides };
 }
 
-/** Write an agent-supplied order and routes together after checking them against the stored day. */
+/** Validate the complete order and route update before mutating the trip. */
 export function setDayRoutes(target: Trip, date: unknown, routes: unknown, order?: unknown) {
   if (!safeDate(date) || date < target.start || date > target.end) throw Error('תאריך המסלול מחוץ לטיול');
   if (!Array.isArray(routes) || routes.length > 200) throw Error('ניתן לייבא עד 200 מקטעים ביום');
@@ -265,13 +265,13 @@ export function restoreMissingRoutes(trip: Trip, backup: Trip, restoredIds: Read
     if (!sameRouteEndpoint(old.from, pair.from) || !sameRouteEndpoint(old.to, pair.to)) continue;
     let valid: Edge;
     try {
-      // Older backups used zero when only the path, without a measured distance, had been saved.
       if (!edge.line.length && (edge.type === 'taxi' || edge.type === 'mixed')) {
         // An older journal may know the mode without recording a path.
         if (!Number.isFinite(edge.m)) continue;
         valid = { ...edge, a: pair.from.id, b: pair.to.id };
       } else {
         const mode = edge.type === 'mixed' ? 'taxi' : edge.type;
+        // A zero legacy distance means the path supplies the length.
         valid = readRoute({ ...edge, type: mode, m: edge.m || undefined }, pair.from, pair.to);
         valid.type = edge.type;
       }

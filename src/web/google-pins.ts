@@ -8,7 +8,6 @@ export function assignGooglePinDay(pin: GooglePin, day: string) {
 }
 
 type AssignDay = (pin: GooglePin, day: string) => void;
-/** What the traveler can do from a pin's popup. A shared route offers neither. */
 export interface PinActions {
   assignDay: AssignDay;
   remove(pin: GooglePin): void;
@@ -59,7 +58,6 @@ function pinPopup(trip: Trip, pin: GooglePin, actions?: PinActions) {
     select.value = pin.date ?? '';
     select.onchange = () => assignDay(pin, select.value);
     label.append(select);
-    // A bookmark saved by mistake, or with the wrong place, has no other way out of the trip.
     const removal = document.createElement('button');
     removal.type = 'button';
     removal.textContent = he ? 'הסרה מהטיול' : 'Remove from trip';
