@@ -70,9 +70,9 @@ A photo knows the place but not what you did there. A charge knows what you boug
 
 > Map my trip to Tel Aviv last week. I stayed near the market. Use my photos, receipts and calendar to work out where I went each day.
 
-ChatGPT asks for anything missing, such as the dates or where you stayed. It cross-checks the sources you authorize, shows you the stops, and saves the ones you approve. Open the web app with the same account to see your days. ChatGPT accesses your photos through its app, or through the browser if needed, with your guidance. From a photo, hayiti saves only the capture time and location, not the picture. For purchases, ChatGPT can use its [Finances tab](https://chatgpt.com/finances/).
+ChatGPT asks for anything missing, such as the dates or where you stayed. It cross-checks the sources you authorize, shows you the stops, and saves the ones you approve. Open the web app with the same account to see your days. ChatGPT accesses your photos through its app, or through the browser if needed, with your guidance. ChatGPT can map a photo from its capture time and coordinates. If you attach the photo to a stop yourself, hayiti saves the image in your private journal. Shared routes leave it out. For purchases, ChatGPT can use its [Finances tab](https://chatgpt.com/finances/).
 
-**Without an account.** In the web app or the portable journal, open **Sources and import**, copy the sync request into your conversation, and import the file ChatGPT returns under **Files**.
+**Without an account.** In the web app or the portable journal, choose **New trip** and enter a name and dates. Open **Sources and import**, select the sources to include, and choose **Copy sync request**. Paste the request into your conversation, then import the file ChatGPT returns under **Files**.
 
 **By hand.** Choose **New trip**, pick a day, choose **+ Stop** and enter a place. You can also import a transaction file (`.csv`), a calendar file (`.ics`) or an email (`.eml`).
 
