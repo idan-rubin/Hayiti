@@ -10,7 +10,7 @@ An itinerary app keeps the plan. hayiti recovers what happened.
 
 [Open the web app](https://hayiti-beta.cocoacoati256.chatgpt.site) · [Download the portable journal](https://hayiti-beta.cocoacoati256.chatgpt.site/Hayiti.zip) · [Read the story: “Hey Dot, Can You Map Where I Went?”](https://mrrubin.substack.com/p/hey-dot-can-you-map-where-i-went)
 
-*hayiti (הייתי) is Hebrew for “I was,” as in “I was here.”*
+*hayiti (הייתי) is Hebrew for “I was here.”*
 
 ## The AI does the heavy lifting
 
