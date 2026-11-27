@@ -76,6 +76,22 @@ await test('a home base that cannot be placed is refused, and no trip is saved w
   assert.deepEqual((await loadState(env.BUCKET, 'alice')).trips, []);
 });
 
+await test('adding stops ignores redundant home coordinates and keeps the existing home', async () => {
+  const { tool, trip, env } = fixture();
+  const homeXY = [51.92, 4.48];
+  await tool('add_trip_stops', {
+    tripId: trip.id, start: trip.start, end: trip.end, home: 'Guesthouse', homeXY, stops: []
+  });
+  const response = await (await tool('add_trip_stops', {
+    tripId: trip.id, home: 'Old address', homeXY: [139.69, 35.68], stops: [trip.stops[0]]
+  })).json();
+  assert.equal(JSON.parse(response.result.content[0].text).added, 1);
+  const [saved] = (await loadState(env.BUCKET, 'alice')).trips;
+  assert.equal(saved.home, 'Guesthouse');
+  assert.deepEqual(saved.homeXY, homeXY);
+  assert.deepEqual(saved.stops.map(stop => stop.id), [trip.stops[0].id]);
+});
+
 await test('owner-only reads, dated source outcomes, and duplicate writes through the MCP endpoint', async () => {
   const {
     env,
