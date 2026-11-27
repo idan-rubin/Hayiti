@@ -1,4 +1,4 @@
-import { cleanTrip, isRecord, mergeStops, type Trip } from '../domain/core.ts';
+import { cleanTrip, isRecord, type Trip } from '../domain/core.ts';
 
 export const guestKey = 'hayiti-unsigned-journal';
 const attemptsKey = 'hayiti-guest-merge';
@@ -151,15 +151,12 @@ export function writeGuest(trips: Trip[]) {
   if (covered) requestGuestMerge(true);
 }
 
-// Test the extra space the normalized backup needs without replacing the live draft.
-export function checkGuestBackup(trips: Trip[], backup: Trip) {
+// Test the extra space required by the same projected trip shown in the backup preview.
+export function checkGuestBackup(trips: Trip[], restored: Trip) {
   const projected = [...trips];
-  const index = projected.findIndex(trip => trip.id === backup.id);
-  if (index < 0) projected.push(backup);
-  else {
-    projected[index] = structuredClone(projected[index]);
-    mergeStops(projected[index], backup.stops);
-  }
+  const index = projected.findIndex(trip => trip.id === restored.id);
+  if (index < 0) projected.push(restored);
+  else projected[index] = restored;
   const probe = 'hayiti-guest-space';
   try {
     const current = localStorage.getItem(guestKey);

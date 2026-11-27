@@ -1,4 +1,5 @@
 import { sources, reportSources, statesBySource } from '../domain/core.ts';
+export const dailyGooglePinPreviewLimit = 20;
 const stopShape = {
   type: 'object',
   properties: {
@@ -81,7 +82,7 @@ export const tools = [{
   }
 }, {
   name: 'get_day',
-  description: 'Read one day of an owned trip for reconciling events and visits.',
+  description: `Read one day of an owned trip for reconciling events and visits. googlePins previews up to ${dailyGooglePinPreviewLimit} bookmarks and googlePinCount gives the total. Fetch the rest with list_google_pins using the same date and an offset equal to the number already received.`,
   annotations: {
     readOnlyHint: true,
     destructiveHint: false,
@@ -100,8 +101,21 @@ export const tools = [{
     required: ['tripId', 'date']
   }
 }, {
+  name: 'list_google_pins',
+  description: 'Read up to 200 saved Google Pins with the total for the selection. Supply date to read only that day. Omit date to include the whole trip and unassigned pins. Pass offset to continue the same selection.',
+  annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  inputSchema: {
+    type: 'object',
+    properties: {
+      tripId: { type: 'string' },
+      date: { type: 'string', format: 'date', description: 'Assigned trip day in local YYYY-MM-DD.' },
+      offset: { type: 'integer', minimum: 0, description: 'Number of matching pins to skip. Omit to start at the first pin.' }
+    },
+    required: ['tripId']
+  }
+}, {
   name: 'add_trip_stops',
-  description: 'Create a dated trip or append stops the traveler has chosen to save. Supply a title, start and end dates for a new trip. Save only the place and itinerary details approved by the traveler. Repeating a stop with the same source reference on the same day skips the duplicate.',
+  description: 'Create a dated trip, append visits, or save Google Maps bookmarks in googlePins. For a bookmarks-only import, send stops: []. Reuse the original bookmark ID so removals are respected; previouslyRemoved counts bookmarks the traveler chose to leave out. Supply a title, start and end dates for a new trip. Save only the place and itinerary details approved by the traveler. Repeating a stop with the same source reference on the same day skips the duplicate.',
   annotations: {
     readOnlyHint: false,
     destructiveHint: false,
@@ -131,6 +145,21 @@ export const tools = [{
         description: 'Optional verified latitude and longitude of the traveler-approved home base for a new trip.',
         minItems: 2,
         maxItems: 2
+      },
+      googlePins: {
+        type: 'array', maxItems: 200,
+        description: 'Saved places independent of all visits and routes. Reuse the same opaque ID for a Google place on every import. Sending a saved ID again with a corrected name or location updates it. A place at [0, 0] is refused.',
+        items: {
+          type: 'object', additionalProperties: false,
+          properties: {
+            id: { type: 'string', minLength: 1, maxLength: 180 },
+            name: { type: 'string', minLength: 1, maxLength: 160 },
+            xy: { ...stopShape.properties.xy, minItems: 2, maxItems: 2 },
+            date: { type: 'string', description: 'Assigned trip day (local YYYY-MM-DD), from the traveler or a verified local save date. Omit when unknown. A day outside the trip is not kept, and the reply counts it in datesOutsideTrip.' },
+            savedAt: { type: 'string', description: 'Optional source-reported date saved, YYYY-MM-DD or ISO timestamp with offset. Omit for a modification, export, or visit date. Provide date separately if a UTC timestamp can be converted to a verified local day.' }
+          },
+          required: ['id', 'name', 'xy']
+        }
       },
       sourceChecks: checkSchema,
       stops: {

@@ -1,5 +1,9 @@
 import { language } from './language.ts';
 export const messages: Record<string, string> = {
+  "סוג מפה": "Map style",
+  "רחובות": "Streets",
+  "לוויין": "Satellite",
+  "שטח": "Terrain",
   "סוג מקטע או תוואי לא תקין": "Invalid travel mode or route geometry.",
   "מקטע ללא תנועה אינו יכול להכיל תוואי או מרחק": "A gap or same-place segment must have an empty path and zero distance.",
   "התחנות מרוחקות מכדי לסמן אותן כאותו מקום": "These stops are too far apart to mark them as the same place.",
@@ -201,6 +205,8 @@ export const messages: Record<string, string> = {
   "טיול חדש": "New trip",
   "＋ תחנה": "＋ Stop",
   "מקורות וייבוא": "Sources and import",
+  "מקורות": "Sources",
+  "סדר הליכה": "Sort stops",
   "הצע סדר הליכה": "Suggest walking order",
   "מסלול היום": "Today's route",
   "תאריך המסלול": "Route date",

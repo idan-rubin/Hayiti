@@ -1,20 +1,22 @@
 import { element as $, errorMessage } from './dom.ts';
 import { member, reportSources, statesBySource, validOutcome, isRecord } from '../domain/core.ts';
-import type { Trip, Stop, Source, CheckStatus, Point, MergeResult } from '../domain/core.ts';
+import type { Trip, Stop, Source, CheckStatus, Edge, GooglePin, GooglePinResult, Point, MergeResult } from '../domain/core.ts';
 import type { ImportResult } from '../domain/importers.ts';
 import { language, locale, bindLanguageControl } from './language.ts';
 import { displayTripTitle, messages, t, quantity } from './journal-messages.ts';
 import { enableSharing } from './share-ui.ts';
 import { routeStops, indexEdges, offRoute, suggest, walkingStats } from '../domain/daily-route.ts';
 import { createDateReel } from './date-reel.ts';
-import { cleanTrip, cleanStop, mergeStops, combineEvidence, journalCharacterLimit } from '../domain/core.ts';
-import { importCsv, importIcs, pastedStop } from '../domain/importers.ts';
+import { cleanTrip, cleanStop, mergeGooglePins, removeGooglePin, restoreGooglePin, mergeStops, combineEvidence, journalCharacterLimit } from '../domain/core.ts';
+import { importEvidencePackage, prepareTripBackup, importCsv, importIcs, pastedStop } from '../domain/importers.ts';
 import { checkGuestBackup, discardGuest, guestKey, guestMergeRequested, requestGuestMerge, tripsWaitingInTab } from './guest-draft.ts';
 import { prepareRouteImport } from '../domain/route-update.ts';
 import { JournalSession, localToday } from './journal-session.ts';
 import { preparePhoto } from './photos.ts';
 import { ask, clearError, showError } from './confirm.ts';
-import { addStreetMap, type StreetMapProblem } from './street-map.ts';
+import { projectMapPoints, wrapLongitude } from './map-longitudes.ts';
+import { drawGooglePins, assignGooglePinDay, type PinActions } from './google-pins.ts';
+import { addStreetMap, isBasemap, type StreetMapProblem } from './street-map.ts';
 import sampleTrip from '../../public/sample-trip.json' with { type: 'json' };
 const hebrewLabels = Object.fromEntries(Object.entries(messages).map(([he, en]) => [en, he]));
 bindLanguageControl(hebrewLabels, refreshLanguage);
@@ -122,9 +124,17 @@ const overlay = L.layerGroup().addTo(map);
 const rows = new Map<string, HTMLElement>(),
   marks = new Map<string, MapMarker>();
 let popupFor = '';
+let overviewTripId = '';
 let routeBounds = L.latLngBounds([]),
   fitFrame = 0;
-function fitDailyRoute() {
+// Leave room for the basemap selector at the top of the map.
+const mapControls = document.querySelector<HTMLElement>('.map-controls');
+function controlsBand() {
+  return mapControls?.offsetHeight ? mapControls.offsetTop + mapControls.offsetHeight + 6 : 0;
+}
+// Leaflet reads this shared pair when a popup opens, including markers created while the map was hidden.
+const popupOptions: PopupOptions = { autoPanPaddingTopLeft: [8, 8] };
+function fitRoute() {
   if (fitFrame) return;
   fitFrame = requestAnimationFrame(() => {
     fitFrame = 0;
@@ -133,6 +143,8 @@ function fitDailyRoute() {
       clientHeight: height
     } = map.getContainer();
     if (!width || !height) return;
+    const controlHeight = controlsBand();
+    popupOptions.autoPanPaddingTopLeft[1] = controlHeight + 8;
     map.stop();
     map.invalidateSize({
       pan: false,
@@ -149,7 +161,8 @@ function fitDailyRoute() {
     } else {
       const margin = Math.min(36, Math.round(Math.min(width, height) * .12));
       map.fitBounds(routeBounds, {
-        padding: [margin, margin],
+        paddingTopLeft: [margin, margin + controlHeight],
+        paddingBottomRight: [margin, margin],
         maxZoom: 16,
         animate: false
       });
@@ -162,7 +175,7 @@ function fitDailyRoute() {
     }
   });
 }
-new ResizeObserver(fitDailyRoute).observe(map.getContainer());
+new ResizeObserver(fitRoute).observe(map.getContainer());
 function points(v: string): Point | null {
   if (!v?.trim()) return null;
   const a = v.split(/[,;\s]+/).filter(Boolean).map(Number);
@@ -186,12 +199,18 @@ function showStreetMapNote() {
   if (!streetMapProblem) delete container.dataset.note;
   else container.dataset.note = streetMapProblem === 'unsupported'
     ? ui('This browser cannot draw the street map. Pins and routes still appear.', 'הדפדפן הזה אינו יכול לצייר את מפת הרחובות. הסיכות והמסלולים עדיין מוצגים.')
-    : ui('The street map could not load. Pins and routes still appear.', 'מפת הרחובות לא נטענה. הסיכות והמסלולים עדיין מוצגים.');
+    : $('mapStyle').value === 'streets'
+      ? ui('The street map could not load. Pins and routes still appear.', 'מפת הרחובות לא נטענה. הסיכות והמסלולים עדיין מוצגים.')
+      : ui('The map background could not load. Pins and routes still appear.', 'רקע המפה לא נטען. הסיכות והמסלולים עדיין מוצגים.');
 }
-const relabelStreetMap = addStreetMap(map, () => language, problem => {
+const basemap = addStreetMap(map, () => language, problem => {
   streetMapProblem = problem;
   showStreetMapNote();
 });
+$('mapStyle').onchange = () => {
+  const value = $('mapStyle').value;
+  if (isBasemap(value)) basemap.select(value);
+};
 const sourceNames = {
   finances: 'Finances',
   gmail: 'Gmail',
@@ -285,6 +304,7 @@ function showConnections() {
 }
 function render() {
   const { trip, day } = session;
+  if (trip?.id !== overviewTripId) overviewTripId = '';
   showConnections();
   $('title').textContent = trip ? displayTripTitle(trip.title) : t('הטיולים שלי');
   $('range').textContent = trip ? rangeDate(trip.start) + t(' עד ') + rangeDate(trip.end) + (trip.home ? t(' · יציאה מ') + trip.home : '') : t('אפשר להתחיל מטיול חדש או לייבא טיול קיים.');
@@ -297,14 +317,14 @@ function render() {
     const count = trip?.stops.filter(stop => stop.date === date && stop.kind !== 'origin' && !offRoute(stop)).length ?? 0;
     return count ? stopCount(count) : '';
   }));
-  $('dayTitle').hidden = !!trip;
   document.body.classList.toggle('no-trip', !trip);
   $('welcome').hidden = !!trip || !!sharedRoute || !journalReady;
   draw();
 }
 const stopCount = (count: number) => count === 1 ? t('תחנה אחת') : count + t(' תחנות');
-const setDates = createDateReel($('dayReel'), $('tripDate'), dateLabel, next => {
-  if (next === session.day) return;
+const setDates = createDateReel($('dayReel'), $('tripDate'), $('dayProgress'), dateLabel, next => {
+  if (next === session.day && !overviewTripId) return;
+  overviewTripId = '';
   session.select(session.trip, next);
   selected = '';
   endHint();
@@ -336,111 +356,224 @@ function showDailyStats(stats: ReturnType<typeof walkingStats>) {
   const leg = stats.longest;
   $('longestWalk').textContent = stats.walkingLegs > 1 && leg ? t('מקטע ההליכה הארוך במסלול המשוער הוא מ') + leg.from + t(' ל') + leg.to + t(', כ־') + distanceLabel(leg.meters) + '.' : '';
 }
+function openMapDay(date: string) {
+  overviewTripId = '';
+  session.select(session.trip, date);
+  renderSelection();
+  viewList(false);
+}
+
+$('wholeTrip').onclick = () => {
+  if (!session.trip) return;
+  overviewTripId = overviewTripId ? '' : session.trip.id;
+  endHint();
+  renderSelection();
+};
+function appendStopRow(s: Stop, i: number, list: Stop[], number: string) {
+  const li = dom('li', undefined, 'stop');
+  li.classList.toggle('activeStop', selected === s.id);
+  rows.set(s.id, li);
+  if (s.xy) {
+    const locate = button(number, () => reveal(s.id, 'pin'));
+    locate.className = 'num';
+    locate.setAttribute('aria-label', ui('Show on map: ', 'הצגה במפה: ') + s.name);
+    li.append(locate);
+  } else li.append(dom('span', number, 'num'));
+  const col = dom('div');
+  const open = sharedRoute ? dom('strong', s.name) : button(s.name, () => {
+    if (s.id === 'base') {
+      openSettings(false);
+      return;
+    }
+    openStop(s);
+  });
+  open.className = 'stopname';
+  col.append(open);
+  const hints = [s.time, s.address, s.band, s.approx ? t('מיקום משוער') : '', s.xy ? '' : t('ללא סיכה')].filter(Boolean);
+  col.append(dom('div', hints.join(' · '), 'meta'));
+  const evidence = [...(s.sources || []).map(k => t(label[k])), s.count ? quantity(s.count, ' חיובים', 'charge', 'charges') : '', s.photos?.length ? quantity(s.photos.length, ' תמונות', 'photo', 'photos') : ''].filter(Boolean).join(' · ');
+  if (evidence) col.append(dom('span', evidence, 'src'));
+  if (s.notes) col.append(dom('div', s.notes, 'meta'));
+  const actions = dom('div', undefined, 'tools');
+  if (s.kind !== 'origin') {
+    for (const [sign, delta] of [['↑', -1], ['↓', 1]] as const) {
+      const b = button(sign, () => void move(s, delta));
+      b.setAttribute('aria-label', delta < 0 ? t('הקדמת ') + s.name : t('דחיית ') + s.name);
+      b.disabled = !list[i + delta] || list[i + delta].kind === 'origin';
+      actions.append(b);
+    }
+  }
+  li.append(col, actions);
+  $('stops').append(li);
+}
+function addStopMarker(s: Stop, xy: Point, number: string, overview: boolean) {
+  const keys = (s.sources || []).filter(k => Object.hasOwn(types, k));
+  const primary = keys[0];
+  const badge = s.kind !== 'origin' && primary ? '<span class="pin-source" style="background:' + types[primary][1] + '">' + pinSymbol(primary) + '</span>' : '';
+  const description = [s.name, ...(overview ? [dateLabel(s.date)] : []), ...keys.map(k => k === 'card' ? ui('Transaction', 'עסקה') : t(label[k]))].join(' · ');
+  const icon = L.divIcon({
+    className: 'pin ' + (s.kind === 'origin' ? 'home ' : '') + (s.approx ? 'soft' : ''),
+    html: s.kind === 'origin' ? '⌂' : number + badge,
+    iconSize: [28, 28],
+    iconAnchor: [14, 14]
+  });
+  const mark = L.marker(xy, {
+    icon,
+    title: description,
+    alt: description
+  }).addTo(overlay);
+  mark.bindPopup(() => {
+    const content = dom('div');
+    content.append(dom('strong', s.name), dom('div', [s.time, s.address].filter(Boolean).join(' · ')));
+    if (keys.length) content.append(dom('div', keys.map(k => types[k][0] + ' ' + (k === 'card' ? ui('Transaction', 'עסקה') : t(label[k]))).join(' · '), 'popup-sources'));
+    if (overview) content.append(button(dateLabel(s.date), () => openMapDay(s.date)));
+    else if (!sharedRoute) content.append(button(ui('Edit details', 'עריכת הפרטים'), () => {
+      map.closePopup();
+      if (s.id === 'base') openSettings(false);
+      else openStop(s);
+    }));
+    return content;
+  }, popupOptions);
+  if (!overview) {
+    mark.on('click', () => reveal(s.id, 'row'));
+    marks.set(s.id, mark);
+  }
+}
+
+function drawLeg(previous: Point, stop: Point, edge: Edge | undefined, locate: (p: Point) => Point) {
+  if (edge?.type !== 'same') {
+    const line = (edge?.line?.length ? edge.line : [previous, stop]).map(locate);
+    const taxi = edge?.type === 'taxi';
+    L.polyline(line, {
+      pane: taxi ? 'taxiRoutes' : 'overlayPane',
+      color: taxi ? '#b96331' : '#267957',
+      weight: edge?.type === 'walk' ? 5 : 3,
+      dashArray: taxi ? '9 9' : edge?.type === 'walk' ? null : '5 7',
+      opacity: taxi ? 1 : .85
+    }).addTo(overlay);
+    routeBounds.extend(line);
+  }
+}
+function drawRouteDay(list: Stop[], edges: Map<string, Edge>, locate: (p: Point) => Point, overview: boolean, showBase: boolean) {
+  for (const [i, stop] of list.entries()) {
+    const number = stop.kind === 'origin' ? '⌂' : String(i + (list[0]?.kind === 'origin' ? 0 : 1));
+    if (!overview) appendStopRow(stop, i, list, number);
+    if (!stop.xy) continue;
+    const xy = locate(stop.xy);
+    routeBounds.extend(xy);
+    if (stop.id !== 'base' || showBase) addStopMarker(stop, xy, number, overview);
+    const previous = list[i - 1];
+    if (previous?.xy) drawLeg(previous.xy, stop.xy, edges.get(previous.id + '|' + stop.id), locate);
+  }
+}
+function appendOverviewDay(date: string, stops: number, googlePins: number) {
+  const entry = button(dateLabel(date), () => openMapDay(date));
+  entry.className = 'overview-day';
+  entry.dataset.day = date;
+  const counts = [];
+  if (stops) counts.push(stopCount(stops));
+  if (googlePins) counts.push(quantity(googlePins, ' סיכות Google', 'Google Pin', 'Google Pins'));
+  if (counts.length) entry.append(dom('small', counts.join(' · ')));
+  const row = dom('li');
+  row.append(entry);
+  $('stops').append(row);
+}
+
 function draw() {
   const { trip, day } = session;
-  const list = routeStops(trip, day, t('נקודת מוצא')),
-    edges = indexEdges(trip);
-  showDailyStats(walkingStats(list, edges));
+  const overview = !!trip && overviewTripId === trip.id;
+  const edges = indexEdges(trip);
+  const pins = (trip?.googlePins ?? []).filter(pin => overview || pin.date === day);
+  const pinsPerDay = new Map<string, number>();
+  for (const pin of pins) if (pin.date) pinsPerDay.set(pin.date, (pinsPerDay.get(pin.date) ?? 0) + 1);
+
+  const days = overview
+    ? [...new Set([...trip.stops.filter(stop => !offRoute(stop)).map(stop => stop.date), ...pinsPerDay.keys()])].sort()
+    : [day];
+  const routes = days.map(date => {
+    const stops = routeStops(trip, date, t('נקודת מוצא'));
+    // A saved-place-only day has no journey back to the default home base.
+    return { date, stops: overview && stops.length === 1 && stops[0].id === 'base' ? [] : stops };
+  });
+  const visiblePoints = pins.map(pin => pin.xy);
+  for (const { stops } of routes) {
+    for (const [i, stop] of stops.entries()) {
+      if (!stop.xy) continue;
+      visiblePoints.push(stop.xy);
+      const previous = stops[i - 1];
+      const edge = previous?.xy && edges.get(previous.id + '|' + stop.id);
+      if (edge) for (const xy of edge.line) visiblePoints.push(xy);
+    }
+  }
+  // Empty days keep the rest of the trip in view.
+  if (!visiblePoints.length && trip) {
+    for (const stop of trip.stops) if (stop.xy) visiblePoints.push(stop.xy);
+    if (trip.homeXY) visiblePoints.push(trip.homeXY);
+  }
+  const locate = projectMapPoints(visiblePoints);
   $('stops').replaceChildren();
   overlay.clearLayers();
   routeBounds = L.latLngBounds([]);
   rows.clear();
   marks.clear();
   popupFor = '';
-  let prev = null;
-  for (const [i, s] of list.entries()) {
-    const li = dom('li', undefined, 'stop');
-    li.classList.toggle('activeStop', selected === s.id);
-    rows.set(s.id, li);
-    const number = s.kind === 'origin' ? '⌂' : String(i + (list[0]?.kind === 'origin' ? 0 : 1));
-    if (s.xy) {
-      const locate = button(number, () => reveal(s.id, 'pin'));
-      locate.className = 'num';
-      locate.setAttribute('aria-label', ui('Show on map: ', 'הצגה במפה: ') + s.name);
-      li.append(locate);
-    } else li.append(dom('span', number, 'num'));
-    const col = dom('div');
-    const open = sharedRoute ? dom('strong', s.name) : button(s.name, () => {
-      if (s.id === 'base') {
-        openSettings(false);
-        return;
-      }
-      openStop(s);
-    });
-    open.className = 'stopname';
-    col.append(open);
-    const hints = [s.time, s.address, s.band, s.approx ? t('מיקום משוער') : '', s.xy ? '' : t('ללא סיכה')].filter(Boolean);
-    col.append(dom('div', hints.join(' · '), 'meta'));
-    const evidence = [...(s.sources || []).map(k => t(label[k])), s.count ? quantity(s.count, ' חיובים', 'charge', 'charges') : '', s.photos?.length ? quantity(s.photos.length, ' תמונות', 'photo', 'photos') : ''].filter(Boolean).join(' · ');
-    if (evidence) col.append(dom('span', evidence, 'src'));
-    if (s.notes) col.append(dom('div', s.notes, 'meta'));
-    const actions = dom('div', undefined, 'tools');
-    if (s.kind !== 'origin') {
-      for (const [sign, delta] of [['↑', -1], ['↓', 1]] as const) {
-        const b = button(sign, () => void move(s, delta));
-        b.setAttribute('aria-label', delta < 0 ? t('הקדמת ') + s.name : t('דחיית ') + s.name);
-        b.disabled = !list[i + delta] || list[i + delta].kind === 'origin';
-        actions.append(b);
-      }
-    }
-    li.append(col, actions);
-    $('stops').append(li);
-    if (s.xy) {
-      routeBounds.extend(s.xy);
-      const keys = (s.sources || []).filter(k => Object.hasOwn(types, k));
-      const primary = keys[0];
-      const badge = s.kind !== 'origin' && primary ? '<span class="pin-source" style="background:' + types[primary][1] + '">' + pinSymbol(primary) + '</span>' : '';
-      const description = [s.name, ...keys.map(k => k === 'card' ? ui('Transaction', 'עסקה') : t(label[k]))].join(' · ');
-      const icon = L.divIcon({
-        className: 'pin ' + (s.kind === 'origin' ? 'home ' : '') + (s.approx ? 'soft' : ''),
-        html: s.kind === 'origin' ? '⌂' : String(i + (list[0]?.kind === 'origin' ? 0 : 1)) + badge,
-        iconSize: [28, 28],
-        iconAnchor: [14, 14]
-      });
-      const mark = L.marker(s.xy, {
-        icon,
-        title: description,
-        alt: description
-      }).addTo(overlay);
-      const content = dom('div');
-      content.append(dom('strong', s.name), dom('div', [s.time, s.address].filter(Boolean).join(' · ')));
-      if (keys.length) content.append(dom('div', keys.map(k => types[k][0] + ' ' + (k === 'card' ? ui('Transaction', 'עסקה') : t(label[k]))).join(' · '), 'popup-sources'));
-      if (!sharedRoute) content.append(button(ui('Edit details', 'עריכת הפרטים'), () => {
-        map.closePopup();
-        if (s.id === 'base') openSettings(false);
-        else openStop(s);
-      }));
-      mark.bindPopup(content);
-      mark.on('click', () => reveal(s.id, 'row'));
-      marks.set(s.id, mark);
-      if (prev?.xy) {
-        const edge = edges.get(prev.id + '|' + s.id);
-        if (edge?.type !== 'same') {
-          const line = edge?.line?.length ? edge.line : [prev.xy, s.xy];
-          const taxi = edge?.type === 'taxi';
-          L.polyline(line, {
-            pane: taxi ? 'taxiRoutes' : 'overlayPane',
-            color: taxi ? '#b96331' : '#267957',
-            weight: edge?.type === 'walk' ? 5 : 3,
-            dashArray: taxi ? '9 9' : edge?.type === 'walk' ? null : '5 7',
-            opacity: taxi ? 1 : .85
-          }).addTo(overlay);
-          routeBounds.extend(line);
-        }
-      }
-    }
-    prev = s;
+  document.body.classList.toggle('trip-overview', overview);
+  $('wholeTrip').hidden = !trip;
+  $('wholeTrip').setAttribute('aria-pressed', String(overview));
+  $('wholeTrip').textContent = overview ? ui('Back to day', 'חזרה ליום') : ui('Whole trip', 'כל הטיול');
+  $('dayTitle').hidden = !!trip && !overview;
+  $('dayTitle').textContent = overview ? ui('Whole trip', 'כל הטיול') : ui("Today's route", 'המסלול היומי');
+  $('listTab').textContent = overview ? ui('Days', 'ימים') : ui('Stops', 'תחנות');
+  $('listTitle').textContent = overview ? ui('Trip days', 'ימי הטיול') : t('תחנות בדרך');
+  if (overview) {
+    $('dayStats').hidden = true;
+    $('count').textContent = '';
   }
-  // A day without pins keeps the map on the rest of the trip instead of zooming out to the world.
-  if (!routeBounds.isValid() && trip) {
-    for (const stop of trip.stops) if (stop.xy) routeBounds.extend(stop.xy);
-    if (trip.homeXY) routeBounds.extend(trip.homeXY);
+  let baseDrawn = false;
+  for (const { date, stops } of routes) {
+    if (overview) {
+      appendOverviewDay(date, stops.filter(stop => stop.kind !== 'origin').length, pinsPerDay.get(date) ?? 0);
+    } else {
+      showDailyStats(walkingStats(stops, edges));
+    }
+    drawRouteDay(stops, edges, locate, overview, !baseDrawn);
+    if (stops.some(stop => stop.id === 'base' && stop.xy)) baseDrawn = true;
   }
-  fitDailyRoute();
-  if (!list.length && $('welcome').hidden) $('stops').append(dom('li', trip ? t('עדיין אין תחנות ליום הזה.') : t('כאן יופיעו תחנות הטיול לפי יום.'), 'empty'));
-  $('dayNote').textContent = trip?.dayNotes?.[day] || '';
+
+  if (trip) {
+    const saved = (pin: GooglePin) => {
+      if (session.trip !== trip || !trip.googlePins?.includes(pin)) {
+        throw Error(ui('This trip changed. Open the Google Pin again.', 'הטיול השתנה. יש לפתוח שוב את סיכת Google.'));
+      }
+    };
+    const actions: PinActions | undefined = sharedRoute ? undefined : {
+      assignDay(pin, date) {
+        void change(() => {
+          saved(pin);
+          assignGooglePinDay(pin, date);
+        });
+      },
+      async remove(pin) {
+        if (!await ask(ui('Remove this Google Pin from the trip? Future imports will keep it removed.', 'להסיר את סיכת Google מהטיול? גם ייבוא חוזר לא יחזיר אותה.'), ui('Remove pin', 'הסרת הסיכה'))) return;
+        void change(() => {
+          saved(pin);
+          removeGooglePin(trip, pin.id);
+        });
+      }
+    };
+    for (const xy of drawGooglePins(trip, overview ? null : day, overlay, actions, locate, popupOptions)) routeBounds.extend(xy);
+  }
+  if (!routeBounds.isValid()) for (const xy of visiblePoints) routeBounds.extend(locate(xy));
+  fitRoute();
+  if (!$('stops').childElementCount && $('welcome').hidden) {
+    const empty = overview ? ui('No days with stops yet.', 'עדיין אין ימים עם תחנות.') :
+      pins.length ? ui('No route stops for this day.', 'אין תחנות במסלול של היום הזה.') :
+      trip ? t('עדיין אין תחנות ליום הזה.') : t('כאן יופיעו תחנות הטיול לפי יום.');
+    $('stops').append(dom('li', empty, 'empty'));
+  }
+  $('dayNote').textContent = overview ? '' : trip?.dayNotes?.[day] || '';
   $('dayNote').hidden = !$('dayNote').textContent;
-  const other = trip?.stops.filter(s => s.date === day && offRoute(s)) || [];
+  const other = overview ? [] : trip?.stops.filter(s => s.date === day && offRoute(s)) || [];
   $('other').hidden = !other.length;
   $('otherList').replaceChildren(...other.map(s => button(s.name + (s.kind === 'remote' ? t(' · מרחוק') : t(' · לבירור')), () => openStop(s))));
 }
@@ -1081,7 +1214,7 @@ $('pick').onclick = () => {
 };
 map.on('click', e => {
   if (!pick) return;
-  ef.coords.value = [e.latlng.lat, e.latlng.lng].map(n => n.toFixed(6)).join(', ');
+  ef.coords.value = [e.latlng.lat, wrapLongitude(e.latlng.lng)].map(n => n.toFixed(6)).join(', ');
   showPin($('pinState'), ef.coords.value);
   endPick();
 });
@@ -1292,6 +1425,26 @@ $('file').onchange = () => {
   const file = $('file').files?.[0];
   if (file) void previewFile(file);
 };
+function googlePinSummary({ added, linked, skipped, datesOutsideTrip, unresolved, previouslyRemoved }: GooglePinResult) {
+  const parts = [ui('Google Pins · ' + added + ' new · ' + linked + ' updated · ' + skipped + ' already saved',
+    'סיכות Google · ' + added + ' חדשות · ' + linked + ' עודכנו · ' + skipped + ' כבר שמורות')];
+  if (previouslyRemoved) parts.push(previouslyRemoved === 1
+    ? ui('One previously removed pin left out', 'סיכה אחת שהוסרה בעבר נשארה מחוץ לטיול')
+    : ui(previouslyRemoved + ' previously removed pins left out', previouslyRemoved + ' סיכות שהוסרו בעבר נשארו מחוץ לטיול'));
+  if (datesOutsideTrip) {
+    const dates = datesOutsideTrip === 1 ? ui('One date falls', 'תאריך אחד נמצא')
+      : ui(datesOutsideTrip + ' dates fall', datesOutsideTrip + ' תאריכים נמצאים');
+    parts.push(dates + ui(' outside the trip. Pins without a day appear in Whole trip.',
+      ' מחוץ לטווח הטיול. סיכות ללא יום מופיעות במבט על כל הטיול.'));
+  }
+  if (unresolved) parts.push(unresolved === 1
+    ? ui('One pin skipped because its location is unknown', 'סיכה אחת דולגה כי המיקום שלה אינו ידוע')
+    : ui(unresolved + ' pins skipped because their locations are unknown', unresolved + ' סיכות דולגו כי המיקום שלהן אינו ידוע'));
+  return parts.join(' · ');
+}
+function backupRouteSummary(count: number) {
+  return quantity(count, ' מקטעי מסלול מהגיבוי', 'route segment from backup', 'route segments from backup');
+}
 async function previewFile(f: File, order?: 'day-first' | 'month-first') {
   const target = $('preview');
   target.replaceChildren();
@@ -1311,7 +1464,8 @@ async function previewFile(f: File, order?: 'day-first' | 'month-first') {
         stops: [],
         omitted: 0
       },
-      backup: Trip | undefined;
+      backup: ReturnType<typeof prepareTripBackup> | undefined;
+    let backupValue: unknown;
     if (/\.json$/i.test(f.name)) {
       const o = JSON.parse(raw);
       if (isRecord(o) && o.format === 'hayiti-routes/1') {
@@ -1331,11 +1485,12 @@ async function previewFile(f: File, order?: 'day-first' | 'month-first') {
         }));
         return;
       }
-      if (['hayiti/1', 'masluli/1'].includes(o.format)) backup = cleanTrip(o.trip);else if (['hayiti-stops/1', 'masluli-stops/1'].includes(o.format) && Array.isArray(o.stops)) result = {
-        stops: o.stops.map(cleanStop),
-        omitted: 0,
-        checks: o.start === session.trip?.start && o.end === session.trip?.end ? o.sourceChecks : null
-      };else throw Error(t('פורמט גיבוי לא מוכר'));
+      if (['hayiti/1', 'masluli/1'].includes(o.format)) {
+        backupValue = o.trip;
+        backup = prepareTripBackup(backupValue, session.trips);
+      } else {
+        result = importEvidencePackage(o, session.trip);
+      }
     } else if (/\.csv$/i.test(f.name)) {
       result = await importCsv(raw, order);
       if (result.needsDateOrder) {
@@ -1350,30 +1505,69 @@ async function previewFile(f: File, order?: 'day-first' | 'month-first') {
       openStop(pastedStop(raw, session.day, /\.eml$/i.test(f.name) ? 'email' : 'manual'));
       return;
     }
-    if (backup && session.mode === 'guest') checkGuestBackup(session.trips, backup);
+    if (backup && session.mode === 'guest') checkGuestBackup(session.trips, backup.trip);
     if (!backup && !session.trip) throw Error(t('יש ליצור טיול לפני ייבוא תחנות'));
     const active = session.trip;
     const valid = backup || !active ? [] : result.stops.filter(s => s.date >= active.start && s.date <= active.end);
-    target.append(dom('p', backup ? displayTripTitle(backup.title) + ' · ' + quantity(backup.stops.length, ' רשומות', 'record', 'records') : (language === 'en' && valid.length === 1 ? '1 record within the trip dates · ' : valid.length + t(' רשומות בטווח הטיול · ')) + (result.omitted + result.stops.length - valid.length) + t(' דולגו')));
+    const pinPreview = backup?.pins ?? result.pinPreview;
+    if (backup) {
+      target.append(dom('p', displayTripTitle(backup.trip.title) + ' · ' + quantity(backup.recordCount, ' רשומות', 'record', 'records')));
+      if (backup.routes) target.append(dom('p', backupRouteSummary(backup.routes)));
+    } else {
+      if (result.stops.length || !pinPreview) target.append(dom('p', (language === 'en' && valid.length === 1 ?
+        '1 record within the trip dates · ' : valid.length + t(' רשומות בטווח הטיול · ')) +
+        (result.omitted + result.stops.length - valid.length) + t(' דולגו')));
+    }
+    if (pinPreview) target.append(dom('p', googlePinSummary(pinPreview)));
+    if (active && pinPreview?.previouslyRemoved && result.googlePins) {
+      const ids = new Set(active.removedGooglePinIds);
+      const candidates = new Map<string, Record<string, unknown>>();
+      for (const pin of result.googlePins) {
+        if (isRecord(pin) && typeof pin.id === 'string' && ids.has(pin.id)) candidates.set(pin.id, pin);
+      }
+      const details = dom('details');
+      const label = dom('label', ui('Removed pin', 'סיכה שהוסרה'));
+      const select = dom('select');
+      label.htmlFor = select.id = 'restoreGooglePinSelection';
+      for (const [id, pin] of candidates) select.add(new Option(String(pin.name), id));
+      const actions = dom('div', undefined, 'actions');
+      details.append(dom('summary', ui('Restore a removed pin', 'שחזור סיכה שהוסרה')), label, actions);
+      actions.append(select, button(ui('Restore selected pin', 'שחזור הסיכה שנבחרה'), async () => {
+          const ok = await change(() => {
+            const trip = session.trip;
+            if (!trip || trip.id !== active.id || trip.start !== active.start || trip.end !== active.end) {
+              throw Error(t('הטיול השתנה. יש לבחור את קובץ הייבוא מחדש.'));
+            }
+            restoreGooglePin(trip, candidates.get(select.value));
+          });
+          if (ok) await previewFile(f, order);
+        }));
+      target.append(details);
+    }
     const checks = Object.entries(isRecord(result.checks) ? result.checks : {}).filter(([key, status]) => validOutcome(key, status));
-    if (!backup && !valid.length && !checks.length) return;
-    target.append(button(backup ? t('טעינת הטיול') : t('מיזוג התחנות'), async () => {
-      let test: MergeResult | undefined;
+    if (!backup && !valid.length && !checks.length && !pinPreview?.added && !pinPreview?.linked) return;
+    const action = backup ? t('טעינת הטיול') : pinPreview && !valid.length
+      ? ui('Save Google Pins', 'שמירת סיכות Google') : t('מיזוג התחנות');
+    target.append(button(action, async () => {
+      let test: MergeResult | undefined, savedPins: GooglePinResult | undefined;
+      let savedRoutes = 0;
       const ok = await change(() => {
         if (backup) {
-          const existing = session.trips.find(t => t.id === backup.id);
-          if (existing) {
-            test = mergeStops(existing, backup.stops);
-          } else {
-            session.trips.push(backup);
-          }
-          session.select(existing ?? backup);
+          const restored = prepareTripBackup(backupValue, session.trips);
+          const index = session.trips.findIndex(trip => trip.id === restored.trip.id);
+          if (index < 0) session.trips.push(restored.trip);
+          else session.trips[index] = restored.trip;
+          session.select(restored.trip);
+          test = restored.stops;
+          savedPins = restored.pins;
+          savedRoutes = restored.routes;
         } else {
           const { trip } = session;
           if (!trip || !active || trip.id !== active.id || trip.start !== active.start || trip.end !== active.end) {
             throw Error(t('הטיול השתנה. יש לבחור את קובץ הייבוא מחדש.'));
           }
           test = mergeStops(trip, valid);
+          if (result.googlePins?.length) savedPins = mergeGooglePins(trip, result.googlePins);
           trip.checks ||= {};
           for (const [key, status] of checks) if (member(reportSources, key) && validOutcome(key, status)) trip.checks[key] = {
             status,
@@ -1386,7 +1580,16 @@ async function previewFile(f: File, order?: 'day-first' | 'month-first') {
       if (ok) {
         $('sources').close();
         const done = test;
-        if (done && session.trip?.id === (backup?.id ?? active?.id)) msg(() => language === 'he' ? 'נוספו ' + done.added + ' תחנות · הוצלבו ' + done.linked + ' · כבר קיימות ' + done.skipped : 'Added: ' + done.added + ' · Matched: ' + done.linked + ' · Already present: ' + done.skipped);
+        if (done && session.trip?.id === (backup?.trip.id ?? active?.id)) msg(() => {
+          const summaries = [];
+          if (done.added || done.linked || done.skipped || !savedPins) {
+            summaries.push(ui('Added: ' + done.added + ' · Matched: ' + done.linked + ' · Already present: ' + done.skipped,
+              'נוספו ' + done.added + ' תחנות · הוצלבו ' + done.linked + ' · כבר קיימות ' + done.skipped));
+          }
+          if (savedPins) summaries.push(googlePinSummary(savedPins));
+          if (savedRoutes) summaries.push(backupRouteSummary(savedRoutes));
+          return summaries.join(' · ');
+        });
       }
     }));
   } catch (e) {
@@ -1399,7 +1602,7 @@ function viewList(value: boolean) {
   document.body.classList.toggle('showList', value);
   $('listTab').setAttribute('aria-pressed', String(value));
   $('mapTab').setAttribute('aria-pressed', String(!value));
-  if (!value) fitDailyRoute();
+  if (!value) fitRoute();
 }
 $('mapTab').onclick = () => viewList(false);
 $('listTab').onclick = () => viewList(true);
@@ -1417,7 +1620,7 @@ function localizeControls() {
 }
 function refreshLanguage() {
   localizeControls();
-  relabelStreetMap();
+  basemap.relabel();
   showStreetMapNote();
   render();
   $('status').textContent = currentStatus();

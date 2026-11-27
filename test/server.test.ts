@@ -276,3 +276,88 @@ await test('list_trips gives an untitled trip a display name without renaming it
   ]);
   assert.equal((await loadState(env.BUCKET, 'alice')).trips[0].title, '');
 });
+
+await test('the agent can import and list private Google Pins independently of routed stops', async () => {
+  const { tool, trip, env } = fixture();
+  const pins = [
+    { id: 'park', name: 'Park', xy: [51.91, 4.48], savedAt: trip.start },
+    { id: 'museum', name: 'Museum', xy: [51.93, 4.47] }
+  ];
+  const args = { tripId: trip.id, start: trip.start, end: trip.end, stops: [], googlePins: pins };
+  const write = await (await tool('add_trip_stops', args)).json();
+  assert.deepEqual(JSON.parse(write.result.content[0].text).googlePins, { added: 2, linked: 0, skipped: 0 });
+  const before = await loadState(env.BUCKET, 'alice');
+  const retry = await (await tool('add_trip_stops', args)).json();
+  assert.deepEqual(JSON.parse(retry.result.content[0].text).googlePins, { added: 0, linked: 0, skipped: 2 });
+  assert.equal((await loadState(env.BUCKET, 'alice')).rev, before.rev);
+  const list = await (await tool('list_google_pins', { tripId: trip.id })).json();
+  assert.deepEqual(JSON.parse(list.result.content[0].text), { total: 2, offset: 0, pins: [{ ...pins[0], date: trip.start }, pins[1]] });
+  const response = await (await tool('get_day', { tripId: trip.id, date: trip.start })).json();
+  const day = JSON.parse(response.result.content[0].text);
+  assert.deepEqual(day.googlePins, [{ ...pins[0], date: trip.start }]);
+  assert.equal(day.googlePinCount, 1);
+  assert.deepEqual(day.stops, []);
+  assert.deepEqual(day.routes, []);
+  assert.equal(day.walking.stopCount, 0);
+  assert.equal((await (await tool('list_google_pins', { tripId: trip.id }, 'bob')).json()).result.isError, true);
+  const invalid = await (await tool('add_trip_stops', { ...args, stops: trip.stops, googlePins: [{ ...pins[0], xy: null }] })).json();
+  assert.equal(invalid.result.isError, true);
+  assert.equal((await loadState(env.BUCKET, 'alice')).rev, before.rev);
+});
+
+await test('a long list of Google Pins is read 200 at a time, with the total in every reply', async () => {
+  const { tool, trip } = fixture();
+  const pin = (n: number) => ({ id: 'place-' + n, name: 'Place ' + n, xy: [51.9 + n / 10000, 4.48] });
+  const batch = (from: number, count: number) => Array.from({ length: count }, (_, i) => pin(from + i));
+  await tool('add_trip_stops', { tripId: trip.id, start: trip.start, end: trip.end, stops: [], googlePins: batch(0, 200) });
+  await tool('add_trip_stops', { tripId: trip.id, stops: [], googlePins: batch(200, 50) });
+  const read = async (args: Record<string, unknown>) => (await (await tool('list_google_pins', { tripId: trip.id, ...args })).json()).result;
+  const first = JSON.parse((await read({})).content[0].text);
+  assert.deepEqual([first.total, first.offset, first.pins.length, first.pins[199].id], [250, 0, 200, 'place-199']);
+  const rest = JSON.parse((await read({ offset: 200 })).content[0].text);
+  assert.deepEqual([rest.total, rest.offset, rest.pins.map((item: { id: string }) => item.id)], [250, 200, batch(200, 50).map(item => item.id)]);
+  assert.deepEqual(JSON.parse((await read({ offset: 250 })).content[0].text).pins, []);
+  assert.equal((await read({ offset: -1 })).isError, true);
+  assert.equal((await read({ offset: 1.5 })).isError, true);
+});
+
+await test('agents can continue a day preview without mixing in other or unassigned Google Pins', async () => {
+  const { tool, trip } = fixture();
+  const pin = (id: string, date?: string) => ({ id, date, name: id, xy: [51.9, 4.48] });
+  const today = Array.from({ length: 225 }, (_, i) => pin('today-' + i, trip.start));
+  const otherDay = pin('other-day', trip.end);
+  const all = [otherDay, ...today.slice(0, 21), pin('undated'), ...today.slice(21)];
+  for (let from = 0; from < all.length; from += 200) {
+    const result = await (await tool('add_trip_stops', {
+      tripId: trip.id, start: trip.start, end: trip.end, stops: [], googlePins: all.slice(from, from + 200)
+    })).json();
+    assert.ok(!result.result.isError);
+  }
+  const read = async (name: string, args: Record<string, unknown>) => {
+    const reply = await (await tool(name, { tripId: trip.id, ...args })).json();
+    assert.ok(!reply.result.isError);
+    return JSON.parse(reply.result.content[0].text);
+  };
+  const preview = await read('get_day', { date: trip.start });
+  assert.equal(preview.googlePinCount, today.length);
+  assert.deepEqual(preview.googlePins, today.slice(0, 20));
+  const next = await read('list_google_pins', { date: trip.start, offset: preview.googlePins.length });
+  assert.deepEqual(next, { total: 225, offset: 20, pins: today.slice(20, 220) });
+  const last = await read('list_google_pins', { date: trip.start, offset: next.offset + next.pins.length });
+  assert.deepEqual(last, { total: 225, offset: 220, pins: today.slice(220) });
+  assert.deepEqual(await read('list_google_pins', { date: trip.end }), { total: 1, offset: 0, pins: [otherDay] });
+  const invalid = await (await tool('list_google_pins', { tripId: trip.id, date: '2026-06-31' })).json();
+  assert.equal(invalid.result.isError, true);
+});
+
+await test('agent retries respect private Google Pin removals without creating a new revision', async () => {
+  const { tool, trip, env } = fixture();
+  trip.removedGooglePinIds = ['removed'];
+  const rev = await storeState(env.BUCKET, 'alice', [trip], '');
+  const pin = { id: 'removed', name: 'Park', xy: [52, 4], date: trip.start };
+  const result = await (await tool('add_trip_stops', { tripId: trip.id, stops: [], googlePins: [pin] })).json();
+  assert.deepEqual(JSON.parse(result.result.content[0].text).googlePins, { added: 0, linked: 0, skipped: 0, previouslyRemoved: 1 });
+  assert.equal((await loadState(env.BUCKET, 'alice')).rev, rev);
+  const list = await (await tool('list_google_pins', { tripId: trip.id })).json();
+  assert.deepEqual(JSON.parse(list.result.content[0].text).pins, []);
+});

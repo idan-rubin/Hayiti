@@ -84,6 +84,9 @@ await test('a shared route stays on screen through a temporary failure and clear
       : route.fulfill({ status }));
     await page.goto(origin + '/journal.html?lang=en#route=fictional');
     await page.locator('body.route-ready').waitFor();
+    await page.getByRole('button', { name: 'Whole trip' }).click();
+    await page.getByRole('button', { name: 'Back to day' }).click();
+    assert.equal(await page.locator('#import').isVisible(), false);
     const recheck = async () => {
       const answered = page.waitForResponse(response => response.url().endsWith('/api/route-links'));
       await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
@@ -786,6 +789,42 @@ await test('a failed first load blocks import until Try again opens the journal'
   }
 });
 
+await test('a hosted journal restores backup routes and reports pins without a location', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    const current = { id: 'park', name: 'Correct park', xy: [52, 4], date: '2026-06-15', dayEdited: true };
+    const trip = { id: 'restore', title: 'City break', start: '2026-06-14', end: '2026-06-15', stops: [], edges: [], googlePins: [current] };
+    const route = { a: 'museum', b: 'market', type: 'walk', line: [[52, 4], [52.001, 4.0005], [52.002, 4.002]], m: 285 };
+    let saved = [trip];
+    await hostJournal(page, route => {
+      if (route.request().method() === 'GET') return route.fulfill({ json: { trips: saved, rev: '1' } });
+      saved = route.request().postDataJSON().trips;
+      return route.fulfill({ json: { rev: '2' } });
+    });
+    await page.goto(origin + '/journal.html?lang=en');
+    await page.locator('#title').filter({ hasText: trip.title }).waitFor();
+    await page.locator('#import').click();
+    await page.locator('[data-tab=files]').click();
+    await page.locator('#file').setInputFiles({ name: 'legacy.json', mimeType: 'application/json',
+      buffer: Buffer.from(JSON.stringify({ format: 'hayiti/1', trip: { ...trip,
+        stops: [{ id: 'museum', name: 'Museum', date: trip.start, rank: 1, xy: route.line[0] },
+          { id: 'market', name: 'Market', date: trip.start, rank: 2, xy: route.line[2] }], edges: [route],
+        googlePins: [{ ...current, name: 'Old park', xy: [51, 4] },
+          { id: 'unknown', name: 'Unknown', xy: [0, 0] }, { id: 'tower', name: 'Tower', xy: [52, 4.1] }] } })) });
+    await page.locator('#preview').filter({ hasText: '1 route segment from backup' }).waitFor();
+    await page.locator('#preview').getByText(/One pin skipped because its location is unknown/).waitFor();
+    await page.locator('#preview button').click();
+    await page.locator('#status').filter({ hasText: 'One pin skipped because its location is unknown' }).waitFor();
+    await page.locator('#status').filter({ hasText: '1 route segment from backup' }).waitFor();
+    assert.equal(saved[0].stops.length, 2);
+    assert.deepEqual(saved[0].edges, [route]);
+    assert.deepEqual(saved[0].googlePins, [current, { id: 'tower', name: 'Tower', xy: [52, 4.1] }]);
+  } finally {
+    await browser.close();
+  }
+});
+
 await test('a backup exceeding actual guest storage is rejected in the preview', async () => {
   const browser = await chromium.launch();
   try {
@@ -1184,6 +1223,107 @@ await test('Sign out is offered only while the account journal is open', async (
     await page.reload();
     await page.getByRole('link', { name: 'Sign in with ChatGPT', exact: true }).waitFor();
     assert.equal(await signOut.isVisible(), false);
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('the mobile trip toolbar keeps the overview beside the daily actions in either language', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage({ hasTouch: true });
+    const trip = { id: 'toolbar', title: 'Toolbar trip', start: '2026-06-14', end: '2026-06-16', stops: [] };
+    await hostJournal(page, route => route.fulfill({ json: { trips: [trip], rev: 'r1' } }));
+    for (const lang of ['he', 'en']) {
+      await page.goto(origin + '/journal.html?lang=' + lang);
+      const toolbar = page.locator('.toolbar');
+      const overview = toolbar.locator('#wholeTrip');
+      await overview.waitFor();
+      for (const width of [320, 375, 390, 430]) {
+        await page.setViewportSize({ width, height: 852 });
+        for (const pressed of [false, true]) {
+          assert.equal(await overview.getAttribute('aria-pressed'), String(pressed));
+          const boxes = await toolbar.locator('button:visible').evaluateAll(buttons => buttons.map(button => {
+            const { top, left, right } = button.getBoundingClientRect();
+            const label = [...button.children].find(span => span.checkVisibility()) ?? button;
+            const range = document.createRange();
+            range.selectNodeContents(label);
+            // Bidirectional glyph runs can share a baseline while having different font ascents.
+            const runs = [...range.getClientRects()].filter(rect => rect.width && rect.height);
+            const overlap = Math.min(...runs.map(rect => rect.bottom)) - Math.max(...runs.map(rect => rect.top));
+            const oneLine = runs.length > 0 && overlap > Math.min(...runs.map(rect => rect.height)) / 2;
+            const fits = runs.every(rect => rect.left >= left - 1 && rect.right <= right + 1);
+            return { id: button.id, top, left, right, oneLine, fits };
+          }));
+          assert.equal(boxes.length, pressed ? 2 : 4);
+          for (const box of boxes) assert.ok(box.oneLine && box.fits, `${lang} ${width}px: ${box.id} label must fit on one line`);
+          assert.equal(await toolbar.getByRole('button', { name: lang === 'he' ? 'מקורות וייבוא' : 'Sources and import', exact: true }).count(), 1);
+          if (!pressed) assert.equal(await toolbar.getByRole('button', { name: lang === 'he' ? 'הצע סדר הליכה' : 'Suggest walking order', exact: true }).count(), 1);
+          assert.ok(boxes.every(box => box.top === boxes[0].top));
+          const bounds = await toolbar.boundingBox();
+          assert.ok(bounds);
+          assert.ok(boxes.every(box => box.left >= bounds.x - 1 && box.right <= bounds.x + bounds.width + 1));
+          const leadingSpace = lang === 'he' ? bounds.x + bounds.width - boxes[0].right : boxes[0].left - bounds.x;
+          assert.ok(Math.abs(leadingSpace) < 1);
+          const gap = await toolbar.evaluate(row => parseFloat(getComputedStyle(row).columnGap));
+          assert.ok(gap > 0 && gap <= 8);
+          for (let i = 1; i < boxes.length; i++) {
+            const previous = boxes[i - 1];
+            const next = boxes[i];
+            const space = lang === 'he' ? previous.left - next.right : next.left - previous.right;
+            assert.ok(Math.abs(space - gap) < 1, `${lang} ${width}px: expected ${gap}px between actions, got ${space}px`);
+          }
+          assert.equal(await page.locator('.mapcard #mapStyle').isVisible(), true);
+          await overview.click();
+        }
+      }
+      await page.setViewportSize({ width: 960, height: 852 });
+      assert.equal(await toolbar.locator('#import').innerText(), lang === 'he' ? 'מקורות וייבוא' : 'Sources and import');
+      assert.equal(await toolbar.locator('#organize').innerText(), lang === 'he' ? 'הצע סדר הליכה' : 'Suggest walking order');
+    }
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('the mobile day count shares the walking summary row and follows the date reel', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage({ hasTouch: true });
+    const trip = { id: 'ordinal', start: '2026-10-20', end: '2026-11-19', stops: [] };
+    await hostJournal(page, route => route.fulfill({ json: { trips: [trip], rev: 'r1' } }));
+    const reel = page.locator('#dayReel');
+    const progress = page.locator('#dayProgress');
+    for (const lang of ['he', 'en']) {
+      await page.goto(origin + '/journal.html?lang=' + lang);
+      const dayLabel = (day: number) => lang === 'he' ? `יום ${day} מתוך 31` : `Day ${day} of 31`;
+      for (const width of [375, 393]) {
+        await page.setViewportSize({ width, height: 852 });
+        await page.locator('#tripDate').selectOption('2026-10-22');
+        assert.equal(await progress.innerText(), dayLabel(3));
+        assert.ok((await reel.getAttribute('aria-valuetext'))?.includes(dayLabel(3)));
+        const face = reel.locator('> div').nth(2);
+        assert.equal(await face.locator('small').isVisible(), false);
+        const date = await face.locator('span').boundingBox();
+        const wheel = await reel.boundingBox();
+        assert.ok(date && wheel && date.x >= wheel.x && date.x + date.width <= wheel.x + wheel.width);
+        const counter = await progress.boundingBox();
+        const summary = await page.locator('#dayStats summary').boundingBox();
+        assert.ok(counter && summary && counter.y < summary.y + summary.height && summary.y < counter.y + counter.height);
+        assert.ok(lang === 'he' ? counter.x + counter.width <= summary.x : counter.x >= summary.x + summary.width);
+        await reel.evaluate(el => { el.scrollTop += el.clientHeight; });
+        await progress.filter({ hasText: dayLabel(4) }).waitFor();
+        await reel.press('End');
+        assert.equal(await progress.innerText(), dayLabel(31));
+        await page.locator('#wholeTrip').click();
+        assert.equal(await progress.isVisible(), false);
+        await page.locator('#wholeTrip').click();
+        assert.equal(await progress.innerText(), dayLabel(31));
+      }
+      await page.setViewportSize({ width: 1200, height: 852 });
+      assert.equal(await progress.isVisible(), false);
+      assert.equal(await reel.locator('small').last().isVisible(), true);
+    }
   } finally {
     await browser.close();
   }
@@ -1694,6 +1834,8 @@ await test('the hosted journal welcomes a new traveler with the way to build a t
     await page.goto(origin + '/journal.html?lang=en');
     await page.locator('#welcome').waitFor();
     assert.deepEqual(await page.locator('#welcome h3:visible').allTextContents(), ['Build your trip in ChatGPT']);
+    await page.setViewportSize({ width: 375, height: 812 });
+    assert.equal(await page.locator('#dayProgress').isVisible(), false);
     assert.deepEqual(await page.locator('#welcome a:visible').allTextContents(), ['Open ChatGPT']);
   } finally {
     await browser.close();

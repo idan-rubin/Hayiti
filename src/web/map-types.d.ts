@@ -22,7 +22,8 @@ interface JournalMap {
     pan: boolean;
   }): void;
   fitBounds(bounds: Bounds, options: {
-    padding: Coordinates;
+    paddingTopLeft: Coordinates;
+    paddingBottomRight: Coordinates;
     maxZoom: number;
     animate: boolean;
   }): void;
@@ -40,9 +41,13 @@ interface LayerGroup {
   addTo(map: JournalMap): LayerGroup;
   clearLayers(): void;
 }
+interface PopupOptions {
+  /** Pixels a popup keeps clear of the map's left and top edges when the map pans to show it. */
+  autoPanPaddingTopLeft: Coordinates;
+}
 interface MapMarker {
   addTo(layer: LayerGroup): MapMarker;
-  bindPopup(content: HTMLElement): MapMarker;
+  bindPopup(content: HTMLElement | (() => HTMLElement), options?: PopupOptions): MapMarker;
   openPopup(): MapMarker;
   on(type: 'click', callback: () => void): MapMarker;
 }
@@ -67,6 +72,12 @@ interface StreetMapLayer {
   getEvents(): object;
   getContainer(): HTMLElement;
 }
+interface RasterLayer {
+  addTo(map: JournalMap): RasterLayer;
+  on(type: 'tileerror' | 'tileunload', callback: (event: { tile: HTMLElement }) => void): RasterLayer;
+  redraw(): RasterLayer;
+  remove(): void;
+}
 interface MapLibrary {
   setWorkerUrl(url: string): void;
 }
@@ -87,6 +98,11 @@ declare const L: {
     maxZoom: number;
   }): JournalMap;
   maplibreGL?: StreetMapLayerFactory;
+  tileLayer(url: string, options: {
+    attribution: string;
+    maxNativeZoom: number;
+    maxZoom: number;
+  }): RasterLayer;
   layerGroup(): LayerGroup;
   latLngBounds(points: Coordinates[]): Bounds;
   divIcon(options: {

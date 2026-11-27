@@ -38,6 +38,15 @@ export interface Stop {
   photos: string[];
   approx: boolean;
 }
+/** A saved Google Maps place is a bookmark; its assigned day does not imply a visit. */
+export interface GooglePin {
+  id: string;
+  name: string;
+  xy: Point;
+  date?: string;
+  savedAt?: string;
+  dayEdited?: true;
+}
 export interface Edge {
   a: string;
   b: string;
@@ -59,6 +68,9 @@ export interface Trip {
   home: string;
   homeXY: Point | null;
   stops: Stop[];
+  googlePins?: GooglePin[];
+  /** Stable bookmark IDs the traveler removed from this trip. */
+  removedGooglePinIds?: string[];
   edges: Edge[];
   rules: string;
   dayNotes: Record<string, string>;
@@ -90,6 +102,115 @@ export function point(value: unknown): Point | null {
   const [lat, lon] = value;
   return Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 85 && Math.abs(lon) <= 180 ? [lat, lon] : null;
 }
+const googlePinLimit = 6500;
+
+function validSavedAt(value: unknown): value is string {
+  if (safeDate(value)) return true;
+  if (typeof value !== 'string' || !safeDate(value.slice(0, 10))) return false;
+  return /^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d{1,9})?)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/.test(value) &&
+    Number.isFinite(Date.parse(value));
+}
+
+const validGooglePinId = (id: unknown): id is string =>
+  typeof id === 'string' && id.length > 0 && id.length <= 180 && id === id.trim();
+
+function cleanGooglePin(value: unknown, start: string, end: string, inferSaveDay = false): GooglePin {
+  if (!isRecord(value)) throw Error('Invalid Google Pin');
+  const { id, date, savedAt } = value;
+  const name = text(value.name, 160), xy = point(value.xy);
+  if (!validGooglePinId(id) || !name || !xy) {
+    throw Error('A Google Pin needs a stable ID, name and coordinates');
+  }
+  if (date !== undefined && !safeDate(date)) throw Error('Invalid Google Pin day');
+  if (savedAt !== undefined && !validSavedAt(savedAt)) throw Error('Invalid Google Pin save time');
+  // A UTC export timestamp can fall on another day locally. The agent can supply date after converting it.
+  let tripDay = date;
+  if (!tripDay && inferSaveDay && !value.dayEdited && savedAt && !/(?:Z|[+-]00:00)$/.test(savedAt)) {
+    tripDay = savedAt.slice(0, 10);
+  }
+  return {
+    id, name, xy,
+    ...(tripDay && tripDay >= start && tripDay <= end ? { date: tripDay } : {}),
+    ...(savedAt ? { savedAt } : {}),
+    ...(value.dayEdited === true ? { dayEdited: true } : {})
+  };
+}
+
+export interface GooglePinResult extends MergeResult {
+  /** Explicit day assignments outside the trip that were ignored. */
+  datesOutsideTrip?: number;
+  /** Legacy backup pins omitted because Google supplied no location. */
+  unresolved?: number;
+  /** Previously removed by the traveler; never counted as saved or added. */
+  previouslyRemoved?: number;
+}
+
+export function removeGooglePin(trip: Trip, id: string) {
+  if (!trip.googlePins?.some(pin => pin.id === id)) return;
+  trip.googlePins = trip.googlePins.filter(pin => pin.id !== id);
+  trip.removedGooglePinIds = [...new Set([...(trip.removedGooglePinIds ?? []), id])];
+}
+
+/** Only a deliberate owner action restores a removed bookmark. Validate before changing either list. */
+export function restoreGooglePin(trip: Trip, value: unknown) {
+  const pin = cleanGooglePin(value, trip.start, trip.end, true);
+  if (!trip.removedGooglePinIds?.includes(pin.id)) return;
+  const removed = trip.removedGooglePinIds.filter(id => id !== pin.id);
+  const next = { ...trip, removedGooglePinIds: removed };
+  mergeGooglePins(next, [pin]);
+  trip.googlePins = next.googlePins;
+  if (removed.length) trip.removedGooglePinIds = removed;
+  else delete trip.removedGooglePinIds;
+}
+
+/**
+ * On a retry, fill missing details and take a corrected name or location for the same place,
+ * while preserving a day chosen or cleared by the traveler.
+ */
+export function mergeGooglePins(trip: Trip, incoming: readonly unknown[], source: 'import' | 'backup' = 'import'): GooglePinResult {
+  const result = { added: 0, linked: 0, skipped: 0 };
+  let datesOutsideTrip = 0, unresolved = 0, previouslyRemoved = 0;
+  const removed = new Set(trip.removedGooglePinIds);
+  const pins = new Map(trip.googlePins?.map(pin => [pin.id, pin]));
+  for (const value of incoming) {
+    const pin = cleanGooglePin(value, trip.start, trip.end, source === 'import');
+    if (removed.has(pin.id)) {
+      previouslyRemoved++;
+      continue;
+    }
+    // Google's export writes [0, 0] for a place whose location it does not know.
+    if (pin.xy[0] === 0 && pin.xy[1] === 0) {
+      if (source === 'import') throw Error('A Google Pin at [0, 0] has no known location');
+      unresolved++;
+      continue;
+    }
+    if (isRecord(value) && value.date !== undefined && !pin.date) datesOutsideTrip++;
+    const previous = pins.get(pin.id);
+    if (!previous) {
+      pins.set(pin.id, pin);
+      result.added++;
+      continue;
+    }
+    const date = !previous.dayEdited && !previous.date ? pin.date : undefined;
+    const savedAt = !previous.savedAt ? pin.savedAt : undefined;
+    // A backup can fill an unresolved location, while a fresh import can also correct a known one.
+    const corrected = (source === 'import' || (previous.xy[0] === 0 && previous.xy[1] === 0)) &&
+      (previous.name !== pin.name || previous.xy[0] !== pin.xy[0] || previous.xy[1] !== pin.xy[1]);
+    if (date || savedAt || corrected) {
+      pins.set(pin.id, {
+        ...previous,
+        ...(corrected ? { name: pin.name, xy: pin.xy } : {}),
+        ...(date ? { date } : {}),
+        ...(savedAt ? { savedAt } : {})
+      });
+      result.linked++;
+    } else result.skipped++;
+  }
+  if (pins.size > googlePinLimit) throw Error('Too many Google Pins in this trip');
+  if (result.added || result.linked) trip.googlePins = [...pins.values()];
+  return { ...result, ...(datesOutsideTrip ? { datesOutsideTrip } : {}), ...(unresolved ? { unresolved } : {}), ...(previouslyRemoved ? { previouslyRemoved } : {}) };
+}
+
 export function distanceMeters([lat, lon]: Point, [nextLat, nextLon]: Point): number {
   const rad = Math.PI / 180;
   const a = Math.sin((nextLat - lat) * rad / 2) ** 2 +
@@ -115,13 +236,13 @@ function knownEarlier(time: string, than: string): boolean {
   return precise(time) < precise(than);
 }
 
-function linkPhotoReferences(pin: Stop, incoming: Stop): 'linked' | 'skipped' {
+function linkPhotoReferences(pin: Stop, incoming: Stop, keepLocation = false): 'linked' | 'skipped' {
   // Follow the journal's persisted reference limit. Spatial deduplication still works at capacity.
   const refs = [...new Set([...pin.refs, ...incoming.refs])].slice(0, 100);
   const time = incoming.captureTime || incoming.time;
   const current = pin.captureTime || pin.time;
   // A pin the traveler placed or timed by hand keeps collecting references and stays where they put it.
-  const earlier = !pin.edited && pin.date === incoming.date && photoLocation(pin) && photoLocation(incoming) && time &&
+  const earlier = !keepLocation && !pin.edited && pin.date === incoming.date && photoLocation(pin) && photoLocation(incoming) && time &&
     (!current || knownEarlier(time, current)) &&
     distanceMeters(pin.photoAnchor ?? pin.xy, incoming.xy) <= photoPinRadiusMeters;
   if (!earlier && refs.length === pin.refs.length) return 'skipped';
@@ -212,6 +333,17 @@ export function cleanTrip(value: unknown): Trip {
   const stops = value.stops.map(cleanStop),
     ids = new Set(stops.map(s => s.id));
   if (ids.size !== stops.length || stops.some(s => s.date < start || s.date > end)) throw Error('תחנה כפולה או תאריך מחוץ לטווח');
+  if (value.googlePins !== undefined && (!Array.isArray(value.googlePins) || value.googlePins.length > googlePinLimit)) {
+    throw Error('Invalid Google Pins collection');
+  }
+  const googlePins = value.googlePins?.map((pin: unknown) => cleanGooglePin(pin, start, end));
+  if (googlePins && new Set(googlePins.map(pin => pin.id)).size !== googlePins.length) throw Error('Duplicate Google Pin ID');
+  const removed = value.removedGooglePinIds;
+  if (removed !== undefined && (!Array.isArray(removed) || !removed.every(validGooglePinId))) {
+    throw Error('Invalid removed Google Pin IDs');
+  }
+  const removedIds = new Set<string>(removed);
+  if (googlePins?.some(pin => removedIds.has(pin.id))) throw Error('A removed Google Pin cannot also be saved');
   const homeXY = point(value.homeXY);
   const edges: Edge[] = [];
   if (Array.isArray(value.edges)) for (const e of value.edges) {
@@ -234,6 +366,8 @@ export function cleanTrip(value: unknown): Trip {
     home: text(value.home),
     homeXY,
     stops,
+    ...(googlePins?.length ? { googlePins } : {}),
+    ...(removedIds.size ? { removedGooglePinIds: [...removedIds] } : {}),
     edges,
     rules: text(value.rules, 2400),
     checks: cleanChecks(value.checks, start, end),
@@ -256,13 +390,14 @@ const normalized = (value: string) => value.toLowerCase().replace(/[^\p{L}\d]+/g
 function corroborates(existing: Stop, incoming: Stop): boolean {
   return existing.kind === 'visit' && incoming.kind === 'visit' && normalized(existing.name) === normalized(incoming.name) && (!existing.time || !incoming.time || existing.time === incoming.time) && (!existing.address || !incoming.address || normalized(existing.address) === normalized(incoming.address)) && incoming.sources.length > 0 && existing.sources.every(s => !incoming.sources.includes(s));
 }
-export function mergeStops(trip: Trip, incoming: readonly unknown[]): MergeResult {
+export function mergeStops(trip: Trip, incoming: readonly unknown[], restoredIds?: Map<string, string>): MergeResult {
   const result = {
     added: 0,
     linked: 0,
     skipped: 0
   };
-  const ids = new Set(trip.stops.map(stop => stop.id));
+  const byId = new Map(trip.stops.map(stop => [stop.id, stop]));
+  const originalPins = restoredIds && new Set(trip.stops);
   const batch = incoming.map(cleanStop);
   // Sort only photo slots, leaving the order of the traveler's other evidence intact.
   const orderedPhotos = batch.filter(photoLocation).sort((a, b) =>
@@ -270,7 +405,9 @@ export function mergeStops(trip: Trip, incoming: readonly unknown[]): MergeResul
   let photoIndex = 0;
   const link = (pin: Stop, stop: Stop) => {
     const was = pin.xy;
-    result[linkPhotoReferences(pin, stop)]++;
+    // A restore can add references to a current pin without moving it and invalidating the saved route.
+    result[linkPhotoReferences(pin, stop, originalPins?.has(pin))]++;
+    restoredIds?.set(stop.id, pin.id);
     // A saved route ends where the pin was. It goes with the move, as it does when the traveler moves a pin.
     if (was && pin.xy && (was[0] !== pin.xy[0] || was[1] !== pin.xy[1])) {
       trip.edges = trip.edges.filter(edge => edge.a !== pin.id && edge.b !== pin.id);
@@ -294,14 +431,22 @@ export function mergeStops(trip: Trip, incoming: readonly unknown[]): MergeResul
       link(repeated, stop);
       continue;
     }
-    if (ids.has(stop.id) || repeated) {
+    const sameId = byId.get(stop.id);
+    if (sameId || repeated) {
+      // Unrelated older records can reuse an ID. Their saved routes must not move to this stop.
+      if (repeated) restoredIds?.set(stop.id, repeated.id);
+      else if (restoredIds && sameId && (!stop.refs.length || !sameId.refs.length) && normalized(sameId.name) === normalized(stop.name)) {
+        restoredIds.set(stop.id, sameId.id);
+      }
       result.skipped++;
       continue;
     }
-    const matches = day.filter(s => corroborates(s, stop) &&
+    // Backup records without references have only their own ID to identify them on a repeat restore.
+    const matches = restoredIds && !stop.refs.length ? [] : day.filter(s => corroborates(s, stop) &&
       (!isPhoto || !s.xy || distanceMeters(s.xy, stop.xy) <= photoPinRadiusMeters));
     if (matches.length === 1) {
       combineEvidence(matches[0], stop);
+      restoredIds?.set(stop.id, matches[0].id);
       result.linked++;
       continue;
     }
@@ -314,7 +459,8 @@ export function mergeStops(trip: Trip, incoming: readonly unknown[]): MergeResul
     }
     stop.rank = Math.max(0, ...day.map(s => s.rank)) + 1;
     trip.stops.push(stop);
-    ids.add(stop.id);
+    byId.set(stop.id, stop);
+    restoredIds?.set(stop.id, stop.id);
     result.added++;
   }
   return result;

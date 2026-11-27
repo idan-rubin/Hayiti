@@ -1,12 +1,56 @@
-import { cleanStop, member, sources } from './core.ts';
+import { cleanTrip, cleanStop, isRecord, member, mergeGooglePins, mergeStops, safeDate, sources, type GooglePinResult, type Stop, type Trip } from './core.ts';
+import { restoreMissingRoutes } from './route-update.ts';
+
 export interface ImportResult {
   stops: Stop[];
   omitted: number;
   checks?: unknown;
+  googlePins?: unknown[];
+  pinPreview?: GooglePinResult;
   needsDateOrder?: boolean;
 }
-import type { Stop } from './core.ts';
-import { safeDate } from './core.ts';
+
+export function prepareTripBackup(value: unknown, trips: readonly Trip[]) {
+  const backup = cleanTrip(value);
+  const existing = trips.find(trip => trip.id === backup.id);
+  const trip = existing ? structuredClone(existing) : backup;
+  const restoredIds = new Map<string, string>();
+  const stops = existing ? mergeStops(trip, backup.stops.toSorted((a, b) => a.date.localeCompare(b.date) || a.rank - b.rank), restoredIds)
+    : { added: backup.stops.length, linked: 0, skipped: 0 };
+  const routes = existing ? restoreMissingRoutes(trip, backup, restoredIds) : trip.edges.length;
+  if (!existing) delete trip.googlePins;
+  else if (backup.removedGooglePinIds?.length) {
+    // This journal's current choices win, including pins the traveler explicitly restored.
+    const savedIds = new Set(trip.googlePins?.map(pin => pin.id));
+    const removed = new Set([...(trip.removedGooglePinIds ?? []), ...backup.removedGooglePinIds.filter(id => !savedIds.has(id))]);
+    if (removed.size) trip.removedGooglePinIds = [...removed];
+  }
+  // Use the validated source pins so the import can still report dates outside the destination trip.
+  const pins = isRecord(value) && Array.isArray(value.googlePins) && value.googlePins.length
+    ? mergeGooglePins(trip, value.googlePins, 'backup') : undefined;
+  return { trip, stops, pins, routes, recordCount: backup.stops.length };
+}
+
+/** Preview an agent evidence package against the selected trip without changing its stops or bookmarks. */
+export function importEvidencePackage(data: unknown, trip: Trip | null): ImportResult {
+  if (!isRecord(data) || !['hayiti-stops/1', 'masluli-stops/1'].includes(String(data.format)) || !Array.isArray(data.stops)) {
+    throw Error('פורמט גיבוי לא מוכר');
+  }
+  if (!trip) throw Error('יש ליצור טיול לפני ייבוא תחנות');
+  if (data.tripId !== undefined && data.tripId !== trip.id) throw Error('הטיול השתנה. יש לבחור את קובץ הייבוא מחדש.');
+  const stops = data.stops.map(cleanStop);
+  const googlePins = data.googlePins;
+  let pinPreview: GooglePinResult | undefined;
+  if (googlePins !== undefined) {
+    if (!Array.isArray(googlePins)) throw Error('Invalid Google Pins collection');
+    if (googlePins.length) pinPreview = mergeGooglePins({ ...trip }, googlePins);
+  }
+  return {
+    stops, omitted: 0,
+    ...(googlePins ? { googlePins, pinPreview } : {}),
+    checks: data.start === trip.start && data.end === trip.end ? data.sourceChecks : null
+  };
+}
 type DateOrder = 'day-first' | 'month-first';
 export function parseDate(s = '', order: DateOrder = 'day-first') {
   const iso = s.match(/\b(20\d{2})-(\d{2})-(\d{2})\b/);
