@@ -215,9 +215,9 @@ export const tools = [{
       stopId: { type: 'string' },
       expectedRevision: { type: 'string', description: 'Current journal revision from get_day.' },
       name: { type: 'string', minLength: 1, maxLength: 160, description: 'Optional corrected display name approved by the traveler.' },
-      address: { type: 'string', maxLength: 400, description: 'Verified branch address. An empty string clears it. Switching an exact pin to approximate clears the previous street address; later edits preserve private addresses unless explicitly changed. Shares omit approximate addresses.' },
+      address: { type: 'string', maxLength: 400, description: 'Verified branch address. An empty string clears it. When switching an exact pin to approximate, omit this field or send an empty string; a non-empty value is rejected. Later edits preserve private addresses unless explicitly changed. Shares omit approximate addresses.' },
       xy: { anyOf: [{ ...stopShape.properties.xy, minItems: 2, maxItems: 2 }, { type: 'null' }], description: 'Approved branch or area coordinates in latitude, longitude order. Null removes the saved coordinates.' },
-      approx: { type: 'boolean', description: 'True for an area-level location. Switching an exact pin to approximate requires a different, traveler-approved area point and clears the previous street address. Shares preserve the saved place label and omit its address.' },
+      approx: { type: 'boolean', description: 'True for an area-level location. Switching an exact pin to approximate requires a different, traveler-approved area point and clears the previous street address. Omit address or send an empty string during the switch. Shares preserve the saved place label and omit its address.' },
       confirmVisit: { type: 'boolean', description: 'True when the traveler confirms physical attendance. Supplying an address alone preserves the existing classification.' }
     },
     required: ['tripId', 'date', 'stopId', 'expectedRevision']

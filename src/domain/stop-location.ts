@@ -89,6 +89,9 @@ export function correctStopLocation(trip: Trip, args: Record<string, unknown>, r
   if (stop.address && address && address !== stop.address && stop.xy && args.xy === undefined) throw Error('For a pinned stop, confirm its coordinates, supply the new point, or send xy: null to clear it');
   const xy = correctedPoint(args.xy, stop.xy);
   const approx = xy !== null && (args.approx ?? stop.approx);
+  if (approx && !stop.approx && args.address !== undefined && address) {
+    throw Error('Omit address or use an empty string when switching an exact location to approximate.');
+  }
   const moved = xy?.[0] !== stop.xy?.[0] || xy?.[1] !== stop.xy?.[1];
   const promote = args.confirmVisit === true && stop.kind === 'uncertain';
   const next: Stop = { ...stop, name, address, xy, approx, kind: promote ? 'visit' : stop.kind };

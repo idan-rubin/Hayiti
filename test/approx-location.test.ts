@@ -37,15 +37,14 @@ await test('an approximate label cannot keep an exact pin or invalidate its rout
 await test('an approved area replaces the address and shares its saved general label and point', () => {
   const trip = fixture(), unchangedLeg = structuredClone(trip.edges[1]);
   const args = { date, stopId: 'purchase', expectedRevision: 'r1', approx: true,
-    name: 'Carmel Market', xy: [51.923, 4.482], address: '17 Canal Street' };
+    name: 'Carmel Market', xy: [51.923, 4.482] };
   assert.equal(correctStopLocation(trip, args, 'r1'), true);
   const purchase = trip.stops[1];
   assert.equal(purchase.name, 'Carmel Market');
   assert.equal(purchase.address, '');
   assert.deepEqual(purchase.xy, args.xy);
   assert.deepEqual(trip.edges, [unchangedLeg]);
-  assert.throws(() => correctStopLocation(trip, args, 'r2'), /journal changed/i);
-  assert.equal(correctStopLocation(trip, { ...args, address: '' }, 'r2'), false);
+  assert.equal(correctStopLocation(trip, args, 'r2'), false);
   const shared = shareableTrip(trip, false);
   assert.equal(shared.stops[1].name, 'Carmel Market');
   assert.equal(shared.stops[1].address, '');
@@ -104,6 +103,16 @@ await test('a new approximate stop keeps its selected label and private area des
   assert.equal(next.address, 'Market neighborhood');
 });
 
+await test('an explicitly empty address switches to an approximate point and identical retries stay no-ops', () => {
+  const trip = fixture();
+  const args = { date, stopId: 'purchase', expectedRevision: 'r1', approx: true, xy: [51.923, 4.482], address: '' };
+  assert.equal(correctStopLocation(trip, args, 'r1'), true);
+  assert.equal(trip.stops[1].address, '');
+  const saved = structuredClone(trip);
+  assert.equal(correctStopLocation(trip, args, 'r2'), false);
+  assert.deepEqual(trip, saved);
+});
+
 await test('hosted approximation rejects the original point, respects revisions and retries safely', async () => {
   const bucket = new MemoryBucket(), trip = fixture();
   const revision = await storeState(bucket, 'traveler', [trip], '');
@@ -121,14 +130,26 @@ await test('hosted approximation rejects the original point, respects revisions 
   assert.match(refused.content[0].text, /different point/);
   assert.deepEqual(await loadState(bucket, 'traveler'), { trips: [trip], rev: revision });
 
-  const args = { expectedRevision: revision, approx: true, xy: [51.923, 4.482], address: trip.stops[1].address };
+  for (const address of [trip.stops[1].address, 'Canal district']) {
+    const rejectedArgs = { expectedRevision: revision, approx: true, xy: [51.923, 4.482], address };
+    const rejected = await correct(rejectedArgs);
+    assert.equal(rejected.isError, true);
+    assert.match(rejected.content[0].text, /omit address/i);
+    const reread = await loadState(bucket, 'traveler');
+    assert.deepEqual(reread, { trips: [trip], rev: revision });
+    const repeated = await correct({ ...rejectedArgs, expectedRevision: reread.rev });
+    assert.equal(repeated.isError, true);
+    assert.deepEqual(await loadState(bucket, 'traveler'), reread);
+  }
+
+  const args = { expectedRevision: revision, approx: true, xy: [51.923, 4.482] };
   assert.equal((await correct({ ...args, expectedRevision: 'stale' })).isError, true);
   assert.equal((await loadState(bucket, 'traveler')).rev, revision);
   const applied = JSON.parse((await correct(args)).content[0].text);
   assert.equal(applied.updated, true);
   const saved = await loadState(bucket, 'traveler');
   assert.equal(saved.trips[0].stops[1].address, '');
-  const retried = JSON.parse((await correct({ ...args, address: '' })).content[0].text);
+  const retried = JSON.parse((await correct(args)).content[0].text);
   assert.deepEqual(retried, { ...applied, updated: false });
   assert.deepEqual(await loadState(bucket, 'traveler'), saved);
 
