@@ -28,7 +28,7 @@
     gap:.25rem;
   }
   .toolbar button {padding-inline:.4rem}
-  .toolbar #wholeTrip {grid-column:4; grid-row:1; justify-self:end}
+  .toolbar #wholeTrip {justify-self:start}
   .toolbar #connections {grid-column:1 / -1; grid-row:2; justify-self:start}
 }
 .date-control {
