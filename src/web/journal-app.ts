@@ -143,13 +143,16 @@ function coveredEdges() {
     return rect?.height ? rect.bottom - box.top + 6 : 0;
   };
   const top = Math.max(bottomOf(document.querySelector('header nav')), bottomOf(mapControls));
-  if (sheet.narrow) return { top, left: 0, right: 0, bottom: sheet.cover };
+  // The legend lies over the foot of the map. On a narrow screen it rides above the sheet.
+  const legend = document.querySelector('.legend')?.getBoundingClientRect();
+  const foot = legend?.height ? box.bottom - legend.top + 6 : 0;
+  if (sheet.narrow) return { top, left: 0, right: 0, bottom: Math.max(sheet.cover, foot) };
   const panel = $('panel').getBoundingClientRect();
-  if (!panel.width) return { top, left: 0, right: 0, bottom: 0 };
+  if (!panel.width) return { top, left: 0, right: 0, bottom: foot };
   // The panel follows the reading direction, so it covers the left edge in English and the right edge in Hebrew.
   const onRight = panel.left - box.left > box.right - panel.right;
   const beside = (onRight ? box.right - panel.left : panel.right - box.left) + 6;
-  return { top, left: onRight ? 0 : beside, right: onRight ? beside : 0, bottom: 0 };
+  return { top, left: onRight ? 0 : beside, right: onRight ? beside : 0, bottom: foot };
 }
 // Leaflet reads these shared pairs when a popup opens, including markers created while the map was covered.
 const popupOptions: PopupOptions = { autoPanPaddingTopLeft: [8, 8], autoPanPaddingBottomRight: [8, 8] };
