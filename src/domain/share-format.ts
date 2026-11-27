@@ -37,6 +37,7 @@ export function shareableTrip(trip: Trip, includeOrigin: boolean, day: string | 
       approx
     };
   });
+  if (includeOrigin && trip.homeXY && !ids.has('base')) ids.set('base', 'base');
   const edges = trip.edges.filter(edge => ids.has(edge.a) && ids.has(edge.b)).map(({
     a,
     b,

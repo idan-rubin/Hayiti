@@ -197,9 +197,10 @@ export function cleanTrip(value: unknown): Trip {
   const stops = value.stops.map(cleanStop),
     ids = new Set(stops.map(s => s.id));
   if (ids.size !== stops.length || stops.some(s => s.date < start || s.date > end)) throw Error('תחנה כפולה או תאריך מחוץ לטווח');
+  const homeXY = point(value.homeXY);
   const edges: Edge[] = [];
   if (Array.isArray(value.edges)) for (const e of value.edges) {
-    if (!isRecord(e) || typeof e.a !== 'string' || typeof e.b !== 'string' || !ids.has(e.a) || !ids.has(e.b)) continue;
+    if (!isRecord(e) || typeof e.a !== 'string' || typeof e.b !== 'string' || (!ids.has(e.a) && !(e.a === 'base' && homeXY)) || !ids.has(e.b)) continue;
     edges.push({
       a: e.a,
       b: e.b,
@@ -216,7 +217,7 @@ export function cleanTrip(value: unknown): Trip {
     start,
     end,
     home: text(value.home),
-    homeXY: point(value.homeXY),
+    homeXY,
     stops,
     edges,
     rules: text(value.rules, 2400),
