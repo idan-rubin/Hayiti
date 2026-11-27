@@ -1,5 +1,5 @@
 import { journalErrors } from '../domain/journal-errors.ts';
-import { cleanTrip, cleanStop, isRecord, member, mergeGooglePins, mergeStops, point, reportSources, safeDate, validOutcome, type Trip } from '../domain/core.ts';
+import { cleanTrip, cleanStop, isRecord, member, mergeGooglePins, mergeStops, point, reportSources, restoreGooglePin, safeDate, validOutcome, type Trip } from '../domain/core.ts';
 import { dayStops, indexEdges, routeStops, walkingStats } from '../domain/daily-route.ts';
 import { loadState, storeState, type Bucket } from './storage.ts';
 import { setDayRoutes } from '../domain/route-update.ts';
@@ -25,6 +25,14 @@ async function callTool(bucket: Bucket, owner: string, name: unknown, args: Reco
     id, title: title || 'My trip', start, end
   }));
   const trip = journal.trips.find(t => t.id === args.tripId);
+  if (name === 'restore_google_pin') {
+    if (!trip) throw Error('Trip not found');
+    const removedCount = trip.removedGooglePinIds?.length ?? 0;
+    restoreGooglePin(trip, args.pin);
+    const restored = (trip.removedGooglePinIds?.length ?? 0) < removedCount;
+    if (restored) await storeState(bucket, owner, journal.trips, journal.rev);
+    return { restored };
+  }
   if (name === 'list_google_pins') {
     if (!trip) throw Error('טיול לא נמצא');
     const offset = args.offset ?? 0;
@@ -167,7 +175,7 @@ export async function journalAPI(req: Request, bucket: Bucket, mode: 'web' | 'mc
           instructions: [
             'Start in chat. Read list_trips and reuse the matching trip. Resolve dates, destination and optional home base from authorized context. Ask only for missing details that affect the route.',
             'Use the sources the traveler chooses. For photo evidence, search the actual photo library by local capture dates across albums. Google Drive and Google Photos are separate sources. Reuse authorized access and batch-read available timestamps and GPS. Photos and links are optional.',
-            'For Google Maps bookmarks, list_google_pins first, then pass approved saved places in googlePins to add_trip_stops. Preserve the original save time only when the source identifies it. Use the verified local save date or the traveler’s chosen day. A save is not evidence of a visit.',
+            'For Google Maps bookmarks, list_google_pins first, then pass approved saved places in googlePins to add_trip_stops. Preserve the original save time only when the source identifies it. Use the verified local save date or the traveler’s chosen day. A save is not evidence of a visit. Imports respect removed bookmarks; use restore_google_pin with the original pin only when the traveler explicitly asks to restore it.',
             'Read get_day for affected dates before writing. Count Live Photo pairs once. Group photo-only locations within 100 metres of a fixed pin on the same local day, even across separate bursts. Use the earliest capture for the pin coordinates and include captureTime when available. Compare against existing stops. Preserve distinct venues and revisit times. Use stable opaque refs so retries are safe.',
             'Work out the order before drawing paths. Preserve stated corrections and before/after rules. The journal does not record which stops the traveler ordered by hand: treat a saved order as possibly theirs, show a proposed order and write it only after they approve. Distinguish a local purchase, photo, or ride time from a posting date or an unconfirmed reservation. For untimed venue visits, check opening hours for that branch, weekday and trip date, including holiday exceptions. Treat current hours as a clue for a historical date. Overlapping windows leave the order uncertain. Give the traveler’s recollection and timed evidence priority over proximity. Do not turn opening times into visit times.',
             'Infer the order in chat from trip evidence and traveler rules. Read get_day, keep confirmed taxi pairs together, and pass previous and next stop IDs in set_day_routes.order together with verified directions for the new adjacent pairs. Honor travel modes tied to a specific leg and use road directions for known taxi rides. A day-level fare alone does not identify a leg. Call set_day_routes with verified network geometry and omit unavailable directions or unsupported travel modes.',

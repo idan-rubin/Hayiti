@@ -114,8 +114,30 @@ export const tools = [{
     required: ['tripId']
   }
 }, {
+  name: 'restore_google_pin',
+  description: 'Restore one previously removed Google Maps bookmark only when the traveler explicitly asks to bring it back. Supply its original stable ID and verified name and coordinates from the source. The restored pin stays private and outside the itinerary, walking distance and public shares. A retry is a no-op. Use add_trip_stops for ordinary imports; never use this tool to bypass previouslyRemoved automatically.',
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: true },
+  inputSchema: {
+    type: 'object', additionalProperties: false,
+    properties: {
+      tripId: { type: 'string' },
+      pin: {
+        type: 'object', additionalProperties: false,
+        properties: {
+          id: { type: 'string', minLength: 1, maxLength: 180 },
+          name: { type: 'string', minLength: 1, maxLength: 160 },
+          xy: { ...stopShape.properties.xy, minItems: 2, maxItems: 2 },
+          date: { type: 'string', description: 'Assigned trip day in local YYYY-MM-DD. Omit when unknown.' },
+          savedAt: { type: 'string', description: 'Optional source-reported original save date or ISO timestamp with offset.' }
+        },
+        required: ['id', 'name', 'xy']
+      }
+    },
+    required: ['tripId', 'pin']
+  }
+}, {
   name: 'add_trip_stops',
-  description: 'Create a dated trip, append visits, or save Google Maps bookmarks in googlePins. For a bookmarks-only import, send stops: []. Reuse the original bookmark ID so removals are respected; previouslyRemoved counts bookmarks the traveler chose to leave out. Supply a title, start and end dates for a new trip. Save only the place and itinerary details approved by the traveler. Repeating a stop with the same source reference on the same day skips the duplicate.',
+  description: 'Create a dated trip, append visits, or save Google Maps bookmarks in googlePins. For a bookmarks-only import, send stops: []. Reuse the original bookmark ID so removals are respected; previouslyRemoved counts bookmarks the traveler chose to leave out. Only an explicit traveler request to bring one back permits restore_google_pin with its original pin data. Supply a title, start and end dates for a new trip. Save only the place and itinerary details approved by the traveler. Repeating a stop with the same source reference on the same day skips the duplicate.',
   annotations: {
     readOnlyHint: false,
     destructiveHint: false,

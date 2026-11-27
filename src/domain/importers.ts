@@ -1,5 +1,6 @@
 import { cleanTrip, cleanStop, isRecord, member, mergeGooglePins, mergeStops, safeDate, sources, type GooglePinResult, type Stop, type Trip } from './core.ts';
 import { restoreMissingRoutes } from './route-update.ts';
+import { dayStops } from './daily-route.ts';
 
 export interface ImportResult {
   stops: Stop[];
@@ -10,6 +11,39 @@ export interface ImportResult {
   needsDateOrder?: boolean;
 }
 
+/** Put newly recovered records between their backup neighbors without reordering current records. */
+function restoreBackupOrder(trip: Trip, backup: Trip, restoredIds: ReadonlyMap<string, string>, existing: Trip) {
+  const currentIds = new Set(existing.stops.map(stop => stop.id));
+  const added = new Map(trip.stops.filter(stop => !currentIds.has(stop.id)).map(stop => [stop.id, stop]));
+  const byId = new Map(trip.stops.map(stop => [stop.id, stop]));
+  for (const date of new Set([...added.values()].map(stop => stop.date))) {
+    const ordered = dayStops(trip, date).filter(stop => !added.has(stop.id));
+    const pending: Stop[] = [];
+    let before: Stop | undefined;
+    const insert = (after?: Stop) => {
+      if (!pending.length) return;
+      const previous = before ? ordered.indexOf(before) : -1;
+      const next = after ? ordered.indexOf(after) : -1;
+      // A newer order wins when the backup's two surviving neighbors have been reversed.
+      const index = next > previous ? next : previous >= 0 ? previous + 1 : ordered.length;
+      ordered.splice(index, 0, ...pending);
+      pending.length = 0;
+    };
+    for (const source of dayStops(backup, date)) {
+      const id = restoredIds.get(source.id);
+      const stop = id ? byId.get(id) : undefined;
+      if (!stop || stop.date !== date) continue;
+      if (added.delete(stop.id)) pending.push(stop);
+      else if (ordered.includes(stop)) {
+        insert(stop);
+        before = stop;
+      }
+    }
+    insert();
+    ordered.forEach((stop, index) => { stop.rank = index + 1; });
+  }
+}
+
 export function prepareTripBackup(value: unknown, trips: readonly Trip[]) {
   const backup = cleanTrip(value);
   const existing = trips.find(trip => trip.id === backup.id);
@@ -17,6 +51,7 @@ export function prepareTripBackup(value: unknown, trips: readonly Trip[]) {
   const restoredIds = new Map<string, string>();
   const stops = existing ? mergeStops(trip, backup.stops.toSorted((a, b) => a.date.localeCompare(b.date) || a.rank - b.rank), restoredIds)
     : { added: backup.stops.length, linked: 0, skipped: 0 };
+  if (existing && stops.added) restoreBackupOrder(trip, backup, restoredIds, existing);
   const routes = existing ? restoreMissingRoutes(trip, backup, restoredIds) : trip.edges.length;
   if (!existing) delete trip.googlePins;
   else if (backup.removedGooglePinIds?.length) {

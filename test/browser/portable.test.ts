@@ -1167,3 +1167,46 @@ await test('a removed Google Pin stays off the map after reload and reimport unt
     await browser.close();
   }
 });
+
+await test('a backup restores a missing middle visit in place with both saved walks after reload', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await page.route('https://**/*', route => route.abort());
+    const date = '2026-06-14';
+    const stops = ['Cafe', 'Museum', 'Park'].map((name, index) => ({
+      id: name.toLowerCase(), name, date, rank: index + 1, sources: ['manual'], refs: ['visit:' + name],
+      xy: [51.92 + index * 0.0005, 4.48 + index * 0.001]
+    }));
+    const edges = stops.slice(1).map((stop, index) => ({
+      a: stops[index].id, b: stop.id, type: 'walk', m: 100,
+      line: [stops[index].xy, stop.xy]
+    }));
+    const trip = { id: 'middle-stop', title: 'Fictional afternoon', start: date, end: date, stops, edges };
+    await page.goto(new URL('../../dist/web/Hayiti.html?lang=en', import.meta.url).href);
+    const importBackup = async (record: typeof trip) => {
+      await page.locator('#import').click();
+      await page.locator('[data-tab="files"]').click();
+      await page.locator('#file').setInputFiles({ name: 'afternoon.json', mimeType: 'application/json',
+        buffer: Buffer.from(JSON.stringify({ format: 'hayiti/1', trip: record })) });
+    };
+    await importBackup({ ...trip, stops: [stops[0], stops[2]], edges: [] });
+    await page.getByRole('button', { name: 'Load trip' }).click();
+    await page.locator('#sources').waitFor({ state: 'hidden' });
+    assert.deepEqual(await page.locator('#stops .stopname').allTextContents(), ['Cafe', 'Park']);
+    await importBackup(trip);
+    await page.locator('#preview').getByText('2 route segments from backup', { exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Load trip' }).click();
+    await page.locator('#sources').waitFor({ state: 'hidden' });
+    assert.deepEqual(await page.locator('#stops .stopname').allTextContents(), ['Cafe', 'Museum', 'Park']);
+    await page.waitForFunction(() => JSON.parse(localStorage.getItem('masluli-portable-v2')!).trips[0].edges.length === 2);
+    await page.reload();
+    await page.locator('#title').filter({ hasText: trip.title }).waitFor();
+    assert.deepEqual(await page.locator('#stops .stopname').allTextContents(), ['Cafe', 'Museum', 'Park']);
+    const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('masluli-portable-v2')!).trips[0]);
+    assert.deepEqual(saved.edges, edges);
+    assert.equal(await page.locator('#map svg path.leaflet-interactive').count(), 2);
+  } finally {
+    await browser.close();
+  }
+});
