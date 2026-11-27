@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { cleanTrip, mergeStops, safeDate } from '../src/domain/core.ts';
+import { cleanTrip, mergeGooglePins, mergeStops, safeDate } from '../src/domain/core.ts';
 import { shareableTrip } from '../src/domain/share-format.ts';
-import { importCsv, importIcs } from '../src/domain/importers.ts';
+import { importCsv, importEvidencePackage, importIcs } from '../src/domain/importers.ts';
 import { indexEdges, routeStops, suggest, walkingStats } from '../src/domain/daily-route.ts';
 import { readFileSync } from 'node:fs';
 export const sample = () => cleanTrip(JSON.parse(readFileSync(new URL('./fixtures/rotterdam.json', import.meta.url), 'utf8')).trip);
@@ -295,4 +295,79 @@ await test('near-home photo pins and their routes stay private after attaching a
   const withHome = shareableTrip(trip, true);
   assert.equal(withHome.stops.length, 4);
   assert.equal(withHome.edges.length, 3);
+});
+
+await test('Google Pins preserve source precision and only infer a verified local trip day', () => {
+  const trip = sample();
+  const pin = { id: 'place-1', name: 'Park', xy: [51.91, 4.48] };
+  const batch = [
+    { ...pin, savedAt: trip.start + 'T00:01:00+02:00' },
+    { ...pin, id: 'date-only', savedAt: trip.start },
+    { ...pin, id: 'utc', savedAt: trip.start + 'T23:45:00Z' },
+    { ...pin, id: 'utc-offset', savedAt: trip.start + 'T23:45:00+00:00' },
+    { ...pin, id: 'converted', savedAt: trip.start + 'T23:45:00Z', date: trip.end },
+    { ...pin, id: 'planned-before', savedAt: '2025-12-01' },
+    { ...pin, id: 'unknown' }
+  ];
+  const before = routeStops(trip, trip.start);
+  assert.deepEqual(mergeGooglePins(trip, batch), { added: 7, linked: 0, skipped: 0 });
+  assert.deepEqual(trip.googlePins?.map(item => item.date), [trip.start, trip.start, undefined, undefined, trip.end, undefined, undefined]);
+  assert.deepEqual(trip.googlePins?.map(item => item.savedAt), batch.map(item => 'savedAt' in item ? item.savedAt : undefined));
+  assert.deepEqual(mergeGooglePins(trip, batch), { added: 0, linked: 0, skipped: 7 });
+  assert.deepEqual(routeStops(trip, trip.start), before);
+  assert.deepEqual(cleanTrip(trip).googlePins, trip.googlePins);
+  assert.equal(Object.hasOwn(shareableTrip(trip, true), 'googlePins'), false);
+});
+
+await test('retrying a Google Pin can supply missing facts and preserves an explicitly cleared day', () => {
+  const trip = sample();
+  const pin = { id: 'place', name: 'Park', xy: [51.91, 4.48] };
+  mergeGooglePins(trip, [pin]);
+  assert.equal(mergeGooglePins(trip, [{ ...pin, date: trip.end }]).linked, 1);
+  const saved = trip.googlePins?.[0];
+  assert.ok(saved);
+  saved.dayEdited = true;
+  delete saved.date;
+  assert.equal(mergeGooglePins(trip, [{ ...pin, savedAt: trip.start }]).linked, 1);
+  const restored = cleanTrip(trip);
+  assert.deepEqual(restored.googlePins, [{ ...pin, savedAt: trip.start, dayEdited: true }]);
+  assert.equal(mergeGooglePins(restored, [{ ...pin, date: trip.start }]).skipped, 1);
+  assert.equal(restored.googlePins?.[0].date, undefined);
+});
+
+await test('invalid Google Pin batches are atomic and an older trip does not acquire pins on load', () => {
+  const trip = sample();
+  const pin = { id: 'park', name: 'Park', xy: [51.91, 4.48] };
+  for (const invalid of [
+    { ...pin, xy: [400, 2] }, { ...pin, id: '' }, { ...pin, name: '' },
+    { ...pin, date: '2026-02-31' }, { ...pin, savedAt: '2026-02-31T12:00:00Z' },
+    { ...pin, savedAt: '2026-06-14T23:50:00' }
+  ]) {
+    assert.throws(() => mergeGooglePins(trip, [pin, invalid]));
+    assert.equal(trip.googlePins, undefined);
+  }
+  assert.throws(() => cleanTrip({ ...trip, googlePins: [pin, pin] }));
+  assert.equal(Object.hasOwn(cleanTrip(trip), 'googlePins'), false);
+});
+
+await test('portable evidence packages preview Google Pins without changing stops or bookmarks', () => {
+  const trip = sample();
+  const item = { id: 'gallery', name: 'Gallery', xy: [51.91, 4.48] };
+  mergeGooglePins(trip, [item]);
+  const before = structuredClone(trip);
+  const data = {
+    format: 'hayiti-stops/1', tripId: trip.id, start: trip.start, end: trip.end,
+    stops: [trip.stops[0]], googlePins: [{ ...item, savedAt: trip.start }], sourceChecks: { gmail: 'checked' }
+  };
+  const preview = importEvidencePackage(data, trip);
+  assert.deepEqual(preview.stops, data.stops);
+  assert.deepEqual(preview.checks, data.sourceChecks);
+  assert.deepEqual(preview.googlePins, data.googlePins);
+  assert.deepEqual(importEvidencePackage({ format: 'masluli-stops/1', stops: [] }, trip).stops, []);
+  assert.throws(() => importEvidencePackage({ ...data, googlePins: [...data.googlePins, { xy: [0, 0] }] }, trip));
+  assert.throws(() => importEvidencePackage({ ...data, stops: [{}] }, trip));
+  assert.throws(() => importEvidencePackage({ ...data, tripId: 'another-trip' }, trip));
+  assert.deepEqual(trip, before);
+  assert.deepEqual(mergeGooglePins(trip, preview.googlePins ?? []), { added: 0, linked: 1, skipped: 0 });
+  assert.equal(trip.googlePins?.[0].date, trip.start);
 });

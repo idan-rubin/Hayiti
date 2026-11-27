@@ -276,3 +276,30 @@ await test('list_trips gives an untitled trip a display name without renaming it
   ]);
   assert.equal((await loadState(env.BUCKET, 'alice')).trips[0].title, '');
 });
+
+await test('the agent can import and list private Google Pins independently of routed stops', async () => {
+  const { tool, trip, env } = fixture();
+  const pins = [
+    { id: 'park', name: 'Park', xy: [51.91, 4.48], savedAt: trip.start },
+    { id: 'museum', name: 'Museum', xy: [51.93, 4.47] }
+  ];
+  const args = { tripId: trip.id, start: trip.start, end: trip.end, stops: [], googlePins: pins };
+  const write = await (await tool('add_trip_stops', args)).json();
+  assert.deepEqual(JSON.parse(write.result.content[0].text).googlePins, { added: 2, linked: 0, skipped: 0 });
+  const before = await loadState(env.BUCKET, 'alice');
+  const retry = await (await tool('add_trip_stops', args)).json();
+  assert.deepEqual(JSON.parse(retry.result.content[0].text).googlePins, { added: 0, linked: 0, skipped: 2 });
+  assert.equal((await loadState(env.BUCKET, 'alice')).rev, before.rev);
+  const list = await (await tool('list_google_pins', { tripId: trip.id })).json();
+  assert.deepEqual(JSON.parse(list.result.content[0].text), [{ ...pins[0], date: trip.start }, pins[1]]);
+  const response = await (await tool('get_day', { tripId: trip.id, date: trip.start })).json();
+  const day = JSON.parse(response.result.content[0].text);
+  assert.deepEqual(day.googlePins, [{ ...pins[0], date: trip.start }]);
+  assert.deepEqual(day.stops, []);
+  assert.deepEqual(day.routes, []);
+  assert.equal(day.walking.stopCount, 0);
+  assert.equal((await (await tool('list_google_pins', { tripId: trip.id }, 'bob')).json()).result.isError, true);
+  const invalid = await (await tool('add_trip_stops', { ...args, stops: trip.stops, googlePins: [{ ...pins[0], xy: null }] })).json();
+  assert.equal(invalid.result.isError, true);
+  assert.equal((await loadState(env.BUCKET, 'alice')).rev, before.rev);
+});

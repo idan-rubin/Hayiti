@@ -1,4 +1,4 @@
-import { cleanTrip, isRecord, mergeStops, type Trip } from '../domain/core.ts';
+import { cleanTrip, isRecord, mergeGooglePins, mergeStops, type Trip } from '../domain/core.ts';
 
 export const guestKey = 'hayiti-unsigned-journal';
 const attemptsKey = 'hayiti-guest-merge';
@@ -159,6 +159,7 @@ export function checkGuestBackup(trips: Trip[], backup: Trip) {
   else {
     projected[index] = structuredClone(projected[index]);
     mergeStops(projected[index], backup.stops);
+    mergeGooglePins(projected[index], backup.googlePins ?? []);
   }
   const probe = 'hayiti-guest-space';
   try {

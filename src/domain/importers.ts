@@ -1,12 +1,33 @@
-import { cleanStop, member, sources } from './core.ts';
+import { cleanStop, isRecord, member, mergeGooglePins, safeDate, sources, type MergeResult, type Stop, type Trip } from './core.ts';
 export interface ImportResult {
   stops: Stop[];
   omitted: number;
   checks?: unknown;
+  googlePins?: unknown[];
+  pinPreview?: MergeResult;
   needsDateOrder?: boolean;
 }
-import type { Stop } from './core.ts';
-import { safeDate } from './core.ts';
+
+/** Preview an agent evidence package against the selected trip without changing its stops or bookmarks. */
+export function importEvidencePackage(data: unknown, trip: Trip | null): ImportResult {
+  if (!isRecord(data) || !['hayiti-stops/1', 'masluli-stops/1'].includes(String(data.format)) || !Array.isArray(data.stops)) {
+    throw Error('פורמט גיבוי לא מוכר');
+  }
+  if (!trip) throw Error('יש ליצור טיול לפני ייבוא תחנות');
+  if (data.tripId !== undefined && data.tripId !== trip.id) throw Error('הטיול השתנה. יש לבחור את קובץ הייבוא מחדש.');
+  const stops = data.stops.map(cleanStop);
+  const googlePins = data.googlePins;
+  let pinPreview: MergeResult | undefined;
+  if (googlePins !== undefined) {
+    if (!Array.isArray(googlePins)) throw Error('Invalid Google Pins collection');
+    if (googlePins.length) pinPreview = mergeGooglePins({ ...trip }, googlePins);
+  }
+  return {
+    stops, omitted: 0,
+    ...(googlePins ? { googlePins, pinPreview } : {}),
+    checks: data.start === trip.start && data.end === trip.end ? data.sourceChecks : null
+  };
+}
 type DateOrder = 'day-first' | 'month-first';
 export function parseDate(s = '', order: DateOrder = 'day-first') {
   const iso = s.match(/\b(20\d{2})-(\d{2})-(\d{2})\b/);

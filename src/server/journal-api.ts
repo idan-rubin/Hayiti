@@ -1,4 +1,4 @@
-import { cleanTrip, cleanStop, isRecord, member, mergeStops, point, reportSources, safeDate, validOutcome } from '../domain/core.ts';
+import { cleanTrip, cleanStop, isRecord, member, mergeGooglePins, mergeStops, point, reportSources, safeDate, validOutcome } from '../domain/core.ts';
 import { dayStops, indexEdges, routeStops, walkingStats } from '../domain/daily-route.ts';
 import { loadState, storeState, type Bucket } from './storage.ts';
 import { setDayRoutes } from '../domain/route-update.ts';
@@ -20,6 +20,10 @@ async function callTool(bucket: Bucket, owner: string, name: unknown, args: Reco
     id, title: title || 'My trip', start, end
   }));
   const trip = journal.trips.find(t => t.id === args.tripId);
+  if (name === 'list_google_pins') {
+    if (!trip) throw Error('טיול לא נמצא');
+    return trip.googlePins ?? [];
+  }
   if (name === 'get_day') {
     if (!trip || !safeDate(args.date)) throw Error('טיול או תאריך לא נמצא');
     const stops = dayStops(trip, args.date).map(({
@@ -33,6 +37,7 @@ async function callTool(bucket: Bucket, owner: string, name: unknown, args: Reco
     const edges = indexEdges(trip);
     return {
       stops,
+      googlePins: trip.googlePins?.filter(pin => pin.date === args.date) ?? [],
       home: trip.home,
       rules: trip.rules,
       homeXY: trip.homeXY,
@@ -52,6 +57,7 @@ async function callTool(bucket: Bucket, owner: string, name: unknown, args: Reco
   }
   if (name !== 'add_trip_stops') throw Error('Unknown tool');
   if (typeof args.tripId !== 'string' || !args.tripId.trim() || args.tripId !== args.tripId.trim() || args.tripId.length > 100 || !Array.isArray(args.stops) || args.stops.length > 200) throw Error('Supply a trip ID and up to 200 stops');
+  if (args.googlePins !== undefined && (!Array.isArray(args.googlePins) || args.googlePins.length > 200)) throw Error('Supply up to 200 Google Pins');
   const incoming = args.stops.map(cleanStop);
   if (incoming.some(s => !s.sources.length || !s.refs.length)) throw Error('Supply a source and stable reference for every stop');
   if (!trip && args.homeXY != null && !point(args.homeXY)) throw Error('Supply homeXY as [latitude, longitude] in degrees');
@@ -78,9 +84,10 @@ async function callTool(bucket: Bucket, owner: string, name: unknown, args: Reco
     };
   }
   const result = mergeStops(target, incoming);
+  const pinResult = args.googlePins && mergeGooglePins(target, args.googlePins);
   if (!trip) journal.trips.push(target);
-  if (!trip || entries.length || result.added || result.linked) await storeState(bucket, owner, journal.trips, journal.rev);
-  return result;
+  if (!trip || entries.length || result.added || result.linked || pinResult?.added || pinResult?.linked) await storeState(bucket, owner, journal.trips, journal.rev);
+  return pinResult ? { ...result, googlePins: pinResult } : result;
 }
 export async function journalAPI(req: Request, bucket: Bucket, mode: 'web' | 'mcp', owner: string | null): Promise<Response> {
   let id: unknown = null;
@@ -137,6 +144,7 @@ export async function journalAPI(req: Request, bucket: Bucket, mode: 'web' | 'mc
           instructions: [
             'Start in chat. Read list_trips and reuse the matching trip. Resolve dates, destination and optional home base from authorized context. Ask only for missing details that affect the route.',
             'Use the sources the traveler chooses. For photo evidence, search the actual photo library by local capture dates across albums. Google Drive and Google Photos are separate sources. Reuse authorized access and batch-read available timestamps and GPS. Photos and links are optional.',
+            'For Google Maps bookmarks, list_google_pins first, then pass approved saved places in googlePins to add_trip_stops. Preserve the original save time only when the source identifies it. Use the verified local save date or the traveler’s chosen day. A save is not evidence of a visit.',
             'Read get_day for affected dates before writing. Count Live Photo pairs once. Group photo-only locations within 100 metres of a fixed pin on the same local day, even across separate bursts. Use the earliest capture for the pin coordinates and include captureTime when available. Compare against existing stops. Preserve distinct venues and revisit times. Use stable opaque refs so retries are safe.',
             'After confirming the saved stop order, default to estimated pedestrian directions between consecutive stops, including across city boundaries. Honor travel modes tied to a specific leg and use road directions for known taxi rides. A day-level fare alone does not identify a leg. Call set_day_routes with verified network geometry and omit unavailable directions or unsupported travel modes.',
             'Save approved stops to the owned trip. Keep remote purchases and uncertain venues off the route. Re-read changed days to verify the result. The write tool appends new stops; verify route order before claiming the route was rebuilt. Show what changed and open the private journal for review.'

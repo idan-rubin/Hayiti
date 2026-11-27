@@ -844,3 +844,130 @@ await test('the portable journal, which has no account, welcomes a traveler with
     await browser.close();
   }
 });
+
+await test('Google Pins belong to the selected day or the whole trip without joining either day’s route', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage({ viewport: { width: 1200, height: 850 } });
+    await page.route('https://**/*', route => route.abort());
+    const firstDay = '2026-06-14', secondDay = '2026-06-15';
+    const trip = {
+      id: 'two-days', title: 'Two days on the river', start: firstDay, end: secondDay,
+      stops: [
+        { id: 'dock', date: firstDay, name: 'First dock', xy: [52, 4], rank: 1 },
+        { id: 'market', date: firstDay, name: 'First market', xy: [52.01, 4.01], rank: 2 },
+        { id: 'garden', date: secondDay, name: 'Second garden', xy: [52.09, 4.09], rank: 1 },
+        { id: 'hall', date: secondDay, name: 'Second hall', xy: [52.10, 4.10], rank: 2 }
+      ],
+      edges: [
+        { a: 'dock', b: 'market', type: 'walk', m: 1500, line: [[52, 4], [52.01, 4.01]] },
+        { a: 'garden', b: 'hall', type: 'walk', m: 1800, line: [[52.09, 4.09], [52.10, 4.10]] }
+      ],
+      googlePins: [
+        { id: 'quay', savedAt: firstDay + 'T23:45:00+02:00', name: 'Old quay', xy: [52.01, 4] },
+        { id: 'tower', date: secondDay, name: 'Bell tower', xy: [52.10, 4.09] },
+        { id: 'cove', name: 'Hidden cove', xy: [52.06, 4.035] }
+      ]
+    };
+    const { googlePins, ...itinerary } = trip;
+    const web = new URL('../../dist/web/Hayiti.html?lang=en', import.meta.url);
+    await page.goto(web.href);
+    await page.locator('#import').click();
+    await page.locator('#file').setInputFiles({
+      name: 'two-days.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ format: 'hayiti/1', trip: itinerary }))
+    });
+    await page.locator('#preview button').click();
+    await page.locator('#sources').waitFor({ state: 'hidden' });
+    const importPins = async () => {
+      await page.locator('#import').click();
+      await page.locator('[data-tab=files]').click();
+      await page.locator('#file').setInputFiles({
+        name: 'pins.json', mimeType: 'application/json',
+        buffer: Buffer.from(JSON.stringify({ format: 'hayiti-stops/1', tripId: trip.id, stops: [], googlePins }))
+      });
+    };
+    await importPins();
+    await page.getByRole('button', { name: 'Save Google Pins' }).click();
+    await page.locator('#sources').waitFor({ state: 'hidden' });
+
+    const scope = page.locator('#wholeTrip'), markers = page.locator('.leaflet-marker-icon.google-pin');
+    const names = () => markers.evaluateAll(pins => pins.map(pin => pin.getAttribute('title')).sort());
+    const routePaths = page.locator('#map svg path.leaflet-interactive');
+    assert.equal(await scope.getAttribute('aria-pressed'), 'false');
+    assert.deepEqual(await names(), ['Old quay · Google Pin']);
+    await markers.click();
+    assert.equal(await page.locator('.google-pin-popup time').getAttribute('datetime'), firstDay + 'T23:45:00+02:00');
+    await page.locator('.leaflet-popup-close-button').click();
+    const firstWalk = await page.locator('#walkSummary').innerText();
+    assert.match(firstWalk, /1\.5 km/);
+    assert.equal(await page.locator('#statStops').textContent(), '2 stops');
+    assert.equal(await routePaths.count(), 1);
+
+    await scope.click();
+    assert.deepEqual(await names(), ['Bell tower · Google Pin', 'Hidden cove · Google Pin', 'Old quay · Google Pin']);
+    assert.equal(await routePaths.count(), 2, 'two daily walks stay separate across the overnight gap');
+    await page.locator('.google-pin[title="Hidden cove · Google Pin"]').click();
+    const popup = page.locator('.google-pin-popup').filter({ hasText: 'Hidden cove' });
+    await popup.getByText('Google save date unavailable').waitFor();
+    assert.equal(await popup.getByRole('combobox', { name: 'Trip day' }).inputValue(), '');
+    await popup.getByRole('combobox', { name: 'Trip day' }).selectOption(secondDay);
+    await page.locator('#stops button[data-day="' + secondDay + '"]').click();
+    assert.equal(await scope.getAttribute('aria-pressed'), 'false');
+    assert.equal(await page.locator('#tripDate').inputValue(), secondDay);
+    assert.deepEqual(await names(), ['Bell tower · Google Pin', 'Hidden cove · Google Pin']);
+    assert.match(await page.locator('#walkSummary').innerText(), /1\.8 km/);
+    assert.equal(await page.locator('#statStops').textContent(), '2 stops');
+    assert.equal(await routePaths.count(), 1);
+
+    await page.reload();
+    await scope.waitFor();
+    await page.locator('#tripDate').selectOption(firstDay);
+    assert.deepEqual(await names(), ['Old quay · Google Pin']);
+    assert.equal(await page.locator('#walkSummary').innerText(), firstWalk);
+    await page.locator('#tripDate').selectOption(secondDay);
+    assert.deepEqual(await names(), ['Bell tower · Google Pin', 'Hidden cove · Google Pin']);
+    await importPins();
+    await page.locator('#preview').getByText(/3 already saved/).waitFor();
+    assert.equal(await page.locator('#preview button').count(), 0);
+    await page.locator('#sources [data-close]').click();
+    await page.locator('#share').click();
+    const exported = await offeredFile(page, '#downloadTrip');
+    for (const { name } of googlePins) assert.equal(exported.html.includes(name), false, 'shared trip excludes ' + name);
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('changing a basemap loads its tiles without moving the daily route or its pins', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage({ viewport: { width: 1000, height: 800 } });
+    const image = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jQ1sAAAAASUVORK5CYII=', 'base64');
+    await page.route('https://**/*', route => route.abort());
+    await page.route(/https:\/\/(?:tiles\.maps\.eox\.at|[abc]\.tile\.opentopomap\.org)\//, route =>
+      route.fulfill({ contentType: 'image/png', body: image, headers: { 'access-control-allow-origin': '*' } }));
+    await page.goto(new URL('../../dist/web/Hayiti.html?lang=en', import.meta.url).href);
+    await page.getByRole('button', { name: 'Try the sample trip' }).click();
+    await page.locator('.leaflet-marker-icon').first().waitFor();
+    const shape = () => page.locator('#map svg path.leaflet-interactive').evaluateAll(paths => paths.map(path => path.getAttribute('d')));
+    const places = () => page.locator('.leaflet-marker-icon').evaluateAll(pins => pins.map(pin => [pin.getAttribute('title'), pin.style.transform]));
+    const types = page.locator('#mapStyle'), scope = page.locator('#wholeTrip');
+    assert.equal(await types.inputValue(), 'streets');
+    const day = await page.locator('#tripDate').inputValue();
+    const original = await places(), route = await shape();
+    assert.ok(original.length > 1 && route.length > 0);
+    for (const [choice, provider] of [['satellite', 'eox.at'], ['terrain', 'opentopomap.org']] as const) {
+      await types.selectOption(choice);
+      await page.locator('.leaflet-tile-loaded[src*="' + provider + '"]').first().waitFor();
+      assert.deepEqual(await places(), original);
+      assert.deepEqual(await shape(), route);
+      assert.equal(await scope.getAttribute('aria-pressed'), 'false');
+      assert.equal(await page.locator('#tripDate').inputValue(), day);
+    }
+    await types.selectOption('streets');
+    assert.equal(await page.locator('.leaflet-tile-loaded').count(), 0);
+    assert.deepEqual(await places(), original);
+  } finally {
+    await browser.close();
+  }
+});

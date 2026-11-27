@@ -100,8 +100,17 @@ export const tools = [{
     required: ['tripId', 'date']
   }
 }, {
+  name: 'list_google_pins',
+  description: 'Read all saved Google Pins for an owned trip, including places without a day assignment.',
+  annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  inputSchema: {
+    type: 'object',
+    properties: { tripId: { type: 'string' } },
+    required: ['tripId']
+  }
+}, {
   name: 'add_trip_stops',
-  description: 'Create a dated trip or append stops the traveler has chosen to save. Supply a title, start and end dates for a new trip. Save only the place and itinerary details approved by the traveler. Repeating a stop with the same source reference on the same day skips the duplicate.',
+  description: 'Create a dated trip, append visits, or save Google Maps bookmarks in googlePins. For a bookmarks-only import, send stops: []. Supply a title, start and end dates for a new trip. Save only the place and itinerary details approved by the traveler. Repeating a stop with the same source reference on the same day skips the duplicate.',
   annotations: {
     readOnlyHint: false,
     destructiveHint: false,
@@ -131,6 +140,21 @@ export const tools = [{
         description: 'Optional verified latitude and longitude of the traveler-approved home base for a new trip.',
         minItems: 2,
         maxItems: 2
+      },
+      googlePins: {
+        type: 'array', maxItems: 200,
+        description: 'Saved places independent of all visits and routes. Reuse the same opaque ID for a Google place on every import.',
+        items: {
+          type: 'object', additionalProperties: false,
+          properties: {
+            id: { type: 'string', minLength: 1, maxLength: 180 },
+            name: { type: 'string', minLength: 1, maxLength: 160 },
+            xy: { ...stopShape.properties.xy, minItems: 2, maxItems: 2 },
+            date: { type: 'string', description: 'Assigned trip day (local YYYY-MM-DD), from the traveler or a verified local save date. Omit when unknown.' },
+            savedAt: { type: 'string', description: 'Optional source-reported date saved, YYYY-MM-DD or ISO timestamp with offset. Omit for a modification, export, or visit date. Provide date separately if a UTC timestamp can be converted to a verified local day.' }
+          },
+          required: ['id', 'name', 'xy']
+        }
       },
       sourceChecks: checkSchema,
       stops: {

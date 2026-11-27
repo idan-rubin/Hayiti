@@ -9,6 +9,10 @@ const credit = '<a href="https://openfreemap.org/">OpenFreeMap</a> © <a href="h
   + ' Data from <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
 
 type Language = 'en' | 'he';
+export type Basemap = 'streets' | 'satellite' | 'terrain';
+export function isBasemap(value: string): value is Basemap {
+  return value === 'streets' || value === 'satellite' || value === 'terrain';
+}
 /** Why the street map is missing, or null when it is drawn. */
 export type StreetMapProblem = 'unreachable' | 'unsupported' | null;
 
@@ -57,12 +61,19 @@ function download(file: string) {
   });
 }
 
-/**
- * Draws the street map and reports whether it could. Returns a function that puts the place names
- * in the journal's current language.
- */
-export function addStreetMap(map: JournalMap, language: () => Language, report: (problem: StreetMapProblem) => void) {
-  let layer: StreetMapLayer | null = null,
+// Switching away during a download must not start two copies of the same map library.
+let libraryDownload: Promise<void> | undefined,
+  portableWorkerUrl: string | undefined,
+  supportsWebGL: boolean | undefined;
+function loadLibrary() {
+  libraryDownload ??= (async () => {
+    for (const file of libraryFiles) await download(file);
+  })().finally(() => { libraryDownload = undefined; });
+  return libraryDownload;
+}
+function startStreets(map: JournalMap, language: () => Language, report: (problem: StreetMapProblem) => void) {
+  let active = true,
+    layer: StreetMapLayer | null = null,
     street: StreetMap | null = null,
     names: string[] = [],
     styled = false,
@@ -80,7 +91,8 @@ export function addStreetMap(map: JournalMap, language: () => Language, report: 
   async function load() {
     if (layer || loading) return;
     // The library draws with the second version of WebGL only.
-    if (!document.createElement('canvas').getContext('webgl2')) {
+    supportsWebGL ??= Boolean(document.createElement('canvas').getContext('webgl2'));
+    if (!supportsWebGL) {
       report('unsupported');
       return;
     }
@@ -90,7 +102,8 @@ export function addStreetMap(map: JournalMap, language: () => Language, report: 
       makeLayer: StreetMapLayerFactory;
     try {
       // Both files run again when either is missing, because the layer keeps the library it was loaded with.
-      if (typeof maplibregl === 'undefined' || !L.maplibreGL) for (const file of libraryFiles) await download(file);
+      if (typeof maplibregl === 'undefined' || !L.maplibreGL) await loadLibrary();
+      if (!active) return;
       if (typeof maplibregl === 'undefined' || !L.maplibreGL) throw Error('Street map library unavailable');
       library = maplibregl;
       makeLayer = L.maplibreGL;
@@ -102,15 +115,16 @@ export function addStreetMap(map: JournalMap, language: () => Language, report: 
       style = received;
     } catch {
       // Offline, the pins and routes are drawn without streets. The map is tried again when the connection returns.
-      report('unreachable');
+      if (active) report('unreachable');
       return;
     } finally {
       loading = false;
     }
+    if (!active) return;
     // The portable journal carries the library's worker as text. The hosted journal serves it as a file.
     const worker = document.querySelector('script[data-part="street-map-worker"]');
     library.setWorkerUrl(worker
-      ? URL.createObjectURL(new Blob([worker.textContent ?? ''], { type: 'text/javascript' }))
+      ? (portableWorkerUrl ??= URL.createObjectURL(new Blob([worker.textContent ?? ''], { type: 'text/javascript' })))
       : new URL('vendor/maplibre-gl-worker.js', document.baseURI).href);
     const made = makeLayer({ style, attributionControl: { customAttribution: credit } });
     try {
@@ -126,23 +140,24 @@ export function addStreetMap(map: JournalMap, language: () => Language, report: 
     street = made.getMaplibreMap();
     report(null);
     street.on('style.load', () => {
+      if (layer !== made) return;
       styled = true;
       // The traveler may have switched language while the style was loading.
       relabel();
     });
     // The style can arrive and the streets it points to still fail, all of them or some tiles.
     street.on('error', event => {
-      if (event.sourceId === undefined) return;
+      if (layer !== made || event.sourceId === undefined) return;
       if (event.tile) failedTiles.add(event.tile);
       else sourceFailed = true;
       report('unreachable');
     });
     // Once the map has drawn a view that no failed tile is part of, the streets in view are complete again.
     street.on('idle', () => {
-      if (!sourceFailed && !tilesMissing()) report(null);
+      if (layer === made && !sourceFailed && !tilesMissing()) report(null);
     });
   }
-  window.addEventListener('online', () => {
+  function reconnect() {
     // Streets that failed to load are drawn again from the start.
     if (layer && (sourceFailed || tilesMissing())) {
       map.removeLayer(layer);
@@ -151,7 +166,84 @@ export function addStreetMap(map: JournalMap, language: () => Language, report: 
       failedTiles.clear();
     }
     void load();
-  });
+  }
+  window.addEventListener('online', reconnect);
   void load();
-  return relabel;
+  return {
+    relabel,
+    remove() {
+      active = false;
+      window.removeEventListener('online', reconnect);
+      const current = layer;
+      layer = null;
+      if (current) map.removeLayer(current);
+    }
+  };
+}
+
+const eoxTiles = 'https://tiles.maps.eox.at/wmts/1.0.0/';
+const osmCredit = '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
+const rasterStyles = {
+  satellite: [
+    {
+      url: eoxTiles + 's2cloudless_3857/default/g/{z}/{y}/{x}.jpg',
+      maxNativeZoom: 14,
+      attribution: '<a href="https://cloudless.eox.at/">EOxCloudless</a> by EOX IT Services GmbH'
+        + ' (Contains modified Copernicus Sentinel data 2016), <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>'
+    },
+    {
+      url: eoxTiles + 'overlay_bright_3857/default/g/{z}/{y}/{x}.png',
+      maxNativeZoom: 14,
+      attribution: '<a href="https://maps.eox.at/">Overlay</a>: ' + osmCredit
+        + ', rendering © <a href="https://eox.at/">EOX</a> and <a href="https://github.com/mapserver/basemaps">MapServer</a>'
+    }
+  ],
+  terrain: [{
+    url: 'https://a.tile.opentopomap.org/{z}/{x}/{y}.png',
+    maxNativeZoom: 17,
+    attribution: osmCredit + ', SRTM | © <a href="https://opentopomap.org/">OpenTopoMap</a>'
+      + ' (<a href="https://creativecommons.org/licenses/by-sa/3.0/">CC BY-SA</a>)'
+  }]
+};
+
+// Leaflet draws these image tiles directly, including on devices that cannot start the vector street map.
+function startRaster(map: JournalMap, style: 'satellite' | 'terrain', report: (problem: StreetMapProblem) => void) {
+  const failedTiles = new Set<HTMLElement>();
+  const layers = rasterStyles[style].map(({ url, maxNativeZoom, attribution }) => {
+    const layer = L.tileLayer(url, { maxNativeZoom, maxZoom: 19, attribution });
+    layer.on('tileerror', ({ tile }) => {
+      failedTiles.add(tile);
+      report('unreachable');
+    });
+    layer.on('tileunload', ({ tile }) => {
+      if (failedTiles.delete(tile) && !failedTiles.size) report(null);
+    });
+    return layer.addTo(map);
+  });
+  function reconnect() {
+    if (failedTiles.size) for (const layer of layers) layer.redraw();
+  }
+  window.addEventListener('online', reconnect);
+  return {
+    remove() {
+      window.removeEventListener('online', reconnect);
+      for (const layer of layers) layer.remove();
+    }
+  };
+}
+
+/** Changes only the map background. The Leaflet camera, route lines and pin layers stay in place. */
+export function addStreetMap(map: JournalMap, language: () => Language, report: (problem: StreetMapProblem) => void) {
+  let selected: Basemap = 'streets';
+  let background: { remove(): void; relabel?(): void } = startStreets(map, language, report);
+  return {
+    relabel() { background.relabel?.(); },
+    select(style: Basemap) {
+      if (style === selected) return;
+      selected = style;
+      background.remove();
+      report(null);
+      background = style === 'streets' ? startStreets(map, language, report) : startRaster(map, style, report);
+    }
+  };
 }

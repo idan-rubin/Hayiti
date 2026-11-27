@@ -16,6 +16,10 @@ ChatGPT can ask for missing dates or a home base, then cross-check the sources y
 
 Review the suggested stops in chat and tell ChatGPT which to save. Open the journal with the same account to see your daily routes, change the home base, edit stops or share a read-only map. To add evidence later, use **Sources and import** in that trip.
 
+Each trip opens on a day. Choose **Whole trip** to see all its days on one map. Each day's route is drawn separately. Choose streets, satellite imagery or a topographic map in either view.
+
+Ask ChatGPT to add saved places from a Google Maps list it can read. A **Google Pin** is a bookmark. It appears on its assigned day and in the trip overview, independently of visit counts and route distances. Pins without a known trip day appear in the overview, where you can assign a day yourself. A save timestamp, when available, records when you bookmarked the place.
+
 Using the portable journal, or the web app without signing in? The sync request asks ChatGPT for a JSON file. Import that file into your trip under **Sources and import** → **Files**.
 
 Agents connecting over MCP receive the trip-building instructions during initialization. The [Map My Trip skill](skills/map-my-trip/SKILL.md) documents the complete workflow for other agent environments.
@@ -50,7 +54,7 @@ On a phone, choose **Stops** to see the day’s visits in order.
 - **Matching.** hayiti checks the day and source reference before adding a stop. Independent records with matching places, compatible times and compatible addresses can corroborate one visit. Ambiguous matches stay separate for review.
 - **Order and distance.** Date, time, ordering rules and location inform the suggested order. Each adjacent pair can carry its own route. Walking is the estimate for each pair unless evidence identifies a different mode. This includes longer walks and crossings between cities. A taxi ride matched to the pair follows the driving network. When directions are unavailable, the journal keeps its existing route or estimated connector. Walking totals use recorded walking segments.
 - **Source status.** Each requested source has a dated status. Finances distinguishes a disconnected source, missing credit or debit accounts, zero transactions and purchases without a mappable place. Gmail and Calendar can contribute independently.
-- **Sharing.** Share a day or trip as a read-only route. The shared version omits notes, photos and source references. The home base is excluded by default. A hosted link can be revoked. A downloaded copy stays with its recipient.
+- **Sharing.** Share a day or trip as a read-only route. The shared version omits notes, photos, private Google Pins and source references. The home base is excluded by default. A hosted link can be revoked. A downloaded copy stays with its recipient.
 
 ## Build from source
 
@@ -124,4 +128,4 @@ npm run test:browser
 
 Use a branch and open a pull request. Describe the user-visible behavior and add a regression test for a bug fix. Use fictional trips in issues, pull requests and fixtures.
 
-hayiti's source is licensed under [MIT](LICENSE). Leaflet, MapLibre GL JS and the MapLibre GL Leaflet layer retain their upstream licenses: [Leaflet](public/vendor/leaflet-LICENSE), [MapLibre GL JS](public/vendor/maplibre-gl-LICENSE.txt), [MapLibre GL Leaflet](public/vendor/maplibre-gl-leaflet-LICENSE.txt). The street map comes from [OpenFreeMap](https://openfreemap.org/) and uses OpenMapTiles and OpenStreetMap contributors’ data. See [security reporting](SECURITY.md).
+hayiti's source is licensed under [MIT](LICENSE). Leaflet, MapLibre GL JS and the MapLibre GL Leaflet layer retain their upstream licenses: [Leaflet](public/vendor/leaflet-LICENSE), [MapLibre GL JS](public/vendor/maplibre-gl-LICENSE.txt), [MapLibre GL Leaflet](public/vendor/maplibre-gl-leaflet-LICENSE.txt). The street map comes from [OpenFreeMap](https://openfreemap.org/) and uses OpenMapTiles and OpenStreetMap contributors’ data. Satellite imagery uses the [2016 Sentinel-2 cloudless mosaic from EOX](https://cloudless.eox.at/). The terrain layer uses [OpenTopoMap](https://opentopomap.org/about). The map displays credits for the active provider. See [security reporting](SECURITY.md).

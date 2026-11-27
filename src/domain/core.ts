@@ -38,6 +38,15 @@ export interface Stop {
   photos: string[];
   approx: boolean;
 }
+/** A saved Google Maps place is a bookmark; its assigned day does not imply a visit. */
+export interface GooglePin {
+  id: string;
+  name: string;
+  xy: Point;
+  date?: string;
+  savedAt?: string;
+  dayEdited?: true;
+}
 export interface Edge {
   a: string;
   b: string;
@@ -59,6 +68,7 @@ export interface Trip {
   home: string;
   homeXY: Point | null;
   stops: Stop[];
+  googlePins?: GooglePin[];
   edges: Edge[];
   rules: string;
   dayNotes: Record<string, string>;
@@ -90,6 +100,61 @@ export function point(value: unknown): Point | null {
   const [lat, lon] = value;
   return Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 85 && Math.abs(lon) <= 180 ? [lat, lon] : null;
 }
+const googlePinLimit = 6500;
+
+function validSavedAt(value: unknown): value is string {
+  if (safeDate(value)) return true;
+  if (typeof value !== 'string' || !safeDate(value.slice(0, 10))) return false;
+  return /^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d{1,9})?)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/.test(value) &&
+    Number.isFinite(Date.parse(value));
+}
+
+function cleanGooglePin(value: unknown, start: string, end: string, inferSaveDay = false): GooglePin {
+  if (!isRecord(value)) throw Error('Invalid Google Pin');
+  const { id, date, savedAt } = value;
+  const name = text(value.name, 160), xy = point(value.xy);
+  if (typeof id !== 'string' || !id || id !== id.trim() || id.length > 180 || !name || !xy) {
+    throw Error('A Google Pin needs a stable ID, name and coordinates');
+  }
+  if (date !== undefined && !safeDate(date)) throw Error('Invalid Google Pin day');
+  if (savedAt !== undefined && !validSavedAt(savedAt)) throw Error('Invalid Google Pin save time');
+  // A UTC export timestamp can fall on another day locally. The agent can supply date after converting it.
+  let tripDay = date;
+  if (!tripDay && inferSaveDay && !value.dayEdited && savedAt && !/(?:Z|[+-]00:00)$/.test(savedAt)) {
+    tripDay = savedAt.slice(0, 10);
+  }
+  return {
+    id, name, xy,
+    ...(tripDay && tripDay >= start && tripDay <= end ? { date: tripDay } : {}),
+    ...(savedAt ? { savedAt } : {}),
+    ...(value.dayEdited === true ? { dayEdited: true } : {})
+  };
+}
+
+/** On a retry, fill missing details while preserving a day chosen or cleared by the traveler. */
+export function mergeGooglePins(trip: Trip, incoming: readonly unknown[]): MergeResult {
+  const result = { added: 0, linked: 0, skipped: 0 };
+  const pins = new Map(trip.googlePins?.map(pin => [pin.id, pin]));
+  for (const value of incoming) {
+    const pin = cleanGooglePin(value, trip.start, trip.end, true);
+    const previous = pins.get(pin.id);
+    if (!previous) {
+      pins.set(pin.id, pin);
+      result.added++;
+      continue;
+    }
+    const date = !previous.dayEdited && !previous.date ? pin.date : undefined;
+    const savedAt = !previous.savedAt ? pin.savedAt : undefined;
+    if (date || savedAt) {
+      pins.set(pin.id, { ...previous, ...(date ? { date } : {}), ...(savedAt ? { savedAt } : {}) });
+      result.linked++;
+    } else result.skipped++;
+  }
+  if (pins.size > googlePinLimit) throw Error('Too many Google Pins in this trip');
+  if (result.added || result.linked) trip.googlePins = [...pins.values()];
+  return result;
+}
+
 export function distanceMeters([lat, lon]: Point, [nextLat, nextLon]: Point): number {
   const rad = Math.PI / 180;
   const a = Math.sin((nextLat - lat) * rad / 2) ** 2 +
@@ -212,6 +277,11 @@ export function cleanTrip(value: unknown): Trip {
   const stops = value.stops.map(cleanStop),
     ids = new Set(stops.map(s => s.id));
   if (ids.size !== stops.length || stops.some(s => s.date < start || s.date > end)) throw Error('תחנה כפולה או תאריך מחוץ לטווח');
+  if (value.googlePins !== undefined && (!Array.isArray(value.googlePins) || value.googlePins.length > googlePinLimit)) {
+    throw Error('Invalid Google Pins collection');
+  }
+  const googlePins = value.googlePins?.map((pin: unknown) => cleanGooglePin(pin, start, end));
+  if (googlePins && new Set(googlePins.map(pin => pin.id)).size !== googlePins.length) throw Error('Duplicate Google Pin ID');
   const homeXY = point(value.homeXY);
   const edges: Edge[] = [];
   if (Array.isArray(value.edges)) for (const e of value.edges) {
@@ -234,6 +304,7 @@ export function cleanTrip(value: unknown): Trip {
     home: text(value.home),
     homeXY,
     stops,
+    ...(googlePins?.length ? { googlePins } : {}),
     edges,
     rules: text(value.rules, 2400),
     checks: cleanChecks(value.checks, start, end),
