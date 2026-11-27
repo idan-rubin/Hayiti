@@ -67,6 +67,7 @@ const tags = {
   'paste': 'div',
   'pasteSource': 'select',
   'pasted': 'textarea',
+  'photoShortcut': 'a',
   'photo': 'input',
   'photoPanel': 'div',
   'photoStatus': 'span',
