@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
 import { cleanTrip, reportSources, reportStates, validOutcome } from '../src/domain/core.ts';
+import { routeStops } from '../src/domain/daily-route.ts';
 import { handleRequest } from '../src/server/app.ts';
 import { loadState, storeState } from '../src/server/storage.ts';
 import { MemoryBucket } from './memory-bucket.ts';
@@ -49,6 +50,21 @@ function fixture() {
     tool
   };
 }
+await test('a trip created in chat starts each day at the supplied home base', async () => {
+  const { tool, trip, env } = fixture();
+  const homeXY = [51.92, 4.48];
+  const created = await (await tool('add_trip_stops', {
+    tripId: trip.id, start: trip.start, end: trip.end, title: trip.title,
+    home: 'Guesthouse', homeXY, stops: []
+  })).json();
+  assert.ok(!created.result.isError);
+  const journal = await loadState(env.BUCKET, 'alice');
+  const [origin] = routeStops(journal.trips[0], trip.end);
+  assert.equal(origin.kind, 'origin');
+  assert.equal(origin.name, 'Guesthouse');
+  assert.deepEqual(origin.xy, homeXY);
+});
+
 await test('owner-only reads, dated source outcomes, and duplicate writes through the MCP endpoint', async () => {
   const {
     env,
