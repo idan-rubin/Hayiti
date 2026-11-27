@@ -317,7 +317,7 @@ function render() {
   setDates(days, day, days.map(date => {
     const count = trip?.stops.filter(stop => stop.date === date && stop.kind !== 'origin' && isMappedStop(stop)).length ?? 0;
     const details = dayDetails(trip, date).length;
-    return [count ? stopCount(count) : '', details ? quantity(details, ' רשומות', 'entry', 'entries') : ''].filter(Boolean).join(' · ');
+    return [count ? stopCount(count) : '', details ? quantity(details, details === 1 ? ' רשומה' : ' רשומות', 'entry', 'entries') : ''].filter(Boolean).join(' · ');
   }));
   document.body.classList.toggle('no-trip', !trip);
   $('welcome').hidden = !!trip || !!sharedRoute || !journalReady;
@@ -371,7 +371,7 @@ $('wholeTrip').onclick = () => {
   endHint();
   renderSelection();
 };
-const displayStopName = (name: string) => name === unidentifiedMerchant ? ui('Purchase', 'קנייה') : name === 'Approximate location' ? t('מיקום משוער') : name;
+const displayStopName = (name: string) => name === unidentifiedMerchant ? ui('Purchase', 'קנייה') : name;
 function appendStopRow(s: Stop, i: number, list: Stop[], number: string) {
   const name = displayStopName(s.name);
   const li = dom('li', undefined, 'stop');
@@ -641,8 +641,12 @@ function renderDayDetails(entries: Stop[]) {
   const details = $('other');
   const currentDay = JSON.stringify([session.trip?.id, session.day]);
   if (details.dataset.day !== currentDay) {
-    details.open = false;
     details.dataset.day = currentDay;
+    delete details.dataset.choice;
+  }
+  if (!details.dataset.choice) {
+    const mappedVisits = session.trip?.stops.some(stop => stop.date === session.day && stop.kind !== 'origin' && isMappedStop(stop));
+    details.open = !!entries.length && !mappedVisits;
   }
   details.hidden = !entries.length;
   const title = t('מידע נוסף לאותו יום') + ' (' + entries.length + ')';
@@ -650,8 +654,13 @@ function renderDayDetails(entries: Stop[]) {
   $('reviewDay').hidden = !entries.length;
   $('reviewDay').textContent = title;
 }
+$('otherSummary').onclick = () => {
+  const details = $('other');
+  details.dataset.choice = details.open ? 'closed' : 'open';
+};
 $('reviewDay').onclick = () => {
   viewList(true);
+  $('other').dataset.choice = 'open';
   $('other').open = true;
   $('otherSummary').focus();
 };

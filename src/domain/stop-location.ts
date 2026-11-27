@@ -17,8 +17,8 @@ function correctedPoint(value: unknown, original: Point | null) {
 
 /** An approximate pin replaces the precise place; changing its label alone does not generalize it. */
 export function prepareApproximateLocation(old: Stop | undefined, next: Stop): void {
-  if (!next.approx) return;
-  if (old?.xy && !old.approx && next.xy?.[0] === old.xy[0] && next.xy[1] === old.xy[1]) {
+  if (!old || old.approx || !next.approx) return;
+  if (old.xy && next.xy?.[0] === old.xy[0] && next.xy[1] === old.xy[1]) {
     throw Error('יש לבחור נקודה אחרת במפה עבור האזור המשוער.');
   }
   next.address = '';
@@ -93,6 +93,13 @@ export function correctStopLocation(trip: Trip, args: Record<string, unknown>, r
   const promote = args.confirmVisit === true && stop.kind === 'uncertain';
   const next: Stop = { ...stop, name, address, xy, approx, kind: promote ? 'visit' : stop.kind };
   prepareApproximateLocation(stop, next);
+  // A replay can still carry the street address discarded by the original exact-to-area edit.
+  // Normalize only a stale, explicit reassertion of that already-saved area; address-only edits
+  // and changes to the point, name or attendance still require the current revision.
+  if (args.expectedRevision !== revision && stop.approx && !stop.address && args.approx === true
+    && args.xy !== undefined && !moved && !promote && name === stop.name && approx === stop.approx) {
+    next.address = '';
+  }
   if (!moved && !promote && name === stop.name && next.address === stop.address && approx === stop.approx) return false;
   if (args.expectedRevision !== revision) throw Error('The journal changed. Read get_day again before correcting this stop.');
 

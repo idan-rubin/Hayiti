@@ -31,7 +31,7 @@ function selectSharedRoute(trip: Trip, includeOrigin: boolean, day: string | nul
     ids.set(id, shareId);
     return {
       id: shareId,
-      name: approx ? 'Approximate location' : name,
+      name,
       date,
       time,
       address: approx ? '' : address,

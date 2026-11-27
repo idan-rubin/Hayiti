@@ -14,7 +14,7 @@ With hayiti connected, start in chat. For example:
 
 ChatGPT can ask for missing dates or a home base, then cross-check the sources you authorize. A Gett receipt can put a pickup and drop-off on the map where a card charge alone only shows a fare. A photo you share can help identify a place when its location is known. Only the local capture time and GPS coordinates are needed. On each day, photo locations within 100 metres of a saved photo pin share that pin. The earliest known capture supplies the displayed pin. The grouping radius stays fixed, so a walk across several blocks can still add new stops.
 
-Every numbered stop has a map pin. When a receipt omits the branch, the purchase stays under **More about this day** with the reason and an **Add address** action. Once the location is pinned, the same purchase joins the route. You can choose a general place, such as a market, and use an approximate pin on the shared map.
+Every numbered stop has a map pin. When a receipt omits the branch, the purchase stays under **More about this day** with the reason and an **Add address** action. This panel starts collapsed when the day has numbered stops, and opens automatically when it only has additional entries. Once the location is pinned, the same purchase joins the route. You can choose a general place, such as a market, and use an approximate pin on the shared map. The share keeps your chosen place name and omits its street address.
 
 Review the suggested stops in chat and tell ChatGPT which to save. Open the journal with the same account to see your daily routes, change the home base, edit stops or share a read-only map. To add evidence later, use **Sources and import** in that trip.
 

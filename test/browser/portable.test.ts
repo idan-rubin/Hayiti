@@ -1255,7 +1255,7 @@ await test('one daily details panel keeps unlocated visits, unconfirmed attendan
       if (!localStorage.getItem(key)) localStorage.setItem(key, JSON.stringify({ trips: [seed] }));
     }, trip);
     await page.goto(new URL('../../dist/web/Hayiti.html?lang=he', import.meta.url).href);
-    await page.locator('#reviewDay').click();
+    await page.locator('#otherSummary').click();
     assert.equal(await page.locator('#otherSummary').innerText(), 'מידע נוסף לאותו יום (5)');
     assert.equal(await page.locator('#otherSummary').evaluate(el => document.activeElement === el), true);
     assert.deepEqual(await page.locator('#stops .stopname').allTextContents(), ['Park']);
@@ -1305,7 +1305,7 @@ await test('one daily details panel keeps unlocated visits, unconfirmed attendan
   }
 });
 
-await test('day details start collapsed, retain same-day choices, and keep an unpinned starting point accessible', async () => {
+await test('days without mapped visits show their details and keep an unpinned starting point accessible', async () => {
   const browser = await chromium.launch();
   try {
     const page = await browser.newPage();
@@ -1326,8 +1326,8 @@ await test('day details start collapsed, retain same-day choices, and keep an un
     await page.goto(new URL('../../dist/web/Hayiti.html?lang=en', import.meta.url).href);
     const isOpen = () => page.locator('#other').evaluate(element => (element as HTMLDetailsElement).open);
     await page.locator('#otherSummary').waitFor();
-    assert.equal(await isOpen(), false);
-    assert.equal(await page.locator('#unlocatedList').isVisible(), false);
+    assert.equal(await isOpen(), true);
+    assert.equal(await page.locator('#unlocatedList').isVisible(), true);
     assert.match(await page.locator('#tripDate option').nth(0).textContent() ?? '', /2 entries/);
     assert.match(await page.locator('#tripDate option').nth(1).textContent() ?? '', /1 entry/);
     assert.equal(await page.locator('#count').innerText(), '0 stops');
@@ -1346,12 +1346,14 @@ await test('day details start collapsed, retain same-day choices, and keep an un
     await page.locator('#otherSummary').click();
     await page.locator('#languageSwitch').selectOption('he');
     assert.equal(await isOpen(), false);
+    assert.match(await page.locator('#tripDate option').nth(0).textContent() ?? '', /2 רשומות/);
+    assert.match(await page.locator('#tripDate option').nth(1).textContent() ?? '', /1 רשומה(?:$|\s)/);
     await page.locator('#languageSwitch').selectOption('en');
     await showDayDetails(page);
     await page.locator('#tripDate').selectOption(second);
-    assert.equal(await isOpen(), false);
+    assert.equal(await isOpen(), true);
     await page.locator('#tripDate').selectOption(first);
-    assert.equal(await isOpen(), false);
+    assert.equal(await isOpen(), true);
     await showDayDetails(page);
     await page.locator('#unlocatedList').getByRole('button', { name: 'Add address · Riverside hotel', exact: true }).click();
     await page.locator('#removeStop').click();
@@ -1361,7 +1363,43 @@ await test('day details start collapsed, retain same-day choices, and keep an un
     assert.match(await page.locator('#tripDate option').nth(0).textContent() ?? '', /1 entry/);
     await page.reload();
     await page.locator('#otherSummary').waitFor();
+    assert.equal(await isOpen(), true);
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('mapped visits keep details collapsed until the last visit is removed, and later user choices persist', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await page.route('https://**/*', route => route.abort());
+    const date = '2026-06-14';
+    const trip = { id: 'mixed-day', title: 'Mixed day', start: date, end: date,
+      stops: [
+        { id: 'origin', name: 'Hotel', kind: 'origin', date, xy: [51.9, 4.4] },
+        { id: 'park', name: 'Park', date, xy: [51.91, 4.41] },
+        { id: 'shop', name: 'Shop', date }
+      ] };
+    await page.addInitScript(seed => localStorage.setItem('masluli-portable-v2', JSON.stringify({ trips: [seed] })), trip);
+    await page.goto(new URL('../../dist/web/Hayiti.html?lang=en', import.meta.url).href);
+    const isOpen = () => page.locator('#other').evaluate(element => (element as HTMLDetailsElement).open);
+    await page.locator('#otherSummary').waitFor();
     assert.equal(await isOpen(), false);
+    await page.getByRole('button', { name: 'Park', exact: true }).click();
+    await page.locator('#removeStop').click();
+    await page.locator('#confirmYes').click();
+    await page.locator('#edit').waitFor({ state: 'hidden' });
+    assert.equal(await page.locator('#count').innerText(), '0 stops');
+    assert.equal(await isOpen(), true);
+    await page.locator('#unlocatedList').getByText('Shop', { exact: true }).waitFor();
+
+    await page.locator('#otherSummary').click();
+    await page.locator('#languageSwitch').selectOption('he');
+    assert.equal(await isOpen(), false);
+    await page.locator('#reviewDay').click();
+    await page.locator('#languageSwitch').selectOption('en');
+    assert.equal(await isOpen(), true);
   } finally {
     await browser.close();
   }
