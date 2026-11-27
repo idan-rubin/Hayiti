@@ -57,13 +57,13 @@ await test('a portable route package previews and saves a new stop order without
     await page.getByRole('button', { name: 'Try the sample trip' }).click();
     const previous = ['cafe', 'gelato', 'pickup', 'dropoff', 'museum', 'brewery', 'show'];
     const next = ['gelato', 'cafe', 'pickup', 'dropoff', 'museum', 'brewery', 'show'];
-    const upload = async () => {
+    const upload = async (routes: Record<string, unknown>[] = []) => {
       await page.locator('#import').click();
       await page.locator('[data-tab="files"]').click();
       await page.locator('#file').setInputFiles({
         name: 'agent-routes.json', mimeType: 'application/json',
         buffer: Buffer.from(JSON.stringify({ format: 'hayiti-routes/1', tripId: 'tel-aviv-sample',
-          days: [{ date: '2026-03-12', order: { previous, next }, routes: [] }] }))
+          days: [{ date: '2026-03-12', order: { previous, next }, routes }] }))
       });
     };
     const firstStop = page.locator('#stops .stopname').first();
@@ -77,6 +77,15 @@ await test('a portable route package previews and saves a new stop order without
     await upload();
     await page.locator('#preview').getByText('0 route segments to update', { exact: false }).waitFor();
     assert.equal(await page.locator('#preview button').count(), 0);
+    await page.locator('#sources [data-close]').click();
+    await upload([{ a: 'pickup', b: 'dropoff', type: 'gap', line: [], correctTaxi: true }]);
+    await page.locator('#preview').getByText('Taxi rides to reclassify · 1').waitFor();
+    await page.getByRole('button', { name: 'Save routes' }).click();
+    await page.locator('#sources').waitFor({ state: 'hidden' });
+    const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('masluli-portable-v2')!).trips[0]);
+    assert.deepEqual(saved.stops.filter((stop: { id: string }) => ['pickup', 'dropoff'].includes(stop.id))
+      .map((stop: { kind: string }) => stop.kind), ['visit', 'visit']);
+    assert.equal(saved.edges.find((edge: { a: string, b: string }) => edge.a === 'pickup' && edge.b === 'dropoff').type, 'gap');
   } finally {
     await browser.close();
   }

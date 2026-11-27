@@ -92,6 +92,8 @@ ChatGPT connects to the hosted journal using OAuth and the [MCP connection manif
 
 ChatGPT uses `list_trips`, `get_day` and `add_trip_stops` to reconcile approved visits. The agent uses `set_day_routes` to save estimated paths for adjacent stops on a day. A proposed order can be saved with the paths in the same operation. Supply the previously read and proposed sequences of visit, pickup and drop-off IDs in `order: {previous, next}`. A mismatch prompts a fresh read before applying changes.
 
+If a traveler identifies a misclassified taxi ride, read `get_day` and pass its `revision` as `expectedRevision` to `set_day_routes`. Set `correctTaxi: true` on that exact leg and supply walking directions or an explicit gap. The former pickup and drop-off become ordinary visits. They can then be reordered independently. Portable route files accept the same correction flag on the leg.
+
 ### Generate directions with OSRM
 
 An agent with access to an OSRM-compatible router can use the bundled TypeScript adapter. Configure the route URLs for the pedestrian and driving datasets available to you. OSRM's travel mode depends on the profile used to prepare each dataset. The adapter also checks the travel mode returned by the router. [OSRM API documentation](https://project-osrm.org/docs/v5.24.0/api/)

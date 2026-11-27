@@ -373,3 +373,80 @@ await test('an overnight ride reserves its endpoint while home taxi legs are sco
   assert.ok(setDayRoutes(home, end, [ride('base', 'park')]).updated);
   assert.deepEqual(home.edges.map(edge => [edge.a, edge.b]), [['base', 'cafe'], ['base', 'park']]);
 });
+
+await test('an explicit taxi correction restores ordinary visits and allows a later reorder or taxi route', () => {
+  for (const stored of [true, false]) for (const replacement of [
+    { ...cab, type: 'walk', correctTaxi: true }, { ...cab, type: 'gap', line: [], correctTaxi: true }
+  ]) {
+    const trip = example();
+    setDayRoutes(trip, date, stored ? [walking, cab] : [walking]);
+    const original = structuredClone(trip), split = { previous: order.previous, next: ['pickup', 'cafe', 'dropoff'] };
+    const file = { tripId: trip.id, days: [{ date, routes: [replacement] }] };
+    const plan = prepareRouteImport(trip, file);
+    assert.deepEqual(trip, original);
+    assert.equal(plan.correctedRides, 1);
+    assert.deepEqual(setDayRoutes(trip, date, [replacement]), { updated: 1, unchanged: 0, correctedRides: 1 });
+    assert.deepEqual(trip.stops, plan.stops);
+    assert.deepEqual(trip.edges, plan.edges);
+    assert.deepEqual(trip.stops.slice(2, 4), original.stops.slice(2, 4).map(stop => ({ ...stop, kind: 'visit' })));
+    assert.equal(trip.edges.find(edge => edge.a === 'pickup')?.type, replacement.type);
+    assert.deepEqual(trip.edges[0], original.edges[0]);
+    const corrected = structuredClone(trip);
+    assert.deepEqual(setDayRoutes(trip, date, [replacement]), { updated: 0, unchanged: 1 });
+    assert.deepEqual(trip, corrected);
+    assert.ok(setDayRoutes(trip, date, [], split).reordered);
+    setDayRoutes(trip, date, [cab], { previous: split.next, next: split.previous });
+    assert.throws(() => setDayRoutes(trip, date, [], split));
+  }
+});
+
+await test('a correction cannot release a different ride and failed imports leave the original intact', () => {
+  const { trip, ride, previous } = separatedRides();
+  const original = structuredClone(trip);
+  for (const legs of [
+    [{ ...ride('p1', 'd1'), correctTaxi: true }],
+    [{ ...ride('p1', 'd2'), correctTaxi: true, type: 'gap', line: [] }],
+    [{ ...ride('p1', 'd1'), correctTaxi: true, type: 'walk', line: [b, bend, a] }]
+  ]) {
+    assert.throws(() => setDayRoutes(trip, date, legs));
+    assert.deepEqual(trip, original);
+  }
+  const next = ['p1', 'd1', 'museum', 'p2', 'd2', 'lunch'];
+  const oneRide = { ...ride('p1', 'd1'), correctTaxi: true, type: 'gap', line: [] };
+  setDayRoutes(trip, date, [oneRide], { previous, next });
+  assert.deepEqual(trip.edges.find(edge => edge.a === 'p2'), original.edges.find(edge => edge.a === 'p2'));
+  assert.throws(() => setDayRoutes(trip, date, [], { previous: next, next: ['p1', 'd1', 'museum', 'p2', 'lunch', 'd2'] }));
+  const exampleTrip = example();
+  setDayRoutes(exampleTrip, date, [cab]);
+  const before = structuredClone(exampleTrip);
+  const corrected = { ...cab, correctTaxi: true, type: 'gap', line: [] };
+  assert.throws(() => setDayRoutes(exampleTrip, date, [corrected], { previous: order.next, next: ['pickup', 'cafe', 'dropoff'] }));
+  assert.deepEqual(exampleTrip, before);
+  assert.throws(() => prepareRouteImport(exampleTrip, { tripId: exampleTrip.id, days: [
+    { date, routes: [corrected] }, { date: end, routes: [cab] }
+  ] }));
+  assert.deepEqual(exampleTrip, before);
+});
+
+await test('MCP requires the read revision to correct a taxi and accepts an exact retry without a write', async () => {
+  const trip = example(), bucket = new MemoryBucket();
+  for (const stop of trip.stops) if (stop.kind === 'pickup' || stop.kind === 'dropoff') stop.kind = 'visit';
+  setDayRoutes(trip, date, [cab]);
+  await storeState(bucket, 'alice', [trip], '');
+  const call = async (name: string, args: Record<string, unknown>) => (await (await journalAPI(new Request('https://example.test/mcp', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: { tripId: trip.id, date, ...args } } })
+  }), bucket, 'mcp', 'alice')).json()).result;
+  const day = JSON.parse((await call('get_day', {})).content[0].text);
+  const corrected = { ...cab, type: 'walk', correctTaxi: true };
+  const args = { routes: [corrected], expectedRevision: day.revision };
+  for (const expectedRevision of [undefined, 'stale']) {
+    assert.equal((await call('set_day_routes', { ...args, expectedRevision })).isError, true);
+    assert.deepEqual((await loadState(bucket, 'alice')).trips[0], trip);
+  }
+  assert.equal(JSON.parse((await call('set_day_routes', args)).content[0].text).updated, 1);
+  const saved = await loadState(bucket, 'alice');
+  assert.equal(JSON.parse((await call('set_day_routes', args)).content[0].text).unchanged, 1);
+  assert.equal((await call('set_day_routes', { ...args, routes: [{ ...corrected, type: 'gap', line: [] }] })).isError, true);
+  assert.deepEqual(await loadState(bucket, 'alice'), saved);
+});

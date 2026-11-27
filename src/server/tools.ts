@@ -184,6 +184,7 @@ export const tools = [{
     properties: {
       tripId: { type: 'string' },
       date: { type: 'string', description: 'Local YYYY-MM-DD' },
+      expectedRevision: { type: 'string', description: 'Current get_day revision. Required when correcting a misclassified taxi ride.' },
       order: {
         type: 'object', additionalProperties: false,
         description: 'Both lists contain every visit, pickup and drop-off ID for this date exactly once. Exclude origins, uncertain and remote records, and Google Pins. Preserve each taxi pair. Read the day again if its order has changed.',
@@ -201,6 +202,7 @@ export const tools = [{
             a: { type: 'string', description: 'Start stop ID, or base for the implicit home origin.' },
             b: { type: 'string', description: 'Next on-route stop ID for this day.' },
             type: { type: 'string', enum: ['walk', 'taxi', 'same', 'gap'] },
+            correctTaxi: { type: 'boolean', description: 'Set true only when the traveler explicitly corrects this exact taxi ride to a walk or a gap. It also converts dedicated pickup and drop-off roles to visits. Keep the pair adjacent for this correction, then reorder separately if requested.' },
             m: { type: 'number', minimum: 0, description: 'Optional network distance in metres; defaults to measured line length.' },
             line: {
               type: 'array', maxItems: 1000,

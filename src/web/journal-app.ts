@@ -1473,6 +1473,7 @@ async function previewFile(f: File, order?: 'day-first' | 'month-first') {
         if (!active) throw Error(t('יש לבחור טיול תחילה'));
         const revision = session.revision;
         const plan = prepareRouteImport(active, o);
+        if (plan.correctedRides) target.append(dom('p', ui('Taxi rides to reclassify', 'נסיעות מונית שסיווגן ישתנה') + ' · ' + plan.correctedRides));
         if (plan.reorderedDays) {
           target.append(dom('p', ui('Days with a new stop order', 'ימים עם סדר תחנות חדש') + ' · ' + plan.reorderedDays));
         }

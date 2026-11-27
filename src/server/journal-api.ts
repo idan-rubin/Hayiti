@@ -1,3 +1,4 @@
+import { journalErrors } from '../domain/journal-errors.ts';
 import { cleanTrip, cleanStop, isRecord, member, mergeGooglePins, mergeStops, point, reportSources, safeDate, validOutcome, type Trip } from '../domain/core.ts';
 import { dayStops, indexEdges, routeStops, walkingStats } from '../domain/daily-route.ts';
 import { loadState, storeState, type Bucket } from './storage.ts';
@@ -50,6 +51,7 @@ async function callTool(bucket: Bucket, owner: string, name: unknown, args: Reco
       edge.type === 'taxi' && positions.has(edge.a) && positions.has(edge.b) && route[positions.get(edge.a)! + 1]?.id !== edge.b)
       .map(({ a, b }) => ({ a, b }));
     return {
+      revision: journal.rev,
       stops,
       googlePins: pins.slice(0, dailyGooglePinPreviewLimit),
       googlePinCount: pins.length,
@@ -68,7 +70,12 @@ async function callTool(bucket: Bucket, owner: string, name: unknown, args: Reco
   if (name === 'set_day_routes') {
     if (!trip) throw Error('טיול לא נמצא');
     const counts = setDayRoutes(trip, args.date, args.routes, args.order);
-    if (counts.updated || counts.reordered) await storeState(bucket, owner, journal.trips, journal.rev);
+    if (counts.updated || counts.reordered) {
+      if (Array.isArray(args.routes) && args.routes.some(route => isRecord(route) && route.correctTaxi === true) && args.expectedRevision !== journal.rev) {
+        throw Error('Read get_day again and supply its revision before correcting a taxi ride.');
+      }
+      await storeState(bucket, owner, journal.trips, journal.rev);
+    }
     return counts;
   }
   if (name !== 'add_trip_stops') throw Error('Unknown tool');
@@ -208,7 +215,8 @@ export async function journalAPI(req: Request, bucket: Bucket, mode: 'web' | 'mc
       isError: true,
       content: [{
         type: 'text',
-        text: message
+        text: message === 'CONFLICT' ? 'The journal changed. Read the day again and retry your update.' :
+          Object.hasOwn(journalErrors, message) ? journalErrors[message] : message
       }]
     }) : json({
       error: message
