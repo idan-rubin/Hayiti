@@ -1,4 +1,4 @@
-// Input is a private plan of adjacent stop pairs with their travel modes, supplied by the agent.
+// Input is a private plan of adjacent stops. A pair defaults to an estimated walk.
 // Route services receive only coordinates. Write the import package to stdout after all calls succeed.
 import { readFileSync } from 'node:fs';
 import { distanceMeters, isRecord, point, safeDate, type Edge, type Point } from '../src/domain/core.ts';
@@ -60,16 +60,17 @@ async function main() {
     if (!isRecord(day) || !safeDate(day.date) || !Array.isArray(day.legs)) throw Error('Expected a local date and legs array.');
     const routes: Edge[] = [];
     for (const leg of day.legs) {
-      if (!isRecord(leg) || typeof leg.a !== 'string' || typeof leg.b !== 'string' ||
-        (leg.type !== 'walk' && leg.type !== 'taxi')) throw Error('Expected stop IDs and a walk or taxi mode.');
+      if (!isRecord(leg) || typeof leg.a !== 'string' || typeof leg.b !== 'string') throw Error('Expected adjacent stop IDs.');
+      const mode = leg.type === undefined ? 'walk' : leg.type;
+      if (mode !== 'walk' && mode !== 'taxi') throw Error('Expected a walk or taxi mode.');
       const from = coordinates(leg.from), to = coordinates(leg.to);
-      const key = JSON.stringify([leg.type, from, to]);
+      const key = JSON.stringify([mode, from, to]);
       let shape = cache.get(key);
       if (shape === undefined) {
-        shape = await routedPath(leg.type, from, to);
+        shape = await routedPath(mode, from, to);
         cache.set(key, shape);
       }
-      if (shape) routes.push({ a: leg.a, b: leg.b, type: leg.type, ...shape });
+      if (shape) routes.push({ a: leg.a, b: leg.b, type: mode, ...shape });
       else process.stderr.write('Keeping existing route for ' + day.date + ' ' + leg.a + ' → ' + leg.b + '\n');
     }
     if (routes.length) days.push({ date: day.date, routes });
