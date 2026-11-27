@@ -62,3 +62,45 @@ await test('route adapter defaults to walking, reuses equivalent explicit walks,
     server.close();
   }
 });
+
+await test('route adapter keeps a long ride within the journal limit and leaves out a leg that takes a ferry', async () => {
+  const last = 51 + 1499 * 0.00009;
+  const server = createServer((req, res) => {
+    const walking = (req.url ?? '').startsWith('/foot/');
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ code: 'Ok', routes: [walking ? {
+      distance: 158,
+      geometry: { type: 'LineString', coordinates: [[4, 51], [4.0005, 51.0005], [4.001, 51.001]] },
+      legs: [{ steps: [{ mode: 'walking' }, { mode: 'ferry' }, { mode: 'walking' }] }]
+    } : {
+      distance: 15000,
+      // A ride across a city comes back as far more points than the journal keeps for one leg.
+      geometry: { type: 'LineString', coordinates: Array.from({ length: 1500 }, (_, i) => [4, 51 + i * 0.00009]) },
+      legs: [{ steps: [{ mode: 'driving' }] }]
+    }] }));
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+  const root = 'http://127.0.0.1:' + address.port;
+  try {
+    const child = spawn(process.execPath, ['scripts/route-trip.ts'], {
+      env: { ...process.env, HAYITI_WALK_ROUTE_URL: root + '/foot', HAYITI_DRIVE_ROUTE_URL: root + '/driving' }
+    });
+    const result = Promise.all([once(child, 'close'), text(child.stdout), text(child.stderr)]);
+    child.stdin.end(JSON.stringify({ tripId: 'test-trip', days: [{ date: '2026-07-01', legs: [
+      { a: 'pier', b: 'island', type: 'walk', from: [51, 4], to: [51.001, 4.001] },
+      { a: 'hotel', b: 'airport', type: 'taxi', from: [51, 4], to: [last, 4] }
+    ] }] }));
+    const [[code], out, err] = await result;
+    assert.equal(code, 0);
+    const [ride, ...others] = JSON.parse(out).days[0].routes;
+    assert.deepEqual(others, []);
+    assert.deepEqual([ride.a, ride.b, ride.type, ride.m, ride.line.length], ['hotel', 'airport', 'taxi', 15000, 1000]);
+    assert.deepEqual([ride.line[0], ride.line[999]], [[51, 4], [last, 4]]);
+    assert.match(err, /Keeping existing route for 2026-07-01 pier → island/);
+  } finally {
+    server.close();
+  }
+});

@@ -5,6 +5,14 @@ import { distanceMeters, isRecord, point, safeDate, type Edge, type Point } from
 
 type Mode = 'walk' | 'taxi';
 
+// The journal keeps up to 1,000 points for a leg. A longer path keeps both ends and evenly spaced points between.
+const maxPoints = 1000;
+function thinned(line: Point[]): Point[] {
+  if (line.length <= maxPoints) return line;
+  const step = (line.length - 1) / (maxPoints - 1);
+  return Array.from({ length: maxPoints }, (_, index) => line[Math.round(index * step)]);
+}
+
 function coordinates(value: unknown): Point {
   const xy = point(value);
   if (!xy) throw Error('Expected [latitude, longitude].');
@@ -41,14 +49,18 @@ async function routedPath(mode: Mode, from: Point, to: Point): Promise<Pick<Edge
     route.geometry.type !== 'LineString' || !Array.isArray(route.geometry.coordinates)) throw Error('Router did not return a route with geometry.');
   const leg: unknown = route.legs[0];
   const expectedMode = mode === 'walk' ? 'walking' : 'driving';
-  if (!isRecord(leg) || !Array.isArray(leg.steps) || !leg.steps.length ||
-    !leg.steps.every(step => isRecord(step) && step.mode === expectedMode)) throw Error('Route steps do not match the requested ' + expectedMode + ' profile.');
+  const steps: unknown[] = isRecord(leg) && Array.isArray(leg.steps) ? leg.steps : [];
+  const matching = steps.filter(step => isRecord(step) && step.mode === expectedMode).length;
+  // No step in the requested mode means the URL serves another profile, which would mislabel every leg.
+  if (!matching) throw Error('Route steps do not match the requested ' + expectedMode + ' profile.');
+  // A path that also takes a ferry or another mode is neither a walk nor a drive. That pair keeps its display.
+  if (matching < steps.length) return null;
   const line: Point[] = route.geometry.coordinates.map((pair: unknown) => {
     if (!Array.isArray(pair) || pair.length !== 2) throw Error('Invalid route coordinate.');
     return coordinates([pair[1], pair[0]]);
   });
-  if (line.length < 2 || line.length > 1000 || distanceMeters(from, line[0]) > snapMeters || distanceMeters(to, line[line.length - 1]) > snapMeters) return null;
-  return { line, m: route.distance };
+  if (line.length < 2 || distanceMeters(from, line[0]) > snapMeters || distanceMeters(to, line[line.length - 1]) > snapMeters) return null;
+  return { line: thinned(line), m: route.distance };
 }
 
 async function main() {
