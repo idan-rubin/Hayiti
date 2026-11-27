@@ -99,9 +99,12 @@ export function distanceMeters([lat, lon]: Point, [nextLat, nextLon]: Point): nu
 
 export const photoPinRadiusMeters = 100;
 
+function hasPhotoAssetRefs(stop: Stop): boolean {
+  return stop.sources.length === 1 && stop.sources[0] === 'photo' && stop.refs.length > 0;
+}
+
 export function photoLocation(stop: Stop): stop is Stop & { xy: Point } {
-  return stop.kind === 'visit' && stop.xy !== null && stop.sources.length === 1 &&
-    stop.sources[0] === 'photo' && stop.refs.length > 0 && !stop.photos.length && !stop.count;
+  return stop.kind === 'visit' && stop.xy !== null && hasPhotoAssetRefs(stop) && !stop.photos.length && !stop.count;
 }
 
 // Whether one local time is known to come before another. A time without seconds says nothing about the
@@ -118,7 +121,7 @@ function linkPhotoReferences(pin: Stop, incoming: Stop): 'linked' | 'skipped' {
   const time = incoming.captureTime || incoming.time;
   const current = pin.captureTime || pin.time;
   // A pin the traveler placed or timed by hand keeps collecting references and stays where they put it.
-  const earlier = !pin.edited && photoLocation(pin) && photoLocation(incoming) && time &&
+  const earlier = !pin.edited && pin.date === incoming.date && photoLocation(pin) && photoLocation(incoming) && time &&
     (!current || knownEarlier(time, current)) &&
     distanceMeters(pin.photoAnchor ?? pin.xy, incoming.xy) <= photoPinRadiusMeters;
   if (!earlier && refs.length === pin.refs.length) return 'skipped';
@@ -278,8 +281,15 @@ export function mergeStops(trip: Trip, incoming: readonly unknown[]): MergeResul
     if (stop.date < trip.start || stop.date > trip.end) throw Error('תחנה מחוץ לטווח הטיול');
     const day = trip.stops.filter(s => s.date === stop.date);
     // Prefer stable asset identity, then a unique named visit, before spatial matching.
-    const repeated = day.find(s => stop.refs.some(ref => s.refs.includes(ref)));
-    if (photoLocation(stop) && repeated) {
+    const isPhoto = photoLocation(stop);
+    const hasAssetRefs = hasPhotoAssetRefs(stop);
+    const refs = new Set(stop.refs);
+    const sharesReference = (saved: Stop) => saved.refs.some(ref => refs.has(ref));
+    // A photo's asset ID follows the pin when the traveler corrects its day.
+    const repeated = day.find(sharesReference) ?? (hasAssetRefs
+      ? trip.stops.find(saved => (saved.edited || saved.sources.includes('photo')) && sharesReference(saved))
+      : undefined);
+    if (hasAssetRefs && repeated) {
       link(repeated, stop);
       continue;
     }
@@ -288,13 +298,13 @@ export function mergeStops(trip: Trip, incoming: readonly unknown[]): MergeResul
       continue;
     }
     const matches = day.filter(s => corroborates(s, stop) &&
-      (!photoLocation(stop) || !s.xy || distanceMeters(s.xy, stop.xy) <= photoPinRadiusMeters));
+      (!isPhoto || !s.xy || distanceMeters(s.xy, stop.xy) <= photoPinRadiusMeters));
     if (matches.length === 1) {
       combineEvidence(matches[0], stop);
       result.linked++;
       continue;
     }
-    if (photoLocation(stop)) {
+    if (isPhoto) {
       const pin = closestPhotoPin(day, stop);
       if (pin) {
         link(pin, stop);
