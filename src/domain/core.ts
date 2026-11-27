@@ -86,6 +86,42 @@ export function point(value: unknown): Point | null {
   const [lat, lon] = value;
   return Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 85 && Math.abs(lon) <= 180 ? [lat, lon] : null;
 }
+export function distanceMeters([lat, lon]: Point, [nextLat, nextLon]: Point): number {
+  const rad = Math.PI / 180;
+  const a = Math.sin((nextLat - lat) * rad / 2) ** 2 +
+    Math.cos(lat * rad) * Math.cos(nextLat * rad) * Math.sin((nextLon - lon) * rad / 2) ** 2;
+  return 12742000 * Math.asin(Math.sqrt(Math.min(1, a)));
+}
+
+const photoPinRadiusMeters = 100;
+
+function photoLocation(stop: Stop): stop is Stop & { xy: Point } {
+  return stop.kind === 'visit' && stop.xy !== null && stop.sources.length === 1 &&
+    stop.sources[0] === 'photo' && stop.refs.length > 0 && !stop.photos.length && !stop.count;
+}
+
+function linkPhotoReferences(pin: Stop, incoming: Stop): 'linked' | 'skipped' {
+  // Follow the journal's persisted reference limit. Spatial deduplication still works at capacity.
+  const refs = [...new Set([...pin.refs, ...incoming.refs])].slice(0, 100);
+  if (refs.length === pin.refs.length) return 'skipped';
+  pin.refs = refs;
+  return 'linked';
+}
+
+function closestPhotoPin(day: Stop[], incoming: Stop & { xy: Point }) {
+  let nearest: Stop | undefined;
+  let limit = photoPinRadiusMeters;
+  for (const candidate of day) {
+    if (!photoLocation(candidate)) continue;
+    const distance = distanceMeters(candidate.xy, incoming.xy);
+    if (distance <= limit) {
+      nearest = candidate;
+      limit = distance;
+    }
+  }
+  return nearest;
+}
+
 export function photosOf(value: unknown): string[] {
   if (value == null) return [];
   if (!Array.isArray(value) || value.length > 3 || value.some(photo => typeof photo !== 'string' || photo.length > 335000 || !/^data:image\/jpeg;base64,\/9j\/[A-Za-z0-9+/]+=*$/.test(photo))) throw Error('תמונה לא תקינה או גדולה מדי');
@@ -195,15 +231,29 @@ export function mergeStops(trip: Trip, incoming: readonly unknown[]): MergeResul
     const stop = cleanStop(raw);
     if (stop.date < trip.start || stop.date > trip.end) throw Error('תחנה מחוץ לטווח הטיול');
     const day = trip.stops.filter(s => s.date === stop.date);
-    if (ids.has(stop.id) || day.some(s => stop.refs.some(ref => s.refs.includes(ref)))) {
+    // Prefer stable asset identity, then a unique named visit, before spatial matching.
+    const repeated = day.find(s => stop.refs.some(ref => s.refs.includes(ref)));
+    if (photoLocation(stop) && repeated) {
+      result[linkPhotoReferences(repeated, stop)]++;
+      continue;
+    }
+    if (ids.has(stop.id) || repeated) {
       result.skipped++;
       continue;
     }
-    const matches = day.filter(s => corroborates(s, stop));
+    const matches = day.filter(s => corroborates(s, stop) &&
+      (!photoLocation(stop) || !s.xy || distanceMeters(s.xy, stop.xy) <= photoPinRadiusMeters));
     if (matches.length === 1) {
       combineEvidence(matches[0], stop);
       result.linked++;
       continue;
+    }
+    if (photoLocation(stop)) {
+      const pin = closestPhotoPin(day, stop);
+      if (pin) {
+        result[linkPhotoReferences(pin, stop)]++;
+        continue;
+      }
     }
     stop.rank = Math.max(0, ...day.map(s => s.rank)) + 1;
     trip.stops.push(stop);
