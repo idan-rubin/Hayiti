@@ -45,6 +45,7 @@ async function callTool(bucket: Bucket, owner: string, name: unknown, args: Reco
     start: args.start,
     end: args.end,
     home: args.home,
+    homeXY: args.homeXY,
     stops: []
   });
   const checks = args.sourceChecks ?? {};

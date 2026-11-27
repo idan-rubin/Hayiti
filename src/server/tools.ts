@@ -122,6 +122,12 @@ export const tools = [{
       home: {
         type: 'string'
       },
+      homeXY: {
+        ...stopShape.properties.xy,
+        description: 'Optional verified latitude and longitude of the traveler-approved home base for a new trip.',
+        minItems: 2,
+        maxItems: 2
+      },
       sourceChecks: checkSchema,
       stops: {
         type: 'array',
