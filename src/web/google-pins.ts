@@ -8,8 +8,13 @@ export function assignGooglePinDay(pin: GooglePin, day: string) {
 }
 
 type AssignDay = (pin: GooglePin, day: string) => void;
+/** What the traveler can do from a pin's popup. A shared route offers neither. */
+export interface PinActions {
+  assignDay: AssignDay;
+  remove(pin: GooglePin): void;
+}
 
-function pinPopup(trip: Trip, pin: GooglePin, assignDay?: AssignDay) {
+function pinPopup(trip: Trip, pin: GooglePin, actions?: PinActions) {
   const he = language === 'he';
   const format = new Intl.DateTimeFormat(locale(), { dateStyle: 'medium', timeZone: 'UTC' });
   const dateLabel = (day: string) => format.format(new Date(day + 'T12:00:00Z'));
@@ -39,7 +44,8 @@ function pinPopup(trip: Trip, pin: GooglePin, assignDay?: AssignDay) {
 
   const dayLabel = he ? 'יום בטיול' : 'Trip day';
   const unassigned = he ? 'ללא שיוך ליום' : 'No trip day';
-  if (assignDay) {
+  if (actions) {
+    const { assignDay, remove } = actions;
     const label = document.createElement('label');
     label.textContent = dayLabel;
     const select = document.createElement('select');
@@ -53,7 +59,12 @@ function pinPopup(trip: Trip, pin: GooglePin, assignDay?: AssignDay) {
     select.value = pin.date ?? '';
     select.onchange = () => assignDay(pin, select.value);
     label.append(select);
-    content.append(label);
+    // A bookmark saved by mistake, or with the wrong place, has no other way out of the trip.
+    const removal = document.createElement('button');
+    removal.type = 'button';
+    removal.textContent = he ? 'הסרה מהטיול' : 'Remove from trip';
+    removal.onclick = () => remove(pin);
+    content.append(label, removal);
   } else {
     const assigned = document.createElement('span');
     assigned.textContent = pin.date ? dayLabel + ' · ' + dateLabel(pin.date) : unassigned;
@@ -63,8 +74,8 @@ function pinPopup(trip: Trip, pin: GooglePin, assignDay?: AssignDay) {
 }
 
 /** A null day is the trip overview. Saved places have their own markers, outside the route sequence. */
-export function drawGooglePins(trip: Trip, day: string | null, overlay: LayerGroup, assignDay?: AssignDay,
-  locate: (xy: Point) => Point = xy => xy): Point[] {
+export function drawGooglePins(trip: Trip, day: string | null, overlay: LayerGroup, actions?: PinActions,
+  locate: (xy: Point) => Point = xy => xy, popup?: PopupOptions): Point[] {
   const points: Point[] = [];
   for (const pin of trip.googlePins ?? []) {
     if (day !== null && pin.date !== day) continue;
@@ -77,7 +88,7 @@ export function drawGooglePins(trip: Trip, day: string | null, overlay: LayerGro
       iconAnchor: [0, 30]
     });
     L.marker(xy, { icon, title: description, alt: description }).addTo(overlay)
-      .bindPopup(() => pinPopup(trip, pin, assignDay));
+      .bindPopup(() => pinPopup(trip, pin, actions), popup);
     points.push(xy);
   }
   return points;

@@ -131,12 +131,25 @@ function cleanGooglePin(value: unknown, start: string, end: string, inferSaveDay
   };
 }
 
-/** On a retry, fill missing details while preserving a day chosen or cleared by the traveler. */
-export function mergeGooglePins(trip: Trip, incoming: readonly unknown[]): MergeResult {
+export interface GooglePinResult extends MergeResult {
+  /** Pins saved without the day they were sent with, because that day is outside the trip. */
+  datesOutsideTrip?: number;
+}
+
+/**
+ * On a retry, fill missing details and take a corrected name or location for the same place,
+ * while preserving a day chosen or cleared by the traveler.
+ */
+export function mergeGooglePins(trip: Trip, incoming: readonly unknown[]): GooglePinResult {
   const result = { added: 0, linked: 0, skipped: 0 };
+  let datesOutsideTrip = 0;
   const pins = new Map(trip.googlePins?.map(pin => [pin.id, pin]));
   for (const value of incoming) {
     const pin = cleanGooglePin(value, trip.start, trip.end, true);
+    // Google's export writes [0, 0] for a place whose location it does not know.
+    if (pin.xy[0] === 0 && pin.xy[1] === 0) throw Error('A Google Pin at [0, 0] has no known location');
+    // The pin is still saved, without a day. The count tells the agent its day was not kept.
+    if (isRecord(value) && value.date !== undefined && !pin.date) datesOutsideTrip++;
     const previous = pins.get(pin.id);
     if (!previous) {
       pins.set(pin.id, pin);
@@ -145,14 +158,15 @@ export function mergeGooglePins(trip: Trip, incoming: readonly unknown[]): Merge
     }
     const date = !previous.dayEdited && !previous.date ? pin.date : undefined;
     const savedAt = !previous.savedAt ? pin.savedAt : undefined;
-    if (date || savedAt) {
-      pins.set(pin.id, { ...previous, ...(date ? { date } : {}), ...(savedAt ? { savedAt } : {}) });
+    const corrected = previous.name !== pin.name || previous.xy[0] !== pin.xy[0] || previous.xy[1] !== pin.xy[1];
+    if (date || savedAt || corrected) {
+      pins.set(pin.id, { ...previous, name: pin.name, xy: pin.xy, ...(date ? { date } : {}), ...(savedAt ? { savedAt } : {}) });
       result.linked++;
     } else result.skipped++;
   }
   if (pins.size > googlePinLimit) throw Error('Too many Google Pins in this trip');
   if (result.added || result.linked) trip.googlePins = [...pins.values()];
-  return result;
+  return datesOutsideTrip ? { ...result, datesOutsideTrip } : result;
 }
 
 export function distanceMeters([lat, lon]: Point, [nextLat, nextLon]: Point): number {
@@ -356,9 +370,10 @@ export function mergeStops(trip: Trip, incoming: readonly unknown[]): MergeResul
     const hasAssetRefs = hasPhotoAssetRefs(stop);
     const refs = new Set(stop.refs);
     const sharesReference = (saved: Stop) => saved.refs.some(ref => refs.has(ref));
-    // A photo's asset ID follows the pin when the traveler corrects its day.
+    // A photo's asset ID follows the stop when the traveler corrects its day. Other days are searched only for
+    // stops they changed, so two photos that happen to share a reference on different days stay separate.
     const repeated = day.find(sharesReference) ?? (hasAssetRefs
-      ? trip.stops.find(saved => (saved.edited || saved.sources.includes('photo')) && sharesReference(saved))
+      ? trip.stops.find(saved => saved.edited && sharesReference(saved))
       : undefined);
     if (hasAssetRefs && repeated) {
       link(repeated, stop);

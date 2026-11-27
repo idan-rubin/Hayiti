@@ -1005,3 +1005,77 @@ await test('changing a basemap loads its tiles without moving the daily route or
     await browser.close();
   }
 });
+
+await test('the map controls leave pins and an opened popup uncovered, and a Google Pin can be removed', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 760 } });
+    await page.route('https://**/*', route => route.abort());
+    const first = '2026-06-14', second = '2026-06-15';
+    // The northernmost, easternmost places sit in the corner the controls occupy.
+    await page.addInitScript(trip => localStorage.setItem('masluli-portable-v2', JSON.stringify({ trips: [trip] })), {
+      id: 'trip', title: 'Weekend', start: first, end: second, home: 'Hotel', homeXY: [32.07, 34.77],
+      stops: [
+        { id: 'market', date: first, name: 'Market', xy: [32.0685, 34.7689], rank: 1, sources: ['card'], refs: ['c1'] },
+        { id: 'lookout', date: first, name: 'Lookout', xy: [32.076, 34.774], rank: 2, sources: ['photo'], refs: ['p1'] },
+        { id: 'port', date: second, name: 'Port', xy: [32.052, 34.75], rank: 1, sources: ['calendar'], refs: ['e1'] }
+      ],
+      googlePins: [
+        { id: 'corner', name: 'Saved café with a fairly long name', xy: [32.0762, 34.7745], date: first },
+        { id: 'south', name: 'Saved beach', xy: [32.06, 34.76] }
+      ]
+    });
+    await page.goto(new URL('../../dist/web/Hayiti.html?lang=en', import.meta.url).href);
+    const covered = (selector: string) => page.evaluate(target => {
+      const controls = document.querySelector('.map-controls')!.getBoundingClientRect();
+      return [...document.querySelectorAll(target)].filter(element => {
+        const box = element.getBoundingClientRect();
+        return box.width > 0 && box.left < controls.right && box.right > controls.left && box.top < controls.bottom && box.bottom > controls.top;
+      }).length;
+    }, selector);
+
+    for (const view of ['day', 'whole trip']) {
+      if (view === 'whole trip') await page.locator('#wholeTrip').click();
+      await page.locator('.google-pin').first().waitFor();
+      await page.waitForFunction(() => !document.querySelector('.leaflet-zoom-anim'));
+      assert.equal(await covered('#map .pin, #map .google-pin'), 0, view + ' pins clear the controls');
+    }
+    await page.getByRole('button', { name: /Saved café with a fairly long name/ }).click();
+    const popup = page.locator('.google-pin-popup');
+    await popup.waitFor();
+    await page.waitForFunction(() => !document.querySelector('.leaflet-pan-anim'));
+    assert.equal(await covered('#map .leaflet-popup'), 0, 'the popup clears the controls');
+
+    await popup.getByRole('button', { name: 'Remove from trip' }).click();
+    await page.locator('#confirmYes').click();
+    await page.waitForFunction(() => JSON.parse(localStorage.getItem('masluli-portable-v2')!).trips[0].googlePins.length === 1);
+    const trip = await page.evaluate(() => JSON.parse(localStorage.getItem('masluli-portable-v2')!).trips[0]);
+    assert.deepEqual([trip.googlePins.map((pin: { id: string }) => pin.id), trip.stops.length], [['south'], 3]);
+    assert.equal(await page.locator('#map .google-pin').count(), 1);
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('a photo-backed visit the traveler moves to another day is marked as theirs', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await page.route('https://**/*', route => route.abort());
+    const first = '2026-06-14', second = '2026-06-15';
+    await page.addInitScript(trip => localStorage.setItem('masluli-portable-v2', JSON.stringify({ trips: [trip] })), {
+      id: 'trip', title: 'Weekend', start: first, end: second,
+      stops: [{ id: 'visit', date: first, name: 'Harbour café', xy: [32.08, 34.78], sources: ['card', 'photo'], refs: ['charge', 'asset-1'], count: 1 }]
+    });
+    await page.goto(new URL('../../dist/web/Hayiti.html?lang=en', import.meta.url).href);
+    await page.getByRole('button', { name: 'Harbour café', exact: true }).first().click();
+    await page.locator('#editForm [name=date]').fill(second);
+    await page.locator('#editForm .primary').click();
+    await page.locator('#edit').waitFor({ state: 'hidden' });
+    const [stop] = await page.evaluate(() => JSON.parse(localStorage.getItem('masluli-portable-v2')!).trips[0].stops);
+    // A retry of the same photo finds the visit on its corrected day because of this mark.
+    assert.deepEqual([stop.date, stop.edited], [second, true]);
+  } finally {
+    await browser.close();
+  }
+});

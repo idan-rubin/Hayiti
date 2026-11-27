@@ -101,11 +101,14 @@ export const tools = [{
   }
 }, {
   name: 'list_google_pins',
-  description: 'Read all saved Google Pins for an owned trip, including places without a day assignment.',
+  description: 'Read the saved Google Pins for an owned trip, including places without a day assignment. Each call returns up to 200 pins with the total. Pass offset to read the rest.',
   annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   inputSchema: {
     type: 'object',
-    properties: { tripId: { type: 'string' } },
+    properties: {
+      tripId: { type: 'string' },
+      offset: { type: 'integer', minimum: 0, description: 'Number of pins to skip. Omit for the first 200.' }
+    },
     required: ['tripId']
   }
 }, {
@@ -143,14 +146,14 @@ export const tools = [{
       },
       googlePins: {
         type: 'array', maxItems: 200,
-        description: 'Saved places independent of all visits and routes. Reuse the same opaque ID for a Google place on every import.',
+        description: 'Saved places independent of all visits and routes. Reuse the same opaque ID for a Google place on every import. Sending a saved ID again with a corrected name or location updates it. A place at [0, 0] is refused.',
         items: {
           type: 'object', additionalProperties: false,
           properties: {
             id: { type: 'string', minLength: 1, maxLength: 180 },
             name: { type: 'string', minLength: 1, maxLength: 160 },
             xy: { ...stopShape.properties.xy, minItems: 2, maxItems: 2 },
-            date: { type: 'string', description: 'Assigned trip day (local YYYY-MM-DD), from the traveler or a verified local save date. Omit when unknown.' },
+            date: { type: 'string', description: 'Assigned trip day (local YYYY-MM-DD), from the traveler or a verified local save date. Omit when unknown. A day outside the trip is not kept, and the reply counts it in datesOutsideTrip.' },
             savedAt: { type: 'string', description: 'Optional source-reported date saved, YYYY-MM-DD or ISO timestamp with offset. Omit for a modification, export, or visit date. Provide date separately if a UTC timestamp can be converted to a verified local day.' }
           },
           required: ['id', 'name', 'xy']
