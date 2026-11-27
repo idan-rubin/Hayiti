@@ -16,6 +16,10 @@ const stopShape = {
       type: 'string',
       description: 'Known local HH:mm only'
     },
+    captureTime: {
+      type: 'string',
+      description: 'Optional local photo capture time HH:mm:ss, optionally with milliseconds. Use the same local date and minute as the stop.'
+    },
     xy: {
       type: 'array',
       items: {
