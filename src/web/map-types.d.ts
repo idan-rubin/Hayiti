@@ -22,7 +22,8 @@ interface JournalMap {
     pan: boolean;
   }): void;
   fitBounds(bounds: Bounds, options: {
-    padding: Coordinates;
+    paddingTopLeft: Coordinates;
+    paddingBottomRight: Coordinates;
     maxZoom: number;
     animate: boolean;
   }): void;
@@ -40,9 +41,13 @@ interface LayerGroup {
   addTo(map: JournalMap): LayerGroup;
   clearLayers(): void;
 }
+interface PopupOptions {
+  /** Pixels a popup keeps clear of the map's left and top edges when the map pans to show it. */
+  autoPanPaddingTopLeft: Coordinates;
+}
 interface MapMarker {
   addTo(layer: LayerGroup): MapMarker;
-  bindPopup(content: HTMLElement | (() => HTMLElement)): MapMarker;
+  bindPopup(content: HTMLElement | (() => HTMLElement), options?: PopupOptions): MapMarker;
   openPopup(): MapMarker;
   on(type: 'click', callback: () => void): MapMarker;
 }

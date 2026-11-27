@@ -15,7 +15,7 @@ import { JournalSession, localToday } from './journal-session.ts';
 import { preparePhoto } from './photos.ts';
 import { ask, clearError, showError } from './confirm.ts';
 import { projectMapPoints, wrapLongitude } from './map-longitudes.ts';
-import { drawGooglePins, assignGooglePinDay } from './google-pins.ts';
+import { drawGooglePins, assignGooglePinDay, type PinActions } from './google-pins.ts';
 import { addStreetMap, isBasemap, type StreetMapProblem } from './street-map.ts';
 import sampleTrip from '../../public/sample-trip.json' with { type: 'json' };
 const hebrewLabels = Object.fromEntries(Object.entries(messages).map(([he, en]) => [en, he]));
@@ -127,6 +127,12 @@ let popupFor = '';
 let overviewTripId = '';
 let routeBounds = L.latLngBounds([]),
   fitFrame = 0;
+// The view and basemap controls lie over the top of the map. A fitted route and an opened popup stay below them.
+const mapControls = document.querySelector<HTMLElement>('.map-controls');
+function controlsBand() {
+  return mapControls?.offsetHeight ? mapControls.offsetTop + mapControls.offsetHeight + 6 : 0;
+}
+const popupBelowControls = (): PopupOptions => ({ autoPanPaddingTopLeft: [8, controlsBand() + 8] });
 function fitRoute() {
   if (fitFrame) return;
   fitFrame = requestAnimationFrame(() => {
@@ -152,7 +158,8 @@ function fitRoute() {
     } else {
       const margin = Math.min(36, Math.round(Math.min(width, height) * .12));
       map.fitBounds(routeBounds, {
-        padding: [margin, margin],
+        paddingTopLeft: [margin, margin + controlsBand()],
+        paddingBottomRight: [margin, margin],
         maxZoom: 16,
         animate: false
       });
@@ -423,7 +430,7 @@ function addStopMarker(s: Stop, xy: Point, number: string, overview: boolean) {
       else openStop(s);
     }));
     return content;
-  });
+  }, popupBelowControls());
   if (!overview) {
     mark.on('click', () => reveal(s.id, 'row'));
     marks.set(s.id, mark);
@@ -531,15 +538,27 @@ function draw() {
   }
 
   if (trip) {
-    const assign = sharedRoute ? undefined : (pin: GooglePin, date: string) => {
-      void change(() => {
-        if (session.trip !== trip || !trip.googlePins?.includes(pin)) {
-          throw Error(ui('This trip changed. Open the Google Pin again to assign its day.', 'הטיול השתנה. כדי לבחור יום, פתחו שוב את סיכת Google.'));
-        }
-        assignGooglePinDay(pin, date);
-      });
+    const saved = (pin: GooglePin) => {
+      if (session.trip !== trip || !trip.googlePins?.includes(pin)) {
+        throw Error(ui('This trip changed. Open the Google Pin again.', 'הטיול השתנה. יש לפתוח שוב את סיכת Google.'));
+      }
     };
-    for (const xy of drawGooglePins(trip, overview ? null : day, overlay, assign, locate)) routeBounds.extend(xy);
+    const actions: PinActions | undefined = sharedRoute ? undefined : {
+      assignDay(pin, date) {
+        void change(() => {
+          saved(pin);
+          assignGooglePinDay(pin, date);
+        });
+      },
+      async remove(pin) {
+        if (!await ask(ui('Remove this Google Pin from the trip?', 'להסיר את סיכת Google מהטיול?'), ui('Remove pin', 'הסרת הסיכה'))) return;
+        void change(() => {
+          saved(pin);
+          trip.googlePins = trip.googlePins?.filter(other => other !== pin);
+        });
+      }
+    };
+    for (const xy of drawGooglePins(trip, overview ? null : day, overlay, actions, locate, popupBelowControls())) routeBounds.extend(xy);
   }
   if (!routeBounds.isValid()) for (const xy of visiblePoints) routeBounds.extend(locate(xy));
   fitRoute();
