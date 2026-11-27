@@ -116,6 +116,8 @@ const map = L.map('map', {
   zoomSnap: .25,
   maxZoom: 19
 }).setView([30, 15], 2);
+// Taxi dashes sit above walking paths (400) and below stop markers (600), in either travel order.
+map.createPane('taxiRoutes').style.zIndex = '410';
 const overlay = L.layerGroup().addTo(map);
 const rows = new Map<string, HTMLElement>(),
   marks = new Map<string, MapMarker>();
@@ -417,10 +419,11 @@ function draw() {
           const line = edge?.line?.length ? edge.line : [prev.xy, s.xy];
           const taxi = edge?.type === 'taxi';
           L.polyline(line, {
+            pane: taxi ? 'taxiRoutes' : 'overlayPane',
             color: taxi ? '#b96331' : '#267957',
-            weight: 3,
-            dashArray: taxi ? '9 7' : edge?.type === 'walk' ? null : '5 7',
-            opacity: .85
+            weight: edge?.type === 'walk' ? 5 : 3,
+            dashArray: taxi ? '9 9' : edge?.type === 'walk' ? null : '5 7',
+            opacity: taxi ? 1 : .85
           }).addTo(overlay);
           routeBounds.extend(line);
         }
@@ -1206,6 +1209,11 @@ for (const dialog of document.querySelectorAll('dialog')) {
   dialog.addEventListener('input', () => clearError(dialog));
 }
 enableSharing(() => session.trip, portable, () => session.day, () => session.mode === 'account');
+$('logout').onclick = async () => {
+  const confirmed = ask(ui('Sign out of hayiti?', 'לצאת מהחשבון?'), t('יציאה מהחשבון'));
+  $('confirmNo').focus();
+  if (await confirmed) window.open('/signout-with-chatgpt?return_to=%2Fjournal.html', '_top');
+};
 $('export').onclick = () => {
   const { trip } = session;
   if (!trip) return;
