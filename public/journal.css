@@ -21,13 +21,11 @@
 .daybar .toolbar {margin:0}
 .toolbar .action-short {display:none}
 @media(max-width:30rem) {
-  :lang(en) .toolbar .action-full {display:none}
-  :lang(en) .toolbar .action-short {display:inline}
-}
-@media(max-width:22.5rem) {
   .toolbar .action-full {display:none}
   .toolbar .action-short {display:inline}
-  :lang(en) .toolbar button {padding-inline:.1875rem;font-size:.8125rem}
+}
+@media(max-width:22.5rem) {
+  .daybar .toolbar button {padding-inline:.0625rem;font-size:.8125rem}
 }
 @media(max-width:820px) {
   .daybar .toolbar:has(#wholeTrip:not([hidden])) {
