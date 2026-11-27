@@ -23,6 +23,8 @@ export interface Stop {
   address: string;
   time: string;
   xy: Point | null;
+  photoAnchor?: Point;
+  captureTime?: string;
   notes: string;
   band: string;
   sources: Source[];
@@ -103,7 +105,19 @@ function photoLocation(stop: Stop): stop is Stop & { xy: Point } {
 function linkPhotoReferences(pin: Stop, incoming: Stop): 'linked' | 'skipped' {
   // Follow the journal's persisted reference limit. Spatial deduplication still works at capacity.
   const refs = [...new Set([...pin.refs, ...incoming.refs])].slice(0, 100);
-  if (refs.length === pin.refs.length) return 'skipped';
+  const time = incoming.captureTime || incoming.time;
+  const current = pin.captureTime || pin.time;
+  const earlier = photoLocation(pin) && photoLocation(incoming) && time &&
+    (!current || time < current) &&
+    distanceMeters(pin.photoAnchor ?? pin.xy, incoming.xy) <= photoPinRadiusMeters;
+  if (!earlier && refs.length === pin.refs.length) return 'skipped';
+  if (earlier && pin.xy) {
+    pin.photoAnchor ??= pin.xy;
+    pin.xy = incoming.xy;
+    pin.time = incoming.time;
+    if (incoming.captureTime) pin.captureTime = incoming.captureTime;
+    else delete pin.captureTime;
+  }
   pin.refs = refs;
   return 'linked';
 }
@@ -113,7 +127,7 @@ function closestPhotoPin(day: Stop[], incoming: Stop & { xy: Point }) {
   let limit = photoPinRadiusMeters;
   for (const candidate of day) {
     if (!photoLocation(candidate)) continue;
-    const distance = distanceMeters(candidate.xy, incoming.xy);
+    const distance = distanceMeters(candidate.photoAnchor ?? candidate.xy, incoming.xy);
     if (distance <= limit) {
       nearest = candidate;
       limit = distance;
@@ -129,13 +143,19 @@ export function photosOf(value: unknown): string[] {
 }
 export function cleanStop(value: unknown): Stop {
   if (!isRecord(value) || !safeDate(value.date) || !text(value.name, 160)) throw Error('נדרשים תאריך תקין ושם תחנה');
-  const time = text(value.time, 5);
+  const captureTime = text(value.captureTime, 16);
+  if (captureTime && !/^([01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,3})?$/.test(captureTime)) throw Error('Invalid local capture time');
+  const time = text(value.time, 5) || captureTime.slice(0, 5);
+  if (captureTime && captureTime.slice(0, 5) !== time) throw Error('Capture time must match the local stop time');
+  const anchor = point(value.photoAnchor);
   if (time && !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) throw Error('שעה לא תקינה');
   return {
     id: text(value.id, 140) || crypto.randomUUID(),
     name: text(value.name, 160),
     date: value.date,
     time,
+    ...(captureTime ? { captureTime } : {}),
+    ...(anchor ? { photoAnchor: anchor } : {}),
     address: text(value.address),
     xy: point(value.xy),
     notes: text(value.notes, 1200),
@@ -227,8 +247,13 @@ export function mergeStops(trip: Trip, incoming: readonly unknown[]): MergeResul
     skipped: 0
   };
   const ids = new Set(trip.stops.map(stop => stop.id));
-  for (const raw of incoming) {
-    const stop = cleanStop(raw);
+  const batch = incoming.map(cleanStop);
+  // Sort only photo slots, leaving the order of the traveler's other evidence intact.
+  const orderedPhotos = batch.filter(photoLocation).sort((a, b) =>
+    a.date.localeCompare(b.date) || (a.captureTime || a.time || '99').localeCompare(b.captureTime || b.time || '99'));
+  let photoIndex = 0;
+  for (const item of batch) {
+    const stop = photoLocation(item) ? orderedPhotos[photoIndex++] : item;
     if (stop.date < trip.start || stop.date > trip.end) throw Error('תחנה מחוץ לטווח הטיול');
     const day = trip.stops.filter(s => s.date === stop.date);
     // Prefer stable asset identity, then a unique named visit, before spatial matching.
