@@ -108,10 +108,17 @@ body.route-copy #export,body.route-copy .top .actions,body.route-copy .toolbar,b
 
 header {column-gap:12px}
 header nav {justify-content:flex-end}
+.header-short {display:none}
 .brand {flex:none;gap:10px;direction:rtl}
 .brand-signature {display:block;width:clamp(108px,21vw,145px);height:auto}
-@media(max-width:375px) {
-  .brand {gap:6px}
+@media(max-width:500px) {
+  header {column-gap:6px}
+  .brand-signature {width:clamp(3.75rem,19vw,6rem)}
+  header nav {gap:4px}
+  header nav button {padding-inline:.45rem}
+  #logout {min-width:44px;min-height:44px}
+  #export .header-full, #logout:lang(he) .header-full {display:none}
+  #export .header-short, #logout:lang(he) .header-short {display:inline}
 }
 
 .beta-links {margin:1.5rem 0;color:#426258;font-size:.9rem}.beta-links a {color:inherit}
