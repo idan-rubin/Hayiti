@@ -8,6 +8,7 @@ import { pathToFileURL } from 'node:url';
 import { strFromU8, unzipSync } from 'fflate';
 import { chromium, type Page } from 'playwright-core';
 import { readPortableRecord, waitForPortableTrip } from './portable-storage-helpers.ts';
+import { backUpTrip, restSheet } from './journal-controls.ts';
 
 async function openSampleTrip(page: Page) {
   await page.getByRole('button', { name: 'Try the sample trip' }).click();
@@ -499,7 +500,7 @@ await test('a journal that lives only in its tab asks before leaving until the t
     assert.equal(await page.locator('#status').getAttribute('data-tone'), 'warning');
     assert.equal(await asksBeforeLeaving(), true);
     const download = page.waitForEvent('download');
-    await page.locator('#export').click();
+    await backUpTrip(page);
     await download;
     assert.equal(await asksBeforeLeaving(), false);
   } finally {
@@ -791,7 +792,7 @@ await test('a terrain image that failed on the overview does not keep the note a
   }
 });
 
-await test('the header lines up with the page on a wide screen and the language menu has room for its arrow', async () => {
+await test('on a wide screen the brand sits over the panel, the bar reaches the far edge and the language menu has room for its arrow', async () => {
   const browser = await chromium.launch();
   try {
     const page = await browser.newPage({ viewport: { width: 2560, height: 900 } });
@@ -805,14 +806,15 @@ await test('the header lines up with the page on a wide screen and the language 
         await page.setViewportSize({ width, height: 900 });
         const edges = await page.evaluate(() => {
           const box = (selector: string) => document.querySelector(selector)!.getBoundingClientRect();
-          const header = [box('.brand'), box('header nav')],
-            content = box('.top');
-          return {
-            header: [Math.round(Math.min(...header.map(part => part.left))), Math.round(Math.max(...header.map(part => part.right)))],
-            content: [Math.round(content.left), Math.round(content.right)]
-          };
+          const brand = box('.brand'), bar = box('header nav'), panel = box('#panel');
+          // The panel and the brand above it start where reading starts. The bar ends at the far edge of the window.
+          return document.documentElement.dir === 'rtl'
+            ? { brand: Math.round(brand.right), panel: Math.round(panel.right), bar: Math.round(bar.left), map: Math.round(box('#map').width) }
+            : { brand: Math.round(brand.left), panel: Math.round(panel.left), bar: Math.round(innerWidth - bar.right), map: Math.round(box('#map').width) };
         });
-        assert.deepEqual(edges.header, edges.content, language + ' at ' + width);
+        assert.equal(edges.brand, edges.panel, language + ' at ' + width);
+        assert.equal(edges.bar, 12, language + ' at ' + width);
+        assert.equal(edges.map, width, 'the map fills the window at ' + width);
       }
       const menu = await page.locator('#languageSwitch').evaluate(element => {
         const style = getComputedStyle(element);
@@ -1093,7 +1095,7 @@ await test('the map controls leave pins and an opened popup uncovered, and a Goo
   }
 });
 
-await test('a pin drawn in the Hebrew mobile stop list can be closed after returning to the map', async () => {
+await test('a pin drawn while the Hebrew mobile list covers the map can be closed once the list is lowered', async () => {
   const browser = await chromium.launch();
   try {
     const page = await browser.newPage({ viewport: { width: 375, height: 667 }, hasTouch: true });
@@ -1105,9 +1107,9 @@ await test('a pin drawn in the Hebrew mobile stop list can be closed after retur
       googlePins: [{ id: 'corner', name: 'Saved café with a fairly long name', xy: [32.0762, 34.7745], date: second }]
     });
     await page.goto(new URL('../../dist/web/Hayiti.html?lang=he', import.meta.url).href);
-    await page.getByRole('button', { name: 'תחנות', exact: true }).click();
+    await restSheet(page, 'full');
     await page.locator('#tripDate').selectOption(second);
-    await page.getByRole('button', { name: 'מפה', exact: true }).click();
+    await restSheet(page, 'half');
     await page.locator('.google-pin').click();
     const close = page.locator('.leaflet-popup-close-button');
     await close.waitFor();

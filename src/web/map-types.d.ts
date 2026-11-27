@@ -10,8 +10,17 @@ interface Bounds {
   getNorthEast(): MapPoint;
   getCenter(): MapPoint;
 }
+interface MapControl {
+  setPosition(corner: 'bottomleft' | 'bottomright'): void;
+}
 interface JournalMap {
+  zoomControl: MapControl;
+  attributionControl: MapControl;
   createPane(name: string): HTMLElement;
+  /** Moves the view by this many pixels; positive values show more of the map to the right and below. */
+  panBy(offset: Coordinates, options: {
+    animate: boolean;
+  }): void;
   setView(position: Coordinates | MapPoint, zoom: number, options?: {
     animate: boolean;
   }): JournalMap;
@@ -44,6 +53,8 @@ interface LayerGroup {
 interface PopupOptions {
   /** Pixels a popup keeps clear of the map's left and top edges when the map pans to show it. */
   autoPanPaddingTopLeft: Coordinates;
+  /** The same for the right and bottom edges. */
+  autoPanPaddingBottomRight: Coordinates;
 }
 interface MapMarker {
   addTo(layer: LayerGroup): MapMarker;

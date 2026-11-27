@@ -6,7 +6,8 @@ import { language, locale, bindLanguageControl } from './language.ts';
 import { displayTripTitle, messages, t, quantity } from './journal-messages.ts';
 import { enableSharing } from './share-ui.ts';
 import { routeStops, dayDetails, isMappedStop, indexEdges, suggest, walkingStats } from '../domain/daily-route.ts';
-import { createDateReel } from './date-reel.ts';
+import { createDayStrip } from './day-strip.ts';
+import { createSheet } from './sheet.ts';
 import { cleanTrip, cleanStop, mergeGooglePins, removeGooglePin, restoreGooglePin, mergeStops, combineEvidence, journalCharacterLimit, unidentifiedMerchant } from '../domain/core.ts';
 import { importEvidencePackage, prepareTripBackup, importCsv, importIcs, pastedStop } from '../domain/importers.ts';
 import { checkGuestBackup, discardGuest, onGuestChange, guestMergeRequested, requestGuestMerge, hasLegacyGuestTrips } from './guest-draft.ts';
@@ -127,13 +128,31 @@ let popupFor = '';
 let overviewTripId = '';
 let routeBounds = L.latLngBounds([]),
   fitFrame = 0;
-// Leave room for the basemap selector at the top of the map.
+// Lowered all the way, the sheet still shows the trip and its days.
+const sheet = createSheet($('panel'), $('sheetHandle'), () => {
+  const days = $('dayStrip').parentElement!;
+  const last = days.hidden ? $('status').textContent ? $('status') : $('range') : days;
+  return last.offsetTop + last.offsetHeight;
+});
 const mapControls = document.querySelector<HTMLElement>('.map-controls');
-function controlsBand() {
-  return mapControls?.offsetHeight ? mapControls.offsetTop + mapControls.offsetHeight + 6 : 0;
+// The map fills the window behind the bar, the map controls and the panel. A route is fitted to what they leave clear.
+function coveredEdges() {
+  const box = map.getContainer().getBoundingClientRect();
+  const bottomOf = (element: Element | null) => {
+    const rect = element?.getBoundingClientRect();
+    return rect?.height ? rect.bottom - box.top + 6 : 0;
+  };
+  const top = Math.max(bottomOf(document.querySelector('header nav')), bottomOf(mapControls));
+  if (sheet.narrow) return { top, left: 0, right: 0, bottom: sheet.cover };
+  const panel = $('panel').getBoundingClientRect();
+  if (!panel.width) return { top, left: 0, right: 0, bottom: 0 };
+  // The panel follows the reading direction, so it covers the left edge in English and the right edge in Hebrew.
+  const onRight = panel.left - box.left > box.right - panel.right;
+  const beside = (onRight ? box.right - panel.left : panel.right - box.left) + 6;
+  return { top, left: onRight ? 0 : beside, right: onRight ? beside : 0, bottom: 0 };
 }
-// Leaflet reads this shared pair when a popup opens, including markers created while the map was hidden.
-const popupOptions: PopupOptions = { autoPanPaddingTopLeft: [8, 8] };
+// Leaflet reads these shared pairs when a popup opens, including markers created while the map was covered.
+const popupOptions: PopupOptions = { autoPanPaddingTopLeft: [8, 8], autoPanPaddingBottomRight: [8, 8] };
 function fitRoute() {
   if (fitFrame) return;
   fitFrame = requestAnimationFrame(() => {
@@ -143,8 +162,9 @@ function fitRoute() {
       clientHeight: height
     } = map.getContainer();
     if (!width || !height) return;
-    const controlHeight = controlsBand();
-    popupOptions.autoPanPaddingTopLeft[1] = controlHeight + 8;
+    const covered = coveredEdges();
+    popupOptions.autoPanPaddingTopLeft = [covered.left + 8, covered.top + 8];
+    popupOptions.autoPanPaddingBottomRight = [covered.right + 8, covered.bottom + 8];
     map.stop();
     map.invalidateSize({
       pan: false,
@@ -158,11 +178,16 @@ function fitRoute() {
       map.setView(routeBounds.getCenter(), 15, {
         animate: false
       });
+      // A single place sits in the middle of the clear part of the map.
+      map.panBy([(covered.right - covered.left) / 2, (covered.bottom - covered.top) / 2], {
+        animate: false
+      });
     } else {
-      const margin = Math.min(36, Math.round(Math.min(width, height) * .12));
+      const clear = Math.min(width - covered.left - covered.right, height - covered.top - covered.bottom);
+      const margin = Math.max(18, Math.min(36, Math.round(clear * .12)));
       map.fitBounds(routeBounds, {
-        paddingTopLeft: [margin, margin + controlHeight],
-        paddingBottomRight: [margin, margin],
+        paddingTopLeft: [margin + covered.left, margin + covered.top],
+        paddingBottomRight: [margin + covered.right, margin + covered.bottom],
         maxZoom: 16,
         animate: false
       });
@@ -305,7 +330,9 @@ function render() {
   const { trip, day } = session;
   if (trip?.id !== overviewTripId) overviewTripId = '';
   showConnections();
-  $('range').textContent = trip ? rangeDate(trip.start) + t(' עד ') + rangeDate(trip.end) + (trip.home ? t(' · יציאה מ') + trip.home : '') : t('אפשר להתחיל מטיול חדש או לייבא טיול קיים.');
+  $('range').textContent = trip ? rangeDate(trip.start) + t(' עד ') + rangeDate(trip.end) + (trip.home ? t(' · יציאה מ') : '') : t('אפשר להתחיל מטיול חדש או לייבא טיול קיים.');
+  // The traveler's own words keep their direction beside a label in the other one.
+  if (trip?.home) $('range').append(dom('bdi', trip.home));
   const copiesByTitle = new Map<string, number>();
   $('trips').replaceChildren(...session.trips.map(item => {
     const title = displayTripTitle(item.title);
@@ -320,17 +347,19 @@ function render() {
   $('trips').hidden = session.trips.length < 2;
   for (const id of ['add', 'export', 'settings', 'organize'] as const) $(id).disabled = !trip;
   const days = trip ? dateRange(trip) : [];
-  setDates(days, day, days.map(date => {
+  dayStrip.set(days, day, days.map(date => {
     const count = trip?.stops.filter(stop => stop.date === date && stop.kind !== 'origin' && isMappedStop(stop)).length ?? 0;
     const details = dayDetails(trip, date).length;
     return [count ? stopCount(count) : '', details ? quantity(details, details === 1 ? ' רשומה' : ' רשומות', 'entry', 'entries') : ''].filter(Boolean).join(' · ');
   }));
   document.body.classList.toggle('no-trip', !trip);
   $('welcome').hidden = !!trip || !!sharedRoute || !journalReady || session.mode === 'portable-recovery';
+  // The heading above the list may have grown or shrunk, and the lowered sheet is as tall as that heading.
+  sheet.relabel();
   draw();
 }
 const stopCount = (count: number) => count === 1 ? t('תחנה אחת') : count + t(' תחנות');
-const setDates = createDateReel($('dayReel'), $('tripDate'), $('dayProgress'), dateLabel, next => {
+const dayStrip = createDayStrip($('dayStrip'), $('tripDate'), $('dayProgress'), dateLabel, next => {
   if (next === session.day && !overviewTripId) return;
   overviewTripId = '';
   session.select(session.trip, next);
@@ -414,14 +443,19 @@ function appendStopRow(s: Stop, i: number, list: Stop[], number: string) {
   li.append(col, actions);
   $('stops').append(li);
 }
-function addStopMarker(s: Stop, xy: Point, number: string, overview: boolean) {
+// On the whole-trip map every day has its own color, so pins that share a number can be told apart.
+const dayColors = 7;
+// Routes are drawn in the stylesheet's colors, so a line on the map matches its pins and the legend.
+const themeColor = (name: string) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+function addStopMarker(s: Stop, xy: Point, number: string, tone: number | null) {
+  const overview = tone !== null;
   const name = displayStopName(s.name);
   const keys = (s.sources || []).filter(k => Object.hasOwn(types, k));
   const primary = keys[0];
   const badge = s.kind !== 'origin' && primary ? '<span class="pin-source" style="background:' + types[primary][1] + '">' + pinSymbol(primary) + '</span>' : '';
   const description = [name, ...(overview ? [dateLabel(s.date)] : []), ...keys.map(k => k === 'card' ? ui('Transaction', 'עסקה') : t(label[k]))].join(' · ');
   const icon = L.divIcon({
-    className: 'pin ' + (s.kind === 'origin' ? 'home ' : '') + (s.approx ? 'soft' : ''),
+    className: 'pin ' + (s.kind === 'origin' ? 'home ' : overview ? 'day-' + tone + ' ' : '') + (s.approx ? 'soft' : ''),
     html: s.kind === 'origin' ? '⌂' : number + badge,
     iconSize: [28, 28],
     iconAnchor: [14, 14]
@@ -449,13 +483,13 @@ function addStopMarker(s: Stop, xy: Point, number: string, overview: boolean) {
   }
 }
 
-function drawLeg(previous: Point, stop: Point, edge: Edge | undefined, locate: (p: Point) => Point) {
+function drawLeg(previous: Point, stop: Point, edge: Edge | undefined, locate: (p: Point) => Point, color: string) {
   if (edge?.type !== 'same') {
     const line = (edge?.line?.length ? edge.line : [previous, stop]).map(locate);
     const taxi = edge?.type === 'taxi';
     L.polyline(line, {
       pane: taxi ? 'taxiRoutes' : 'overlayPane',
-      color: taxi ? '#b96331' : '#267957',
+      color: taxi ? themeColor('--clay') : color,
       weight: edge?.type === 'walk' ? 5 : 3,
       dashArray: taxi ? '9 9' : edge?.type === 'walk' ? null : '5 7',
       opacity: taxi ? 1 : .85
@@ -463,21 +497,23 @@ function drawLeg(previous: Point, stop: Point, edge: Edge | undefined, locate: (
     routeBounds.extend(line);
   }
 }
-function drawRouteDay(list: Stop[], edges: Map<string, Edge>, locate: (p: Point) => Point, overview: boolean, showBase: boolean) {
+/** `tone` is the day's color on the whole-trip map, and null when a single day is shown. */
+function drawRouteDay(list: Stop[], edges: Map<string, Edge>, locate: (p: Point) => Point, tone: number | null, showBase: boolean) {
+  const color = themeColor(tone === null ? '--leaf' : '--day-' + tone);
   for (const [i, stop] of list.entries()) {
     const number = stop.kind === 'origin' ? '⌂' : String(i + (list[0]?.kind === 'origin' ? 0 : 1));
-    if (!overview) appendStopRow(stop, i, list, number);
+    if (tone === null) appendStopRow(stop, i, list, number);
     if (!stop.xy) continue;
     const xy = locate(stop.xy);
     routeBounds.extend(xy);
-    if (stop.id !== 'base' || showBase) addStopMarker(stop, xy, number, overview);
+    if (stop.id !== 'base' || showBase) addStopMarker(stop, xy, number, tone);
     const previous = list[i - 1];
-    if (previous?.xy) drawLeg(previous.xy, stop.xy, edges.get(previous.id + '|' + stop.id), locate);
+    if (previous?.xy) drawLeg(previous.xy, stop.xy, edges.get(previous.id + '|' + stop.id), locate, color);
   }
 }
-function appendOverviewDay(date: string, stops: number, googlePins: number) {
+function appendOverviewDay(date: string, stops: number, googlePins: number, tone: number) {
   const entry = button(dateLabel(date), () => openMapDay(date));
-  entry.className = 'overview-day';
+  entry.className = 'overview-day day-' + tone;
   entry.dataset.day = date;
   const counts = [];
   if (stops) counts.push(stopCount(stops));
@@ -530,23 +566,25 @@ function draw() {
   document.body.classList.toggle('trip-overview', overview);
   $('wholeTrip').hidden = !trip;
   $('wholeTrip').setAttribute('aria-pressed', String(overview));
-  $('wholeTrip').textContent = overview ? ui('Back to day', 'חזרה ליום') : ui('Whole trip', 'כל הטיול');
-  $('dayTitle').hidden = !!trip && !overview;
-  $('dayTitle').textContent = overview ? ui('Whole trip', 'כל הטיול') : ui("Today's route", 'המסלול היומי');
-  $('listTab').textContent = overview ? ui('Days', 'ימים') : ui('Stops', 'תחנות');
-  $('listTitle').textContent = overview ? ui('Trip days', 'ימי הטיול') : t('תחנות בדרך');
+  $('wholeTrip').textContent = ui('Whole trip', 'כל הטיול');
+  dayStrip.showAll(overview);
+  // The strip shows only a weekday and a number, so the list is headed by the full date.
+  $('listTitle').textContent = overview ? ui('Trip days', 'ימי הטיול') : trip ? dateLabel(day) : t('תחנות בדרך');
   if (overview) {
     $('dayStats').hidden = true;
     $('count').textContent = '';
   }
   let baseDrawn = false;
+  const tripDays = overview ? dateRange(trip) : [];
   for (const { date, stops } of routes) {
-    if (overview) {
-      appendOverviewDay(date, stops.filter(stop => stop.kind !== 'origin').length, pinsPerDay.get(date) ?? 0);
+    // A day keeps its color wherever it falls in the trip, including after other days gain or lose stops.
+    const tone = overview ? Math.max(0, tripDays.indexOf(date)) % dayColors : null;
+    if (tone !== null) {
+      appendOverviewDay(date, stops.filter(stop => stop.kind !== 'origin').length, pinsPerDay.get(date) ?? 0, tone);
     } else {
       showDailyStats(walkingStats(stops, edges));
     }
-    drawRouteDay(stops, edges, locate, overview, !baseDrawn);
+    drawRouteDay(stops, edges, locate, tone, !baseDrawn);
     if (stops.some(stop => stop.id === 'base' && stop.xy)) baseDrawn = true;
   }
 
@@ -674,10 +712,17 @@ function reveal(id: string, target: 'row' | 'pin') {
   selected = id;
   for (const [key, row] of rows) row.classList.toggle('activeStop', key === id);
   if (target === 'row') {
-    rows.get(id)?.scrollIntoView({ block: 'nearest' });
+    // Only the list scrolls. The panel around it stays where it is.
+    const row = rows.get(id),
+      list = row?.closest('.listbody');
+    if (!row || !list) return;
+    const shown = list.getBoundingClientRect(),
+      box = row.getBoundingClientRect();
+    if (box.top < shown.top) list.scrollTop -= shown.top - box.top;
+    else if (box.bottom > shown.bottom) list.scrollTop += box.bottom - shown.bottom;
     return;
   }
-  // On a phone the map was hidden behind the list and is measured again as it appears.
+  // On a phone a full sheet covers the map, which is fitted again as the sheet lowers.
   popupFor = id;
   map.closePopup();
   viewList(false);
@@ -1362,7 +1407,8 @@ $('pick').onclick = () => {
   map.getContainer().classList.add('pickmode');
   $('edit').close();
   hint(() => t('לחץ על המקום במפה. אפשר להתקרב לפני הבחירה.') + ui(' Press Escape to cancel.', ' Escape מבטל את הבחירה.'), 'warning');
-  viewList(false);
+  // Choosing a point needs as much of the map as the phone can show.
+  viewList(false, 'peek');
 };
 map.on('click', e => {
   if (!pick) return;
@@ -1494,6 +1540,8 @@ $('logout').onclick = async () => {
   const confirmed = ask(ui('Sign out of hayiti?', 'לצאת מהחשבון?'), t('יציאה מהחשבון'));
   $('confirmNo').focus();
   if (await confirmed) window.open('/signout-with-chatgpt?return_to=%2Fjournal.html', '_top');
+  // The question closed the menu that held Sign out, so the keyboard returns to the button that opens it.
+  else $('menuButton').focus();
 };
 $('export').onclick = () => {
   const { trip } = session;
@@ -1754,19 +1802,21 @@ async function previewFile(f: File, order?: 'day-first' | 'month-first') {
     $('file').value = '';
   }
 }
-function viewList(value: boolean) {
-  document.body.classList.toggle('showList', value);
-  $('listTab').setAttribute('aria-pressed', String(value));
-  $('mapTab').setAttribute('aria-pressed', String(!value));
+// On a phone the list is a sheet over the map. Showing the list raises it, and showing the map lowers a full sheet.
+function viewList(value: boolean, mapHeight: 'half' | 'peek' = 'half') {
+  if (sheet.narrow && (value || sheet.stop === 'full' || mapHeight === 'peek')) sheet.rest(value ? 'full' : mapHeight);
   if (!value) fitRoute();
 }
-$('mapTab').onclick = () => viewList(false);
-$('listTab').onclick = () => viewList(true);
 $('edit').addEventListener('cancel', () => {
   fileEpoch++;
   photoBusy = false;
 });
 function localizeControls() {
+  // The panel takes the side where reading starts, so the zoom buttons and the map credit take the other one.
+  const corner = language === 'he' ? 'bottomleft' : 'bottomright';
+  map.attributionControl.setPosition(corner);
+  map.zoomControl.setPosition(corner);
+  sheet.relabel();
   for (const [direction, hebrew, english] of [['in', 'התקרבות', 'Zoom in'], ['out', 'התרחקות', 'Zoom out']]) {
     const zoom = map.getContainer().querySelector<HTMLElement>('.leaflet-control-zoom-' + direction);
     if (!zoom) continue;

@@ -59,7 +59,7 @@ A charge might name a café chain. A photo you took there that morning can help 
 
 ChatGPT asks for anything missing, such as the dates or where you stayed. It cross-checks the sources you authorize, shows you the stops, and saves the ones you approve. Open the web app with the same account to see your days. ChatGPT accesses your photos through its app, or through the browser if needed, with your guidance. ChatGPT can map a photo from its capture time and coordinates. If you attach the photo to a stop yourself, hayiti saves the image in your private journal. Shared routes leave it out. For purchases, ChatGPT can use its [Finances tab](https://chatgpt.com/finances/).
 
-**Without an account.** In the web app or the portable journal, choose **New trip** and enter a name and dates. Open **Sources and import**, select the sources to include, and choose **Copy sync request**. Paste the request into your conversation, then import the file ChatGPT returns under **Files**.
+**Without an account.** In the web app or the portable journal, choose **New trip**, the ＋ beside the trip name, and enter a name and dates. Open **Sources and import**, select the sources to include, and choose **Copy sync request**. Paste the request into your conversation, then import the file ChatGPT returns under **Files**.
 
 **By hand.** Choose **New trip**, pick a day, choose **+ Stop** and enter a place. You can also import a transaction file (`.csv`), a calendar file (`.ics`) or an email (`.eml`).
 
@@ -75,10 +75,10 @@ The orange dashed line shows the taxi ride. Taxi pins show approximate locations
 
 - **Numbered stops** appear in order, each with a pin. A solid green line shows an estimated walk. An orange dashed line shows a taxi ride. A green dashed line shows the order when the route between stops is unknown.
 - **More about this day** holds what could not be placed: places without a pin, visits to confirm and remote purchases.
-- **Whole trip** shows every day on one map, each day's route drawn separately. Choose streets, satellite imagery or terrain.
+- **Whole trip** shows every day on one map, each day's pins and route in its own color. Choose streets, satellite imagery or terrain.
 - **Edit anything.** Move a stop up or down, fix a time or an address, or mark a location as approximate.
 
-On a phone, choose **Stops** to see the day's visits in order.
+On a phone, the day's visits sit in a sheet over the map. Tap its handle to raise the list, and again to lower it.
 
 <img src="docs/screenshots/sample-stops.png" width="320" alt="Mobile stop list for the sample day, showing card purchases, two ends of a taxi ride and an evening concert.">
 
@@ -87,7 +87,7 @@ On a phone, choose **Stops** to see the day's visits in order.
 hayiti is a private journal first.
 
 - **Where it lives.** Signed in, your journal is stored with your account. Without signing in, it stays in that browser. The portable journal is a single file that works offline and needs the internet only for the street map and address lookup.
-- **Keeping it.** **Back up trip** downloads an editable copy you can import anywhere.
+- **Keeping it.** **Back up trip**, in the menu at the end of the bar, downloads an editable copy you can import anywhere.
 - **Sharing is optional.** **Share** makes a read-only route for a day or a whole trip. It leaves out notes, photos, Google Pins and source references. Your home base is left out unless you include it. A hosted link can be revoked.
 
 See the [privacy policy](https://hayiti-beta.cocoacoati256.chatgpt.site/privacy.html) for what each service receives.

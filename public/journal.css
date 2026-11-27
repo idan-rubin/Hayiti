@@ -1,340 +1,583 @@
-:root{font-family:system-ui,-apple-system,Arial,sans-serif;color:#18382e;background:#f3f5ef;font-size:16px;--line:#cdd8cb;--pine:#174b39;--muted:#52685c}*{box-sizing:border-box}body{margin:0}header,main{max-width:1440px;margin:auto}header{display:flex;justify-content:space-between;align-items:center;padding:18px clamp(16px,5vw,72px);border-bottom:1px solid var(--line)}.brand{font-size:1.5rem;font-weight:750;display:flex;gap:10px;align-items:center}.actions,nav,.toolbar,.tabs,.dh,.listhead,.maphead,.top,.legend{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.top,.dh,.listhead,.maphead{justify-content:space-between}main{padding:32px clamp(15px,5vw,72px) 72px}.eyebrow{color:#416d50;font-size:.85rem;font-weight:650}h1,h2,h3,p{margin:0}h1{font-size:clamp(2.1rem,5vw,3.8rem);letter-spacing:-.065em;line-height:1.18;margin:3px 0 6px}h2{font-size:1.35rem;letter-spacing:-.025em}h3{font-size:1.05rem}.sub,.meta,.legend,#status{color:var(--muted)}button,select,input,textarea,a{font:inherit}button,nav a,.actions a{cursor:pointer;border:1px solid var(--line);color:var(--pine);background:white;border-radius:9px;padding:9px 14px;text-decoration:none;font-weight:560}button:hover,.actions a:hover{background:#e9f1e6}button:disabled{opacity:.4;cursor:default}.primary{background:var(--pine);color:white;border-color:var(--pine)}.primary:hover{background:#0a3a2a}select,input,textarea{border:1px solid var(--line);border-radius:8px;padding:8px;color:inherit;background:white;min-width:0}#status{font-size:.89rem;min-height:1.8rem;margin-top:8px}.toolbar{margin:8px 0 18px}.layout{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(300px,1fr);gap:20px;align-items:start}.mapcard,.listcard{background:#fff;border:1px solid var(--line);border-radius:16px;overflow:hidden}.maphead,.listhead{padding:15px 20px}.listhead{border-bottom:1px solid var(--line)}.listcard>.sub{padding:10px 20px 0;font-size:.9rem}.maphead{background:#ecf1e6}#map{height:clamp(350px,51vh,590px);background:#e3e9e0;z-index:0;direction:ltr}.legend{font-size:.79rem;padding:9px 14px;gap:7px}.legend i{display:inline-block;width:20px;border-top:3px solid #267957}.legend i.ride{border-color:#b96331;border-top-style:dashed}.legend i.guessed{border-top-style:dashed}.leaflet-control-attribution{font-size:10px}.pin{border-radius:50%;background:#145b44;color:#fff;display:grid;place-items:center;border:2px solid white;box-shadow:0 1px 5px #1235;font-weight:750}.pin.home{background:#bd5e30}.pin.soft{border-style:dashed}.leaflet-container{font-family:inherit}:lang(he) .leaflet-popup-content{direction:rtl}ol{list-style:none;padding:0 15px;margin:3px 0 12px}.stop{display:grid;grid-template-columns:31px minmax(0,1fr) auto;gap:8px;padding:12px 0;border-bottom:1px solid #e4eadd}.stop:last-child{border-bottom:0}.num{width:28px;height:28px;display:grid;place-items:center;background:#e8efdf;color:#28583b;border-radius:50%;font-size:.85rem;font-weight:700}.stopname{font-weight:650;border:0;text-align:start;padding:0;background:none}.meta{font-size:.83rem;margin-top:3px}.tools{display:flex;gap:3px;align-items:start}.tools button{padding:4px 7px;font-size:.85rem}.src{font-size:.77rem;color:#50634a}details{border-top:1px solid var(--line);padding:12px 18px}summary{cursor:pointer}.empty{padding:20px;color:var(--muted)}dialog{width:min(560px,95vw);max-height:89vh;border:1px solid var(--line);border-radius:16px;padding:20px;color:#19392e;box-shadow:0 20px 70px #142e2830}dialog::backdrop{background:#122a256b}dialog .dh{margin-bottom:14px}dialog .dh button{border:0}label{display:flex;flex-direction:column;gap:4px;margin:8px 0;font-size:.9rem}label input,label textarea,label select{width:100%}.fields{display:grid;grid-template-columns:1fr 1fr;gap:0 10px}.check{display:flex;flex-direction:row;align-items:center}.check input{width:auto}.tabs{border-bottom:1px solid var(--line);padding-bottom:9px;margin-bottom:12px}.tabs .selected{background:#dfecda}.actions{margin:6px 0}dialog p{line-height:1.55;margin:6px 0 12px}textarea{width:100%}#georesults button{display:block;margin:4px 0}#preview,#promptResult{white-space:pre-wrap;overflow-wrap:anywhere;margin:10px 0}.pickmode{cursor:crosshair}button:focus-visible,input:focus-visible,summary:focus-visible,select:focus-visible,a:focus-visible{outline:3px solid #b66c32}.activeStop{background:#f2f6ef}[hidden]{display:none!important}@media(max-width:820px){.layout{grid-template-columns:1fr}.top{align-items:start}.maphead{padding:10px 14px}.brand{font-size:1.25rem}main{padding-top:20px}}@media(max-width:500px){.fields{grid-template-columns:1fr}.top .actions{width:100%}header{padding:10px 14px}nav button,nav a{font-size:.78rem;padding:7px}nav{gap:4px}#map{height:325px}.toolbar button{font-size:.88rem;padding:9px}.tools button{min-height:35px}.stop{grid-template-columns:26px minmax(0,1fr) auto}.meta{overflow-wrap:anywhere}}
-:root{--pine:#153f36;--ink:#172f2b;--line:#c3cfc6;--muted:#496057;color:var(--ink);background:#eef2ef}body{height:100vh;height:100dvh;display:flex;flex-direction:column;overflow:hidden}header{max-width:none;margin:0;background:var(--pine);color:#fff;padding:8px clamp(12px,4vw,64px);flex-shrink:0;border:0}.brand{font-size:1.22rem}nav button,nav a{border-color:#688076;background:transparent;color:#fff;font-size:.88rem;padding:7px 12px}nav button:hover,nav a:hover{background:#2f5549}main{width:100%;min-height:0;flex:1;display:grid;grid-template-areas:"trip" "status" "date" "route";grid-template-rows:auto auto auto minmax(0,1fr);padding:12px clamp(12px,4vw,64px) 14px;max-width:1600px}.top{align-items:center;gap:6px}.top h1{font-size:clamp(1.45rem,3vw,2.35rem);margin:0;letter-spacing:-.04em}.top .actions{margin:0}.sub{font-size:.9rem}#status{font-size:.81rem;min-height:0;margin:3px 0 0}#status:empty{display:none}.toolbar{margin:8px 0;gap:6px}.toolbar button,.top button,.top select{padding:7px 12px;font-size:.91rem}.maphead{position:relative;background:#e2eae2;border:1px solid #bdccbf;border-radius:13px;padding:5px 15px;min-height:64px;margin-bottom:9px}.maphead h2{font-size:1.13rem}.maphead .eyebrow{font-size:.78rem}.layout{gap:12px;grid-template-columns:minmax(0,1.8fr) minmax(280px,1fr);height:100%;min-height:0;align-items:stretch}.mapcard,.listcard{border-radius:13px;border-color:#b8c9bf;box-shadow:0 3px 12px #183c2910;min-height:0}.mapcard{display:flex;flex-direction:column}#map{height:auto;flex:1;min-height:0}.legend{flex:none;border-top:1px solid #c6d2c8}.listcard{display:flex;flex-direction:column}.listhead{padding:12px 16px;background:#f7f9f5}.listhead h2{font-size:1.08rem}.listbody{overflow:auto;min-height:0;overscroll-behavior:contain}.listcard>.sub{max-height:20%;overflow:auto;padding:8px 15px;line-height:1.4}.stop{padding:10px 0}.viewtabs{display:none}.top{grid-area:trip}#status{grid-area:status}.daybar{grid-area:date;min-width:0}.layout{grid-area:route}.photobox{margin:12px 0;border:1px solid var(--line);border-radius:10px;background:#f6f8f4;padding:8px 12px}.photobox img{max-width:min(100%,320px);max-height:210px;object-fit:contain;display:block;margin:6px 0}.photobox legend{font-size:.88rem;font-weight:650}#photoStatus{font-size:.82rem}.filelabel input{background:white}.stop button,.viewtabs button{touch-action:manipulation}.src{font-size:.81rem}.tools{flex-wrap:wrap;max-width:86px}.tools button{min-width:28px}.pin:focus{outline:2px solid #162}.actions a{display:inline-block}
-@media(max-width:820px){main{padding:4px 10px 7px}.top{flex-wrap:nowrap}.top .actions{flex-wrap:wrap;width:auto;justify-content:flex-end}.top .actions button,.top select{font-size:.8rem;padding:5px 8px}.range,.top .sub{font-size:.78rem}.maphead{margin:0;min-height:46px}.viewtabs{display:flex;margin:5px 0;gap:3px}.viewtabs button{background:#e1e8df;border-radius:7px;border:1px solid #c2cec2;padding:4px 14px;font-size:.85rem}.viewtabs button[aria-pressed=true]{background:var(--pine);color:white}.layout{display:flex}.mapcard,.listcard{width:100%}.listcard{display:none}body.showList .listcard{display:flex}body.showList .mapcard{display:none}.brand{gap:6px}header{padding:7px 10px}#status{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.toolbar button{font-size:.85rem;padding:6px 10px}.legend{font-size:.72rem}.fields{grid-template-columns:repeat(auto-fit,minmax(min(180px,100%),1fr))}#map{height:auto}}
-@media(max-height:515px){header{padding-block:2px}main{padding-block:2px} .toolbar{margin:2px 0}.maphead{min-height:0;padding-block:0}.top h1{font-size:1.1rem}.maphead .eyebrow{display:none}.legend{padding-block:0}.viewtabs{margin:1px 0}.top .sub{font-size:.72rem}}
-#photoPanel{display:flex;flex-wrap:wrap;gap:7px}#photoPanel figure{margin:0;display:grid;gap:3px}#photoPanel img{width:100%;max-width:165px;max-height:170px}#photoPanel button{font-size:.8rem;padding:4px 8px}
+/*
+ * The map fills the window. A bar, the map controls and one panel float above it.
+ * On a narrow screen the panel becomes a sheet that rises from the bottom edge.
+ * Colors, type sizes and radii come from the tokens below. Marks drawn on the map keep sizes in pixels,
+ * because the code that places them measures in pixels.
+ */
+:root {
+  --pine: #153f36;
+  --pine-deep: #0e2f28;
+  --lime: #e2f68e;
+  --leaf: #267957;
+  --clay: #b96331;
 
+  --ink: #172f2b;
+  --muted: #4f665c;
+  --line: #d6ded5;
+  --paper: #fbfcf9;
+  --wash: #edf2ec;
+  --wash-deep: #e4eee2;
+  --white: #fff;
+  /* The panel lets a little of the map show through. */
+  --glass: #fbfcf9ed;
+  --glass-edge: #fffc;
+  /* Behind the street map while it loads, behind a dialog, and the sheet's handle. */
+  --ground: #e3e9e0;
+  --scrim: #0e2f2866;
+  --handle: #7f9186;
 
-.daybar.maphead {
-  display:flex;
-  flex-wrap:wrap;
-  justify-content:flex-start;
-  align-items:center;
-  gap:.25rem .75rem;
-  min-height:0;
-  padding:0;
-  margin:.35rem 0;
-  border:0;
-  background:transparent;
+  --warn: #62400e;
+  --warn-wash: #fff4dc;
+  --warn-line: #b77b23;
+  --bad: #7a2416;
+  --bad-wash: #fdece8;
+  --bad-line: #b4432f;
+  --bad-soft: #e0bdb5;
+  --info: #23496a;
+  --info-wash: #e9f2fb;
+  --info-line: #7594b2;
+  --focus: #b66c32;
+  /* One color per day on the whole-trip map. Each is dark enough for a white number and differs from its neighbors in lightness as well as hue. */
+  --day-0: #145b44;
+  --day-1: #2a62a8;
+  --day-2: #7a3f98;
+  --day-3: #0f6f7c;
+  --day-4: #8b2f5c;
+  --day-5: #5c6a1b;
+  --day-6: #3f4a8a;
+  /* A place saved in Google Maps, and its star. */
+  --saved: #344775;
+  --saved-star: #ffe593;
+
+  --radius-s: 8px;
+  --radius: 12px;
+  --radius-l: 20px;
+  --pill: 999px;
+  --shadow-s: 0 1px 4px #0e2f2859;
+  --shadow: 0 1px 2px #0e2f281f, 0 8px 28px #0e2f2824;
+  --shadow-l: 0 20px 70px #0e2f2840;
+
+  --tiny: .6875rem;
+  --small: .8125rem;
+  --body: .9375rem;
+  --lead: 1.0625rem;
+  --title: 1.375rem;
+
+  /* Layout: the gap around floating surfaces, the panel's width and the bar's height. */
+  --edge: 12px;
+  --panel: 400px;
+  --bar: 2.5rem;
+  /* The strip of map the panel covers, on the side where reading starts. */
+  --cover-left: calc(var(--panel) + var(--edge));
+  --cover-right: 0px;
+
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+  font-size: 16px;
+  color: var(--ink);
+  background: var(--wash);
 }
-.daybar:has(#dayStats[open]) {align-items:flex-start}
-.daybar .toolbar {margin:0}
-.toolbar .action-short {display:none}
-@media(max-width:30rem) {
-  .toolbar .action-full {display:none}
-  .toolbar .action-short {display:inline}
-}
-@media(max-width:22.5rem) {
-  .daybar .toolbar button {padding-inline:.0625rem;font-size:.8125rem}
-}
-@media(max-width:820px) {
-  .top .actions, .daybar .toolbar {gap:4px}
-  .daybar .toolbar:has(#wholeTrip:not([hidden])) {
-    flex-basis:100%;
-    display:grid;
-    grid-template-columns:auto auto auto 1fr;
-    align-items:stretch;
-  }
-  .toolbar button {padding-inline:.4rem}
-  .toolbar #wholeTrip {justify-self:start}
-  .toolbar #connections {grid-column:1 / -1; grid-row:2; justify-self:start}
-}
-.date-control {
-  display:flex;
-  flex:0 1 auto;
-  inline-size:max-content;
-  max-inline-size:100%;
-  min-width:0;
-  height:2.75rem;
-  border:1px solid var(--line);
-  border-radius:.55rem;
-  overflow:hidden;
-  color:var(--pine);
-  background:linear-gradient(to bottom,#e8eee8,white 24%,white 76%,#e8eee8);
-}
-#dayReel {
-  flex:1 1 auto;
-  height:100%;
-  min-width:0;
-  overflow-x:hidden;
-  overflow-y:auto;
-  scrollbar-width:none;
-  scroll-snap-type:y mandatory;
-  overscroll-behavior-y:contain;
-  touch-action:pan-y;
-  user-select:none;
-  -webkit-user-select:none;
-}
-#dayReel::-webkit-scrollbar {display:none}
-#dayReel > div {
-  height:100%;
-  display:grid;
-  place-items:center;
-  scroll-snap-align:start;
-  white-space:nowrap;
-  font-weight:650;
-}
-#dayReel span {transform:perspective(8rem) rotateX(var(--tilt,0deg))}
-#dayReel:focus-visible,.date-menu:focus-within {outline:2px solid #996333;outline-offset:-2px}
-.date-menu {
-  position:relative;
-  flex:0 0 2rem;
-  border-inline-start:1px solid var(--line);
-  background:transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='m1 1 5 5 5-5' fill='none' stroke='%23496057' stroke-width='1.8'/%3E%3C/svg%3E") no-repeat center;
-}
-#tripDate {position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;padding:0}
-@media(max-width:360px){#dayReel{font-size:.9375rem}.date-menu{flex-basis:1.65rem}}
-@media(prefers-reduced-motion:reduce){#dayReel span{transform:none}}
-.maphead .viewtabs {flex:none;margin:0;flex-wrap:nowrap}
-@media(max-width:820px){
-  .daybar.maphead {margin:.1875rem 0;gap:.125rem .5rem}
-  #status {margin-top:0}
-  .viewtabs button {padding-inline:.65rem;min-height:2.5rem}
+[dir=rtl] {
+  --cover-left: 0px;
+  --cover-right: calc(var(--panel) + var(--edge));
 }
 
-#dayReel > div > span {
-  display:inline-flex;
-  align-items:baseline;
-  gap:.5rem;
-  padding-inline:.5rem;
-  line-height:1.2;
+* { box-sizing: border-box }
+body { margin: 0; height: 100vh; height: 100dvh; overflow: hidden }
+h1, h2, h3, p { margin: 0 }
+h2 { font-size: var(--lead); letter-spacing: -.01em }
+h3 { font-size: var(--body) }
+.sub, .meta, #status { color: var(--muted) }
+.sub { font-size: var(--small) }
+[hidden] { display: none !important }
+
+/* Controls */
+button, select, input, textarea, a { font: inherit }
+button, nav a, .actions a {
+  min-height: 2.25rem; padding: .4rem .8rem;
+  border: 1px solid var(--line); border-radius: var(--radius-s);
+  background: var(--white); color: var(--pine);
+  font-size: var(--body); font-weight: 560; line-height: 1.2; text-decoration: none; cursor: pointer;
 }
-#dayReel small {font-size:.77rem;font-weight:500;color:var(--muted);font-variant-numeric:tabular-nums;border-inline-start:1px solid var(--line);padding-inline-start:.5rem}
-.day-summary {display:contents}
-#dayProgress {display:none}
-#dayStats {flex:1 1 10rem;min-width:0;max-width:100%;padding:0;border:0;margin:0;font-size:.88rem;color:var(--pine)}
-#dayStats summary {width:fit-content;max-width:100%;padding:.2rem .3rem;line-height:1.3;border-radius:4px}
-#walkSummary {font-weight:650}
-#statStops {color:var(--muted);white-space:nowrap}
-#statStops::before {content:' · '}
-.stat-detail {padding:.25rem .65rem .4rem;border-inline-start:2px solid var(--line);margin:.1rem .35rem;color:var(--muted);line-height:1.45;max-height:18vh;overflow:auto}
-.stat-detail p:empty {display:none}
-@media(max-width:820px){
-  .date-control {flex:1 1 0}
-  #dayReel small {display:none}
-  .day-summary {display:flex;flex:1 0 100%;align-items:baseline;gap:.5rem}
-  .day-summary:has(#dayStats[hidden]) {display:none}
-  #dayProgress {display:block;flex:none;color:var(--muted);font-size:.85rem;line-height:1.3;font-variant-numeric:tabular-nums;white-space:nowrap}
+.actions a { display: inline-flex; align-items: center }
+button:hover, nav a:hover, .actions a:hover { background: var(--wash) }
+button:disabled { opacity: .4; cursor: default }
+.primary { background: var(--pine); border-color: var(--pine); color: var(--white) }
+.primary:hover { background: var(--pine-deep) }
+.icon { display: inline-grid; place-items: center; width: 2.25rem; padding: 0 }
+select, input, textarea {
+  min-width: 0; padding: .5rem;
+  border: 1px solid var(--line); border-radius: var(--radius-s);
+  background: var(--white); color: inherit;
 }
-@media(max-width:375px){
-  #dayReel > div > span {gap:.25rem;padding-inline:.125rem}
-  .maphead{gap:.3rem}
-  .maphead .viewtabs{gap:2px}
-  .maphead .viewtabs button{padding-inline:.35rem}
+textarea { width: 100% }
+button:focus-visible, input:focus-visible, summary:focus-visible, select:focus-visible, textarea:focus-visible, a:focus-visible {
+  outline: 3px solid var(--focus); outline-offset: 1px;
 }
+.actions, nav, .toolbar, .tabs, .dh, .listhead { display: flex; align-items: center; flex-wrap: wrap; gap: 8px }
+.dh, .listhead { justify-content: space-between }
+.actions { margin: 6px 0 }
+summary { cursor: pointer }
 
-.share-choice {border:1px solid var(--line);border-radius:.7rem;padding:.9rem 1rem;margin:.65rem 0}
-.share-choice p {margin:.3rem 0 .65rem;color:var(--muted)}
-.share-choice .actions {margin:0}
-.share-choice a {text-decoration:none}
-.share-choice a[href] {background:var(--pine);color:white;border-color:var(--pine)}
-.share-choice a:not([href]) {opacity:.5;pointer-events:none}
-#sharing .share-help,#shareStatus {font-size:.9rem;color:var(--muted)}
-#shareStatus:empty {display:none}
-#sharing .site-link {font-size:.88rem;background:none;border:0;text-decoration:underline;padding:.3rem 0}
-body.route-copy #export,body.route-copy .top .actions,body.route-copy .toolbar > :not(#wholeTrip),body.route-copy .stop .tools {display:none}
-
-header {column-gap:12px}
-header nav {justify-content:flex-end}
-.header-short {display:none}
-.brand {flex:none;gap:10px;direction:rtl}
-.brand-signature {display:block;width:clamp(108px,21vw,145px);height:auto}
-@media(max-width:500px) {
-  header {column-gap:6px}
-  .brand {flex:0 1 clamp(3.75rem,19vw,6rem);min-inline-size:0}
-  .brand-signature {width:100%}
-  header nav {flex:none;gap:4px;max-inline-size:calc(100% - 3.5rem)}
-  header nav button {padding-inline:.45rem}
-  #logout {min-width:44px;min-height:44px}
-  header .header-full {display:none}
-  header .header-short {display:inline}
+/* Map */
+.mapcard { position: fixed; inset: 0 }
+#map { position: absolute; inset: 0; z-index: 0; background: var(--ground); direction: ltr }
+.leaflet-container { font-family: inherit }
+.leaflet-control-attribution { font-size: 10px }
+.leaflet-touch .leaflet-bar, .leaflet-bar { border: 0; border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden }
+.leaflet-bar a, .leaflet-bar a:hover { color: var(--pine) }
+:lang(he) .leaflet-popup-content { direction: rtl }
+.leaflet-popup-content button { min-height: 0; margin-top: .5rem; padding: 4px 10px; font-size: var(--small) }
+#map[data-note]::after {
+  content: attr(data-note);
+  position: absolute; z-index: 300; top: 42%;
+  left: calc(var(--cover-left) + 3rem); right: calc(var(--cover-right) + 3rem);
+  text-align: center; color: var(--muted); font-size: var(--small); pointer-events: none;
 }
-
-.beta-links {margin:1.5rem 0;color:#426258;font-size:.9rem}.beta-links a {color:inherit}
-
-#linkOptions {border:0;padding:0;margin:0 0 .8rem;display:grid;gap:.6rem}
-#hostedLinks [hidden],#linkOptions:has(#linkScope option[value=trip]:checked) label:has(#linkDay) {display:none}
-#createdLink {margin-top:.7rem}#hostedList {margin:0;padding:0;list-style:none}
-#hostedList li {padding:.65rem 0;border-top:1px solid var(--line);display:flex;gap:.4rem;flex-wrap:wrap;align-items:center}
-#hostedList li span {flex:1 1 100%}#hostedStatus:empty {display:none}
-body.hosted-view header nav > :not(#languageSwitch),body.hosted-view .beta-links,body.hosted-view #other {display:none}
-
-
-#dayReel .date-full, #dayReel .date-short {font-weight:inherit}
-#dayReel .date-short {display:none}
-@media (max-width:30rem) {
-  :lang(en) #dayReel .date-full {display:none}
-  :lang(en) #dayReel .date-short {display:inline}
-}
-#languageSwitch,.top select {appearance:none;cursor:pointer;background-repeat:no-repeat}
-#languageSwitch {white-space:nowrap;color:#fff;border-color:#688076;border-radius:9px;color-scheme:dark;font-size:.88rem;font-weight:560;padding:7px 30px 7px 12px;background-color:#153f36;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='m1 1 5 5 5-5' fill='none' stroke='%23fff' stroke-width='1.8'/%3E%3C/svg%3E");background-position:right 11px center}
-#languageSwitch:hover {background-color:#2f5549}
-.top select {padding-inline-end:30px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='m1 1 5 5 5-5' fill='none' stroke='%23496057' stroke-width='1.8'/%3E%3C/svg%3E");background-position:right 11px center}
-[dir=rtl] .top select {background-position:left 11px center}
-@media(max-width:500px){#languageSwitch{font-size:.78rem;padding:8px 24px 8px 8px;background-position:right 8px center}}
-@media(forced-colors:active){#languageSwitch,.top select{appearance:auto;background-image:none}}
-@media(min-width:1600px){header{padding-inline:calc(50% - 736px)}}
-
-.pin-source{position:absolute;inset-inline-end:-8px;bottom:-5px;display:grid;place-items:center;min-width:17px;height:17px;line-height:1;border:1.5px solid white;border-radius:6px;color:white;font:700 13px/1 system-ui;box-shadow:0 1px 3px #0004}
-.popup-sources{margin-top:.45rem;font-size:.85rem}
-.check-row{display:grid;gap:.18rem;padding:.65rem 0;border-bottom:1px solid #cad8d0}
-.check-row small{color:#52635b}
-#checkRows{margin-bottom:1rem}
-.route-copy #connections{display:none}
-
-#connections[data-notice="attention"] { background: #fff4dc; border-color: #b77b23; color: #62400e; }
-#connections[data-notice="info"] { background: #e9f2fb; border-color: #7594b2; color: #23496a; }
-.check-row[data-status="disconnected"], .check-row[data-status="no_accounts"],
-.check-row[data-status="failed"], .check-row[data-status="partial"],
-.check-row[data-status="unavailable"], .check-row[data-status="syncing"] {
-  border-inline-start: 3px solid #b77b23;
-  padding-inline-start: .75rem;
-}
-
-main {grid-template-columns:minmax(0,1fr)}
-.top > div:first-child {min-width:0;flex:1 1 14rem}
-.top h1 {overflow-wrap:anywhere}
-.top select {min-width:0;max-width:100%}
-.top .actions {max-width:100%;min-width:0}
-@media(max-width:820px){
-  .top {flex-wrap:wrap}
-  .top .actions {justify-content:flex-start}
-}
-@media(pointer:coarse){
-  nav button,nav a,nav select,.top button,.top select,.toolbar button,.viewtabs button,dialog button,dialog .actions a {min-height:2.5rem}
-  .tools {max-width:none;flex-wrap:nowrap}
-  .tools button {min-width:2.5rem;min-height:2.5rem}
-}
-@media(max-height:480px){
-  body {height:auto;min-height:100dvh;overflow:auto}
-  main {display:block}
-  .layout {height:auto}
-  #map {flex:none;height:17rem}
-  .listbody {overflow:visible}
-}
-
-#status[data-tone="warning"],#status[data-tone="error"] {
-  width:fit-content;max-width:100%;margin-top:.35rem;padding:.35rem .7rem;border:1px solid #b77b23;border-radius:.5rem;
-  background:#fff4dc;color:#62400e;font-size:.88rem;white-space:normal;overflow:visible
-}
-#status[data-tone="error"] {border-color:#b4432f;background:#fdece8;color:#7a2416}
-#retryLoad,#discardDraft {justify-self:start;width:fit-content;margin-top:.35rem}
-.form-error {margin:0 0 .8rem;padding:.5rem .75rem;border:1px solid #b4432f;border-radius:.5rem;background:#fdece8;color:#7a2416;font-size:.92rem;line-height:1.4}
-
-.route-state {grid-area:route;align-self:start;justify-self:center;max-width:30rem;margin-top:12vh;padding:1.5rem;text-align:center;background:white;border:1px solid var(--line);border-radius:13px}
-.route-state p {margin:.6rem 0 1.1rem;color:var(--muted);line-height:1.5}
-.route-state a {display:inline-block;padding:9px 14px;border-radius:9px;background:var(--pine);color:white;text-decoration:none;font-weight:560}
-body.hosted-view:not(.route-ready) main > :not(#status,#routeGone) {display:none}
-body.hosted-view:not(.route-ready) #status {justify-self:center;text-align:center;margin-top:12vh;font-size:1rem}
-body.hosted-view:not(.route-ready):has(#routeGone:not([hidden])) #status {display:none}
-
-#welcome {padding:1.4rem 1.25rem}
-#welcome h3 {font-size:1.2rem;letter-spacing:-.02em;line-height:1.25}
-#welcome p {margin:.55rem 0 1rem;color:var(--muted);line-height:1.5}
-[data-portable] .chat-first,html:not([data-portable]) .file-first {display:none}
-@media(max-width:820px){
-  body.no-trip .mapcard {display:none}
-  body.no-trip .listcard {display:flex}
-  body.no-trip .viewtabs {display:none}
-}
-
-button.num {border:0;padding:0;cursor:pointer}
-button.num:hover,.activeStop .num {background:var(--pine);color:white}
-.activeStop {background:#f2f6ef;box-shadow:inset 3px 0 var(--pine)}
-:dir(rtl) .activeStop {box-shadow:inset -3px 0 var(--pine)}
-.stop {padding-inline:.4rem;border-radius:.4rem}
-.leaflet-popup-content button {margin-top:.5rem;padding:4px 10px;font-size:.85rem}
-.pickmode,.pickmode .leaflet-interactive {cursor:crosshair!important}
-
-#other {
-  margin:.75rem .75rem 1rem;padding:0;border:1px solid var(--line);border-radius:.65rem;background:#fbfcf9;
-}
-#other > summary {padding:.65rem .8rem;font-weight:650;line-height:1.4;cursor:pointer}
-#other > summary:focus-visible {outline:2px solid var(--pine);outline-offset:2px}
-#other section {margin:0 .8rem;padding-block:.55rem;border-top:1px solid var(--line)}
-#other h3 {margin:0 0 .15rem;color:var(--muted);font-size:.84rem;font-weight:650}
-#other ul {margin:0;padding:0;list-style:none}
-.detail-row {display:flex;align-items:center;justify-content:space-between;gap:.75rem;padding:.3rem 0}
-.detail-row + .detail-row {border-top:1px solid #e1e6df}
-.detail-info {min-width:0;display:flex;flex-wrap:wrap;align-items:baseline;gap:.2rem .45rem}
-.detail-name {font-weight:600;font-size:.95rem;line-height:1.35;overflow-wrap:anywhere}
-.detail-time {font-size:.83rem;color:var(--muted)}
-.detail-reason {
-  flex:0 1 auto;max-width:100%;border-radius:.7rem;padding:.16rem .48rem;
-  background:#e8eeea;color:#354e45;font-size:.83rem;line-height:1.42;overflow-wrap:anywhere;
-}
-#reviewList .detail-reason {background:#f7ecd4;color:#63491b}
-.detail-action {
-  flex:none;max-width:45%;border:0;background:transparent;padding:.35rem .15rem;
-  color:var(--pine);font-size:.85rem;font-weight:500;text-decoration:underline;text-underline-offset:.18em;
-}
-.review-field {display:none}
-#moreStop:has(select[name="kind"] option[value="uncertain"]:checked) .review-field {display:flex}
-#reviewDay {display:none}
-@media(max-width:820px) {
-  .day-summary {flex-wrap:wrap}
-  body:not(.showList) #reviewDay {
-    display:block;flex:none;padding:.4rem .6rem;font-size:.82rem;color:var(--pine);
-    border-color:var(--line);min-height:2.75rem;
-  }
-}
-@media(pointer:coarse) {
-  #other > summary,.detail-action {min-height:2.75rem}
-}
-
-.more {border:1px solid var(--line);border-radius:10px;padding:.55rem .8rem;margin:.75rem 0}
-.more summary {font-weight:600;font-size:.92rem}
-.more[open] summary {margin-bottom:.35rem}
-.pin-actions .sub {font-size:.85rem}
-.places button {display:block;width:100%;margin:4px 0;text-align:start;font-size:.88rem;font-weight:500;line-height:1.35}
-.form-actions {margin-top:.9rem}
-.form-actions #removeStop,.form-actions #deleteTrip {margin-inline-start:auto;color:#8a2c1c;border-color:#e0bdb5}
-
-#confirmBox {width:min(420px,92vw)}
-#confirmText {white-space:pre-line;font-size:1rem;margin:0 0 1rem}
-
-.tabs [aria-selected="true"] {background:var(--pine);color:white;border-color:var(--pine)}
-.check-row .check {margin:0;font-size:1rem;font-weight:600}
-.check-row > span {font-size:.9rem;color:var(--muted)}
-#hostedSignIn {display:inline-block;padding:9px 14px;border:1px solid var(--pine);border-radius:9px;font-weight:560}
-#createdLink input {width:100%}
-main {grid-template-areas:"trip" "status" "act" "date" "route";grid-template-rows:auto auto auto auto minmax(0,1fr)}
-#retryLoad,#discardDraft {grid-area:act}
-main {grid-template-areas:"trip" "status" "act" "date" "route" "foot";grid-template-rows:auto auto auto auto minmax(0,1fr) auto}
-.beta-links {grid-area:foot;margin:.9rem 0 0}
-body.no-trip #add,body.no-trip #organize,body.no-trip #settings,body.no-trip #dayTitle {display:none}
-@media(max-width:820px){#status {white-space:normal}}
-#map[data-note]::after {content:attr(data-note);position:absolute;inset-inline:0;top:42%;z-index:300;padding:0 3.2rem;text-align:center;color:var(--muted);font-size:.9rem;pointer-events:none}
-
-.mapcard { position:relative }
 .map-controls {
-  position:absolute;
-  z-index:500;
-  /* Leaflet's zoom controls stay on the left in both languages. */
-  top:.65rem; right:.65rem;
-  display:flex; align-items:center; gap:.3rem;
-  max-width:calc(100% - 4rem);
+  position: absolute; z-index: 500;
+  inset-block-start: var(--edge); inset-inline-start: calc(var(--panel) + var(--edge) * 2);
+  display: flex; align-items: center; gap: 6px;
 }
+.map-style { display: block; margin: 0 }
+.map-style-label { position: absolute; width: 1px; height: 1px; clip-path: inset(50%); overflow: hidden }
 .map-style select {
-  background-color:#fff; color:var(--pine); border:1px solid var(--line);
-  border-radius:.5rem; font-family:inherit; font-size:.875rem; font-weight:600; line-height:1.2;
-  min-height:2.5rem; padding:.4rem .65rem; box-shadow:0 1px 4px #182d2429;
+  width: auto; min-height: var(--bar); padding: .4rem .8rem;
+  border-color: transparent; border-radius: var(--pill); box-shadow: var(--shadow);
+  color: var(--pine); font-size: var(--body); font-weight: 560; cursor: pointer;
 }
-#wholeTrip[aria-pressed="true"] { background:var(--pine); color:white }
-.map-style { display:block; margin:0 }
-.map-style select { width:auto; cursor:pointer }
-.map-style-label { position:absolute; width:1px; height:1px; clip-path:inset(50%); overflow:hidden }
-.trip-overview .date-control,.trip-overview #add,.trip-overview #organize {display:none}
-.overview-day { display:flex; align-items:center; width:100%; justify-content:space-between; text-align:start; gap:.75rem; border:0; border-radius:0; border-bottom:1px solid var(--line); padding:.7rem .5rem; color:var(--pine); background:transparent }
-.overview-day small { font-weight:400; color:var(--muted) }
+.legend {
+  position: absolute; z-index: 500;
+  inset-block-end: var(--edge); inset-inline-start: calc(var(--panel) + var(--edge) * 2);
+  display: flex; align-items: center; gap: 7px; padding: .35rem .75rem;
+  border-radius: var(--pill); background: var(--glass); box-shadow: var(--shadow);
+  color: var(--muted); font-size: var(--tiny);
+}
+.legend i { display: inline-block; width: 18px; border-top: 3px solid var(--leaf) }
+.legend i.ride { border-color: var(--clay); border-top-style: dashed }
+.legend i.guessed { border-top-style: dashed }
+.pickmode, .pickmode .leaflet-interactive { cursor: crosshair !important }
 
+/* Pins */
+.pin {
+  display: grid; place-items: center;
+  border: 2px solid var(--white); border-radius: 50%; background: var(--day-0); color: var(--white);
+  box-shadow: var(--shadow-s); font-weight: 750;
+}
+.pin.day-1 { background: var(--day-1) }
+.pin.day-2 { background: var(--day-2) }
+.pin.day-3 { background: var(--day-3) }
+.pin.day-4 { background: var(--day-4) }
+.pin.day-5 { background: var(--day-5) }
+.pin.day-6 { background: var(--day-6) }
+.pin.home { background: var(--clay) }
+.pin.soft { border-style: dashed }
+.pin:focus { outline: 2px solid var(--pine) }
+.pin-source {
+  position: absolute; inset-inline-end: -8px; bottom: -5px;
+  display: grid; place-items: center; min-width: 17px; height: 17px;
+  border: 1.5px solid var(--white); border-radius: 6px; box-shadow: var(--shadow-s);
+  color: var(--white); font: 700 13px/1 system-ui;
+}
+.popup-sources { margin-top: .45rem; font-size: var(--small) }
 /* The pointed corner lands on the place, leaving a numbered route stop at the same coordinates visible. */
 .google-pin {
-  display:grid; place-items:center;
-  border:2px solid white; border-radius:50% 50% 50% 3px;
-  background:#344775; color:#ffe593;
-  font:700 18px/1 system-ui; box-shadow:0 1px 4px #15244488;
+  display: grid; place-items: center;
+  border: 2px solid var(--white); border-radius: 50% 50% 50% 3px;
+  background: var(--saved); color: var(--saved-star); box-shadow: var(--shadow-s);
+  font: 700 18px/1 system-ui;
 }
-.google-pin-popup {display:grid;gap:.3rem;min-width:10rem;overflow-wrap:anywhere}
-.google-pin-popup label {margin:.3rem 0 0}
-.google-pin-popup select {max-width:100%;min-height:2.25rem}
+.google-pin-popup { display: grid; gap: .3rem; min-width: 10rem; overflow-wrap: anywhere }
+.google-pin-popup label { margin: .3rem 0 0 }
+.google-pin-popup select { max-width: 100%; min-height: 2.25rem }
+
+/* Bar: the brand at one end, the journal-wide actions at the other */
+header {
+  position: fixed; z-index: 30; inset-block-start: 0; inset-inline: 0;
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 8px;
+  padding: var(--edge); pointer-events: none;
+}
+/* Only the brand and the buttons take the pointer, so the map between them stays within reach. */
+nav { pointer-events: none }
+.brand, nav > *, #menu { pointer-events: auto }
+.brand {
+  flex: none; display: flex; align-items: center; height: var(--bar); padding-inline: .9rem;
+  border-radius: var(--pill); background: var(--pine); box-shadow: var(--shadow);
+}
+.brand-signature { display: block; width: auto; height: 1.3rem }
+nav { justify-content: flex-end; gap: 6px }
+#share svg { display: none }
+nav > * { min-height: var(--bar); border-color: transparent; border-radius: var(--pill); box-shadow: var(--shadow) }
+nav a { display: inline-flex; align-items: center }
+nav .icon { width: var(--bar) }
+.header-short { display: none }
+#languageSwitch {
+  appearance: none; padding: .4rem 1.9rem .4rem .85rem;
+  background: var(--white) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='m1 1 5 5 5-5' fill='none' stroke='%23153f36' stroke-width='1.8'/%3E%3C/svg%3E") no-repeat right .75rem center;
+  color: var(--pine); font-size: var(--body); font-weight: 560; white-space: nowrap; cursor: pointer;
+}
+#languageSwitch:hover { background-color: var(--wash) }
+#menu {
+  position: fixed; inset: auto; inset-block-start: calc(var(--edge) + var(--bar) + 6px); inset-inline-end: var(--edge);
+  min-width: 13rem; margin: 0; padding: 6px;
+  border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper); box-shadow: var(--shadow); color: var(--ink);
+}
+#menu:popover-open { display: grid; gap: 2px }
+/* Each row of the menu is tall enough for a fingertip. */
+#menu button { width: 100%; min-height: 2.75rem; border-color: transparent; background: transparent; text-align: start }
+#menu button:hover { background: var(--wash) }
+.beta-links {
+  display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 4px; padding: .55rem .8rem .3rem;
+  border-top: 1px solid var(--line); color: var(--muted); font-size: var(--small);
+}
+.beta-links a { color: inherit }
+
+/* Panel: the trip, its days and the chosen day's stops */
+main {
+  position: fixed; z-index: 20;
+  inset-block: calc(var(--edge) * 2 + var(--bar)) var(--edge); inset-inline-start: var(--edge);
+  width: var(--panel); max-width: calc(100vw - var(--edge) * 2);
+  display: flex; flex-direction: column; min-height: 0; overflow: hidden; overflow: clip;
+  border: 1px solid var(--glass-edge); border-radius: var(--radius-l);
+  background: var(--glass); -webkit-backdrop-filter: blur(14px) saturate(1.4); backdrop-filter: blur(14px) saturate(1.4);
+  box-shadow: var(--shadow);
+}
+main > * { flex: none }
+#sheetHandle { display: none }
+.top {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 2px 8px;
+  padding-block: 14px 8px; padding-inline: 16px 12px;
+}
+.trip-title { display: flex; align-items: flex-start; gap: 2px; min-width: 0 }
+h1 { padding-block: .2rem; font-size: var(--title); line-height: 1.2; letter-spacing: -.025em; overflow-wrap: anywhere }
+/* The arrow beside the trip name opens the list of trips, and the one beside the days opens the list of dates. */
+.trip-switch, .date-menu {
+  position: relative; flex: none; border-radius: var(--radius-s);
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='m1 1 5 5 5-5' fill='none' stroke='%234f665c' stroke-width='1.8'/%3E%3C/svg%3E") no-repeat center;
+}
+.trip-switch { width: 2rem; height: 2rem }
+.trip-switch:has(#trips[hidden]) { display: none }
+.trip-switch:hover, .date-menu:hover { background-color: var(--wash) }
+.trip-switch:focus-within, .date-menu:focus-within { outline: 3px solid var(--focus); outline-offset: 1px }
+#trips, #tripDate { position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; opacity: 0; cursor: pointer }
+.top .actions { flex-wrap: nowrap; gap: 2px; margin: 0 }
+.top .icon { border-color: transparent; background: transparent; color: var(--muted) }
+.top .icon:hover:not(:disabled) { background: var(--wash); color: var(--pine) }
+#range { grid-column: 1 / -1; line-height: 1.4; overflow-wrap: anywhere }
+#status { margin-block-end: 8px; padding-inline: 16px; font-size: var(--small); line-height: 1.4 }
+#status:empty { display: none }
+/* A note about the last action takes three lines at most. Warnings are shown in full. */
+#status[data-tone=""] { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden }
+#status[data-tone="warning"], #status[data-tone="error"] {
+  max-height: 9.5em; margin: 0 12px 8px; padding: .4rem .7rem; overflow: auto;
+  border: 1px solid var(--warn-line); border-radius: var(--radius-s); background: var(--warn-wash); color: var(--warn);
+}
+#status[data-tone="error"] { border-color: var(--bad-line); background: var(--bad-wash); color: var(--bad) }
+#retryLoad, #discardDraft { align-self: flex-start; margin: 0 16px 8px }
+.form-error {
+  margin: 0 0 .8rem; padding: .5rem .75rem;
+  border: 1px solid var(--bad-line); border-radius: var(--radius-s); background: var(--bad-wash); color: var(--bad);
+  font-size: var(--body); line-height: 1.4;
+}
+.route-state { padding: 1.25rem; text-align: center }
+.route-state p { margin: .6rem 0 1.1rem; color: var(--muted); line-height: 1.5 }
+.route-state a {
+  display: inline-block; padding: 9px 14px; border-radius: var(--radius-s);
+  background: var(--pine); color: var(--white); font-weight: 560; text-decoration: none;
+}
+
+/* Days */
+.daybar {
+  display: flex; align-items: stretch; gap: 6px;
+  padding-block: 2px 10px; padding-inline: 16px 12px; border-block-end: 1px solid var(--line);
+}
+#wholeTrip {
+  flex: none; max-width: 5.5rem; min-height: 3.25rem; padding-inline: .7rem; border-radius: var(--radius);
+  font-size: var(--small); line-height: 1.15;
+}
+#wholeTrip[aria-pressed="true"] { background: var(--pine); border-color: var(--pine); color: var(--white) }
+#dayStrip {
+  position: relative; flex: 1 1 0; min-width: 0;
+  display: flex; align-items: stretch; gap: 2px; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none;
+}
+#dayStrip::-webkit-scrollbar { display: none }
+#dayStrip button {
+  flex: none; display: grid; align-content: center; justify-items: center; gap: 1px;
+  min-width: 2.75rem; min-height: 3.25rem; padding: .25rem .3rem;
+  border-color: transparent; border-radius: var(--radius); background: transparent;
+}
+#dayStrip button:hover { background: var(--wash) }
+#dayStrip small { color: var(--muted); font-size: var(--tiny); font-weight: 500 }
+#dayStrip b { font-size: var(--lead); font-weight: 650; font-variant-numeric: tabular-nums }
+/* A dot under the number marks a day with something recorded. */
+#dayStrip button::after { content: ''; width: 4px; height: 4px; border-radius: 50% }
+#dayStrip button[data-recorded]::after { background: currentColor; opacity: .55 }
+#dayStrip button[aria-pressed="true"] { background: var(--pine); color: var(--white) }
+#dayStrip button[aria-pressed="true"] small { color: var(--lime) }
+#dayStrip span { flex: none; align-self: center; padding-inline: 4px 2px; color: var(--muted); font-size: var(--tiny); font-weight: 620 }
+.date-menu { width: 2.25rem }
+
+/* The chosen day */
+main > .listcard { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0 }
+.listhead { flex-wrap: nowrap; align-items: baseline; gap: 10px; padding: 12px 16px 0 }
+.listhead h2 { min-width: 0; overflow-wrap: anywhere }
+#count { flex: none; color: var(--muted); font-size: var(--small); white-space: nowrap }
+.day-summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; padding: 2px 16px 8px }
+#dayStats { flex: 1 1 12rem; min-width: 0; color: var(--pine); font-size: var(--small) }
+#dayStats summary { width: fit-content; max-width: 100%; border-radius: var(--radius-s); line-height: 1.35 }
+#walkSummary { font-weight: 620 }
+/* The list head already counts the stops. */
+#statStops { display: none }
+.stat-detail {
+  max-height: 18vh; margin: .3rem 0 .2rem; padding-inline-start: .65rem; overflow: auto;
+  border-inline-start: 2px solid var(--line); color: var(--muted); line-height: 1.45;
+}
+.stat-detail p:empty { display: none }
+#dayProgress { flex: none; color: var(--muted); font-size: var(--small); font-variant-numeric: tabular-nums; white-space: nowrap }
+#reviewDay { display: none }
+#dayNote { padding: 0 16px 6px; line-height: 1.4 }
+.listbody { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain }
+ol { margin: 0; padding: 0 8px 8px; list-style: none }
+.stop {
+  position: relative; display: grid; grid-template-columns: 1.75rem minmax(0, 1fr) auto; align-items: start; gap: 10px;
+  padding: 9px 8px; border-radius: var(--radius);
+}
+/* A line joins the numbers the way the route joins the pins. */
+.stop:not(:last-child)::after {
+  content: ''; position: absolute;
+  inset-block: calc(9px + 1.75rem + 3px) -6px; inset-inline-start: calc(8px + .875rem - 1px);
+  width: 2px; border-radius: 1px; background: var(--line);
+}
+.num {
+  position: relative; z-index: 1; display: grid; place-items: center; width: 1.75rem; height: 1.75rem; min-height: 0;
+  border-radius: 50%; background: var(--wash); color: var(--pine); font-size: var(--small); font-weight: 700;
+}
+button.num { padding: 0; border: 0 }
+button.num:hover, .activeStop .num { background: var(--pine); color: var(--white) }
+.stopname {
+  min-height: 0; padding: 0; border: 0; background: none;
+  color: var(--ink); font-weight: 620; line-height: 1.3; text-align: start;
+}
+button.stopname:hover { background: none }
+@media (hover: hover) {
+  button.stopname:hover { color: var(--leaf) }
+}
+.meta { margin-top: 2px; font-size: var(--small); line-height: 1.4; overflow-wrap: anywhere }
+.src { color: var(--muted); font-size: var(--small) }
+.tools { display: flex; align-items: start; gap: 2px }
+.tools button {
+  min-width: 1.75rem; min-height: 1.75rem; padding: 0 .3rem;
+  border-color: transparent; background: transparent; color: var(--muted); font-size: var(--small);
+}
+.tools button:hover:not(:disabled) { border-color: var(--line); background: var(--white); color: var(--pine) }
+/* With a mouse the order arrows wait for the row they belong to. A touch screen always shows them. */
+@media (hover: hover) {
+  .stop:not(:hover, :focus-within, .activeStop) .tools { opacity: 0 }
+}
+.activeStop { background: var(--wash-deep) }
+.empty { padding: 18px 12px; color: var(--muted) }
+.overview-day {
+  display: flex; align-items: center; gap: .6rem; width: 100%; padding: .7rem .5rem;
+  border: 0; border-radius: var(--radius); background: transparent; color: var(--ink); font-weight: 620; text-align: start;
+}
+.overview-day small { margin-inline-start: auto; color: var(--muted); font-size: var(--small); font-weight: 400 }
+.overview-day:hover { background: var(--wash) }
+/* The dot is the color of that day's pins and route on the map. */
+.overview-day::before { content: ''; flex: none; width: .7rem; height: .7rem; border-radius: 50%; background: var(--day-0) }
+.overview-day.day-1::before { background: var(--day-1) }
+.overview-day.day-2::before { background: var(--day-2) }
+.overview-day.day-3::before { background: var(--day-3) }
+.overview-day.day-4::before { background: var(--day-4) }
+.overview-day.day-5::before { background: var(--day-5) }
+.overview-day.day-6::before { background: var(--day-6) }
+
+/* More about this day */
+#other { margin: 4px 12px 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--white) }
+#other > summary { padding: .65rem .8rem; font-weight: 620; line-height: 1.4 }
+#other section { margin: 0 .8rem; padding-block: .55rem; border-top: 1px solid var(--line) }
+#other h3 { margin: 0 0 .15rem; color: var(--muted); font-size: var(--small); font-weight: 620 }
+#other ul { margin: 0; padding: 0; list-style: none }
+.detail-row { display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding: .3rem 0 }
+.detail-row + .detail-row { border-top: 1px solid var(--line) }
+.detail-info { display: flex; flex-wrap: wrap; align-items: baseline; gap: .2rem .45rem; min-width: 0 }
+.detail-name { font-size: var(--body); font-weight: 600; line-height: 1.35; overflow-wrap: anywhere }
+.detail-time { color: var(--muted); font-size: var(--small) }
+.detail-reason {
+  flex: 0 1 auto; max-width: 100%; padding: .16rem .48rem; border-radius: var(--pill);
+  background: var(--wash); color: var(--ink); font-size: var(--small); line-height: 1.42; overflow-wrap: anywhere;
+}
+#reviewList .detail-reason { background: var(--warn-wash); color: var(--warn) }
+.detail-action {
+  flex: none; max-width: 45%; min-height: 0; padding: .35rem .15rem; border: 0; background: transparent;
+  color: var(--pine); font-size: var(--small); font-weight: 500; text-decoration: underline; text-underline-offset: .18em;
+}
+.review-field { display: none }
+#moreStop:has(select[name="kind"] option[value="uncertain"]:checked) .review-field { display: flex }
+
+/* Empty journal */
+#welcome { padding: 1.1rem 1rem }
+#welcome h3 { font-size: var(--lead); letter-spacing: -.02em; line-height: 1.25 }
+#welcome p { margin: .5rem 0 .9rem; color: var(--muted); line-height: 1.5 }
+/* The first step takes the full row. The other ways in share the row under it. */
+#welcome .actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr)) }
+#welcome .actions > * { justify-content: center; text-align: center }
+#welcome .actions a { grid-column: 1 / -1 }
+#welcome .actions a, [data-portable] #trySample { background: var(--pine); border-color: var(--pine); color: var(--white) }
+#welcome .actions a:hover, [data-portable] #trySample:hover:not(:disabled) { background: var(--pine-deep) }
+[data-portable] .chat-first, html:not([data-portable]) .file-first { display: none }
+
+/* The day's actions, at the foot of the panel */
+.toolbar { flex: none; padding: 10px 12px; border-top: 1px solid var(--line); background: var(--paper) }
+#organize { margin-inline-start: auto; border-color: transparent; background: transparent; color: var(--muted) }
+#organize:hover:not(:disabled) { background: var(--wash); color: var(--pine) }
+/* What the sources need, said once at the head of the list. It opens Sources and import. */
+#connections { display: block; width: calc(100% - 24px); margin: 2px 12px 6px; font-size: var(--small); text-align: start }
+#connections[data-notice="attention"] { background: var(--warn-wash); border-color: var(--warn-line); color: var(--warn) }
+#connections[data-notice="info"] { background: var(--info-wash); border-color: var(--info-line); color: var(--info) }
+
+/* What each view leaves out */
+body.no-trip :is(#add, #organize, #settings, .legend, .listhead, .day-summary) { display: none }
+/* With no trip open the panel is only as tall as its welcome. */
+body.no-trip main { inset-block-end: auto; max-height: calc(100% - var(--edge) * 3 - var(--bar)) }
+.trip-overview :is(#add, #organize, #dayProgress) { display: none }
+body.route-copy :is(#export, .top .actions, .toolbar, .stop .tools) { display: none }
+body.hosted-view header nav > :not(#languageSwitch), body.hosted-view #other { display: none }
+body.hosted-view:not(.route-ready) main > :not(#status, #routeGone) { display: none }
+body.hosted-view:not(.route-ready) #status { display: block; margin: 0; padding: 16px; font-size: var(--lead); text-align: center }
+body.hosted-view:not(.route-ready):has(#routeGone:not([hidden])) #status { display: none }
+
+/* Dialogs */
+dialog {
+  width: min(560px, 95vw); max-height: 89vh; max-height: 89dvh; padding: 20px;
+  border: 1px solid var(--line); border-radius: var(--radius-l); background: var(--paper); color: var(--ink);
+  box-shadow: var(--shadow-l);
+}
+dialog::backdrop { background: var(--scrim) }
+dialog .dh { flex-wrap: nowrap; margin-bottom: 14px }
+dialog .dh button { border-color: transparent; background: transparent }
+dialog .dh button:hover { background: var(--wash) }
+dialog p { margin: 6px 0 12px; line-height: 1.55 }
+label { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; font-size: var(--small) }
+label input, label textarea, label select { width: 100%; font-size: var(--body) }
+.fields { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px }
+.check { flex-direction: row; align-items: center; gap: 8px }
+.check input { width: auto }
+.tabs { margin-bottom: 12px; padding-bottom: 9px; border-bottom: 1px solid var(--line) }
+.tabs [aria-selected="true"] { background: var(--pine); border-color: var(--pine); color: var(--white) }
+.more { margin: .75rem 0; padding: .55rem .8rem; border: 1px solid var(--line); border-radius: var(--radius-s) }
+.more summary { font-size: var(--body); font-weight: 600 }
+.more[open] summary { margin-bottom: .35rem }
+.pin-actions .sub { font-size: var(--small) }
+.places button { display: block; width: 100%; margin: 4px 0; font-size: var(--small); font-weight: 500; line-height: 1.35; text-align: start }
+/* Save stays in reach while a long form scrolls. */
+.form-actions {
+  position: sticky; bottom: -20px; z-index: 1; margin: .9rem -20px -20px; padding: 12px 20px 16px;
+  border-top: 1px solid var(--line); background: var(--paper);
+}
+.form-actions #removeStop, .form-actions #deleteTrip { margin-inline-start: auto; border-color: var(--bad-soft); color: var(--bad) }
+.photobox { margin: 12px 0; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius-s); background: var(--wash) }
+.photobox legend { font-size: var(--small); font-weight: 650 }
+.photobox img { display: block; max-width: min(100%, 320px); max-height: 210px; margin: 6px 0; object-fit: contain }
+.filelabel input { background: var(--white) }
+#photoStatus { font-size: var(--small) }
+#photoPanel { display: flex; flex-wrap: wrap; gap: 7px }
+#photoPanel figure { display: grid; gap: 3px; margin: 0 }
+#photoPanel img { width: 100%; max-width: 165px; max-height: 170px }
+#photoPanel button { min-height: 0; padding: 4px 8px; font-size: var(--small) }
+#preview, #promptResult { margin: 10px 0; white-space: pre-wrap; overflow-wrap: anywhere }
+#confirmBox { width: min(420px, 92vw) }
+#confirmText { margin: 0 0 1rem; font-size: var(--lead); white-space: pre-line }
+
+/* Sources */
+#checkRows { margin-bottom: 1rem }
+.check-row { display: grid; gap: .18rem; padding: .65rem 0; border-bottom: 1px solid var(--line) }
+.check-row small { color: var(--muted) }
+.check-row .check { margin: 0; font-size: var(--lead); font-weight: 600 }
+.check-row > span { color: var(--muted); font-size: var(--body) }
+.check-row:is([data-status="disconnected"], [data-status="no_accounts"], [data-status="failed"], [data-status="partial"], [data-status="unavailable"], [data-status="syncing"]) {
+  padding-inline-start: .75rem; border-inline-start: 3px solid var(--warn-line);
+}
+
+/* Sharing */
+.share-choice { margin: .65rem 0; padding: .9rem 1rem; border: 1px solid var(--line); border-radius: var(--radius) }
+.share-choice p { margin: .3rem 0 .65rem; color: var(--muted) }
+.share-choice .actions { margin: 0 }
+.share-choice a { text-decoration: none }
+.share-choice a[href] { background: var(--pine); border-color: var(--pine); color: var(--white) }
+.share-choice a:not([href]) { opacity: .5; pointer-events: none }
+#sharing .share-help, #shareStatus { color: var(--muted); font-size: var(--body) }
+#shareStatus:empty, #hostedStatus:empty { display: none }
+#sharing .site-link { padding: .3rem 0; border: 0; background: none; font-size: var(--small); text-decoration: underline }
+#linkOptions { display: grid; gap: .6rem; margin: 0 0 .8rem; padding: 0; border: 0 }
+#hostedLinks [hidden], #linkOptions:has(#linkScope option[value=trip]:checked) label:has(#linkDay) { display: none }
+#createdLink { margin-top: .7rem }
+#createdLink input { width: 100% }
+#hostedList { margin: 0; padding: 0; list-style: none }
+#hostedList li { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; padding: .65rem 0; border-top: 1px solid var(--line) }
+#hostedList li span { flex: 1 1 100% }
+#hostedSignIn { display: inline-block; padding: 9px 14px; border: 1px solid var(--pine); border-radius: var(--radius-s); font-weight: 560 }
+
+/* Narrow screens: the panel is a sheet whose height the handle sets */
+@media (max-width: 820px) {
+  :root, [dir=rtl] { --cover-left: 0px; --cover-right: 0px }
+  main, body.no-trip main {
+    inset-block: auto 0; inset-inline: 0; width: auto; max-width: none; height: var(--sheet, 55vh); max-height: none;
+    border-width: 1px 0 0; border-radius: var(--radius-l) var(--radius-l) 0 0;
+    transition: height .22s cubic-bezier(.2, .8, .2, 1);
+  }
+  main[data-dragging] { transition: none }
+  #sheetHandle {
+    flex: none; display: block; width: 100%; min-height: 1.5rem; padding: 0;
+    border: 0; border-radius: 0; background: transparent; cursor: grab; touch-action: none;
+  }
+  #sheetHandle::before { content: ''; display: block; width: 2.25rem; height: 4px; margin: auto; border-radius: 2px; background: var(--handle) }
+  .top { padding-block-start: 2px }
+  /* The sheet is short, so the lines under the trip name take one row each. */
+  #range, #status[data-tone=""] { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+  .map-controls { inset-block-start: calc(var(--edge) + var(--bar) + 8px); inset-inline: auto var(--edge) }
+  /* The legend sits above the map credit, which sits on the sheet. */
+  .legend { inset-block-end: calc(var(--sheet, 55vh) + 26px); inset-inline-start: var(--edge) }
+  body[data-sheet="full"] .legend { display: none }
+  /* The map credit and zoom buttons stay above the sheet. */
+  .leaflet-bottom { bottom: var(--sheet, 55vh) }
+  #map[data-note]::after { top: 24% }
+  /* The bar stays on one row: the brand gives way first, and Share is drawn as its symbol. */
+  header { gap: 6px; padding: 10px }
+  nav { flex: none; flex-wrap: nowrap; gap: 4px }
+  nav > * { padding-inline: .6rem }
+  .brand { flex: 0 1 auto; min-width: 0; padding-inline: .6rem }
+  .brand-signature { width: clamp(2.6rem, 22vw, 5.4rem); height: auto }
+  #languageSwitch { padding: .4rem 1.5rem .4rem .6rem; background-position: right .5rem center }
+  #share { width: var(--bar); padding: 0 }
+  #share svg { display: block; margin: auto }
+  #share span, header .header-full { display: none }
+  header .header-short { display: inline }
+  /* A full sheet covers the map, so nothing of it is left showing behind the bar. */
+  body[data-sheet="full"] .mapcard::after { content: ''; position: absolute; inset: 0; z-index: 600; background: var(--wash) }
+  /* With the list lowered, this opens what could not be placed on the map. */
+  body:not([data-sheet="full"]) #reviewDay { display: block; padding: .3rem .6rem; font-size: var(--small) }
+  .fields { grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr)) }
+}
+@media (max-width: 820px) and (pointer: coarse) {
+  .leaflet-control-zoom { display: none }
+}
+/* On the narrowest phones the day's three actions still share one row. */
+@media (max-width: 359px) {
+  .toolbar { gap: 6px; padding-inline: 10px }
+  .toolbar button:not(.icon) { padding-inline: .55rem }
+}
+@media (pointer: coarse) {
+  :root { --bar: 2.75rem }
+  .top .icon, .toolbar button, #wholeTrip, dialog button, dialog .actions a, #reviewDay { min-height: 2.75rem }
+  .icon { width: 2.75rem }
+  .tools button { min-width: 2.5rem; min-height: 2.5rem }
+  #other > summary, .detail-action { min-height: 2.75rem }
+}
+@media (prefers-reduced-motion: reduce) {
+  main { transition: none }
+}
+/* High contrast repaints the menus in the traveler's colors, where an arrow drawn in a fixed color can vanish. */
+@media (forced-colors: active) {
+  #languageSwitch, #trips, #tripDate { appearance: auto; background-image: none }
+  #trips, #tripDate { position: static; width: auto; height: auto; opacity: 1 }
+  .trip-switch, .date-menu { width: auto; height: auto; background: none }
+}

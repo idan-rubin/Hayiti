@@ -8,6 +8,7 @@ import { loadState, storeState } from '../../src/server/storage.ts';
 import { legacyGuestMarker, temporaryGuestKey } from '../../src/web/guest-storage.ts';
 import { MemoryBucket } from '../memory-bucket.ts';
 import { guestTitles, patchGuestRecord, readGuestRecord, readLegacyGuestSources, replaceLegacyGuestAfterCommit, seedLegacyGuestOnce } from './guest-storage-helpers.ts';
+import { backUpTrip } from './journal-controls.ts';
 
 const origin = 'https://hayiti.test';
 const legacyKey = 'hayiti-unsigned-journal';
@@ -504,7 +505,7 @@ await test('unavailable IndexedDB permits isolated temporary drafts without chan
       assert.equal(await page.evaluate(key => localStorage.getItem(key), legacyKey), serialized);
 
       const download = page.waitForEvent('download');
-      await page.locator('#export').click();
+      await backUpTrip(page);
       const path = await (await download).path();
       assert.ok(path);
       assert.equal(JSON.parse(await readFile(path, 'utf8')).trip.title, 'First temporary trip');
@@ -546,7 +547,7 @@ await test('the earlier tab draft can be opened after backing up the separate te
     await status.filter({ hasText: 'back up and delete the temporary trips here' }).waitFor();
 
     const download = page.waitForEvent('download');
-    await page.locator('#export').click();
+    await backUpTrip(page);
     const path = await (await download).path();
     assert.ok(path);
     assert.equal(JSON.parse(await readFile(path, 'utf8')).trip.title, 'Separate temporary trip');
@@ -679,7 +680,7 @@ await test('a memory-only guest draft warns before leaving and keeps sign-in beh
     }), true);
     assert.match(await page.locator('#status').innerText(), /back up/i);
     const download = page.waitForEvent('download');
-    await page.locator('#export').click();
+    await backUpTrip(page);
     const path = await (await download).path();
     assert.ok(path);
     assert.equal(JSON.parse(await readFile(path, 'utf8')).trip.title, 'Memory-only trip');
