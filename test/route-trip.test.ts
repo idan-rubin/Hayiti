@@ -5,7 +5,7 @@ import { createServer } from 'node:http';
 import { text } from 'node:stream/consumers';
 import { test } from 'node:test';
 
-await test('route adapter sends coordinates only, checks the travel mode, caches repeats and omits unroutable legs', async () => {
+await test('route adapter defaults to walking, reuses equivalent explicit walks, and checks taxi directions', async () => {
   const requests: string[] = [];
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://localhost');
@@ -29,10 +29,10 @@ await test('route adapter sends coordinates only, checks the travel mode, caches
   const address = server.address();
   assert.ok(address && typeof address === 'object');
   const root = 'http://127.0.0.1:' + address.port;
-  const leg = { a: 'a', b: 'b', type: 'walk', from: [51, 4], to: [51.001, 4.001] };
+  const leg = { a: 'a', b: 'b', from: [51, 4], to: [51.001, 4.001] };
   async function run(drivePath: string) {
     const days = [{ date: '2026-07-01', legs: [leg, { ...leg, a: 'b', b: 'c', type: 'taxi' }] },
-      { date: '2026-07-02', legs: [{ ...leg, a: 'd', b: 'e' }] }];
+      { date: '2026-07-02', legs: [{ ...leg, a: 'd', b: 'e', type: 'walk' }] }];
     const child = spawn(process.execPath, ['scripts/route-trip.ts'], {
       env: { ...process.env, HAYITI_WALK_ROUTE_URL: root + '/foot', HAYITI_DRIVE_ROUTE_URL: root + drivePath }
     });
@@ -48,6 +48,7 @@ await test('route adapter sends coordinates only, checks the travel mode, caches
     assert.equal(pkg.tripId, 'test-trip');
     assert.equal(pkg.days.length, 2);
     assert.equal(pkg.days[0].routes.length, 1);
+    assert.equal(pkg.days[0].routes[0].type, 'walk');
     assert.deepEqual(pkg.days[1].routes[0], {
       a: 'd', b: 'e', type: 'walk', m: 158, line: [[51, 4], [51.0005, 4.0005], [51.001, 4.001]]
     });
