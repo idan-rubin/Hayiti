@@ -1,6 +1,7 @@
 import { cleanTrip, cleanStop, isRecord, member, mergeStops, reportSources, safeDate, validOutcome } from '../domain/core.ts';
 import { dayStops, indexEdges, routeStops, walkingStats } from '../domain/daily-route.ts';
 import { loadState, storeState, type Bucket } from './storage.ts';
+import { setDayRoutes } from '../domain/route-update.ts';
 import { tools } from './tools.ts';
 const json = (data: unknown, status = 200) => Response.json(data, {
   status,
@@ -28,12 +29,26 @@ async function callTool(bucket: Bucket, owner: string, name: unknown, args: Reco
       ...stop,
       photoCount: photos.length
     }));
+    const route = routeStops(trip, args.date);
+    const edges = indexEdges(trip);
     return {
       stops,
       home: trip.home,
       rules: trip.rules,
-      walking: walkingStats(routeStops(trip, args.date), indexEdges(trip))
+      homeXY: trip.homeXY,
+      routes: route.slice(1).map((to, i) => {
+        const a = route[i].id;
+        const edge = edges.get(a + '|' + to.id);
+        return { a, b: to.id, type: edge?.type ?? 'gap', m: edge?.m ?? 0, points: edge?.line.length ?? 0 };
+      }),
+      walking: walkingStats(route, edges)
     };
+  }
+  if (name === 'set_day_routes') {
+    if (!trip) throw Error('טיול לא נמצא');
+    const counts = setDayRoutes(trip, args.date, args.routes);
+    if (counts.updated) await storeState(bucket, owner, journal.trips, journal.rev);
+    return counts;
   }
   if (name !== 'add_trip_stops') throw Error('Unknown tool');
   if (typeof args.tripId !== 'string' || !args.tripId.trim() || args.tripId !== args.tripId.trim() || args.tripId.length > 100 || !Array.isArray(args.stops) || args.stops.length > 200) throw Error('Supply a trip ID and up to 200 stops');
@@ -122,6 +137,7 @@ export async function journalAPI(req: Request, bucket: Bucket, mode: 'web' | 'mc
             'Start in chat. Read list_trips and reuse the matching trip. Resolve dates, destination and optional home base from authorized context. Ask only for missing details that affect the route.',
             'Use the sources the traveler chooses. For photo evidence, search the actual photo library by local capture dates across albums. Google Drive and Google Photos are separate sources. Reuse authorized access and batch-read available timestamps and GPS. Photos and links are optional.',
             'Read get_day for affected dates before writing. Count Live Photo pairs once. Group photo-only locations within 100 metres of a fixed pin on the same local day, even across separate bursts. Use the earliest capture for the pin coordinates and include captureTime when available. Compare against existing stops. Preserve distinct venues and revisit times. Use stable opaque refs so retries are safe.',
+            'For every pair of adjacent route stops, use pedestrian network directions for estimated walks and road directions for known taxi rides. After confirming the saved stop order, call set_day_routes with verified network geometry. Omit unavailable or ambiguous legs from the update to preserve their existing display.',
             'Save approved stops to the owned trip. Keep remote purchases and uncertain venues off the route. Re-read changed days to verify the result. The write tool appends new stops; verify route order before claiming the route was rebuilt. Show what changed and open the private journal for review.'
           ].join(' '),
           capabilities: {
