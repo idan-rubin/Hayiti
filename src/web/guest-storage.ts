@@ -1,11 +1,16 @@
 import { cleanTrip, isRecord, type Trip } from '../domain/core.ts';
-import { journalSchemaVersion, requireJournalSchema } from '../domain/journal-schema.ts';
+import { JournalSchemaError, journalSchemaVersion, requireJournalSchema } from '../domain/journal-schema.ts';
 
 export const guestKey = 'hayiti-unsigned-journal';
+export const legacyGuestMarker = '{"hayitiUpgradeRequired":true}';
+export const temporaryGuestKey = 'hayiti-guest-tab-v1';
 const attemptsKey = 'hayiti-guest-merge';
 const changeKey = 'hayiti-guest-updated';
 const channelName = 'hayiti-guest';
-let unreadableTarget: { canonical?: string; local?: string; tab?: string } | undefined;
+let unreadableTarget: { canonical?: string; local?: string; tab?: string; temporary?: string } | undefined;
+let temporaryRecord: LoadedGuestRecord | undefined;
+let temporaryPersisted = false;
+let temporaryStorageUnavailable = false;
 
 export interface GuestDraft {
   version: string;
@@ -16,15 +21,74 @@ export interface GuestRecord extends GuestDraft {
   attempts: unknown;
   importedTabs: string[];
 }
+export type LoadedGuestDraft = GuestDraft & { persistence?: 'tab' | 'memory' };
+type LoadedGuestRecord = GuestRecord & { persistence?: 'tab' | 'memory' };
 export class UnreadableDraft extends Error {
   constructor() { super('לא ניתן לקרוא את טיוטת הטיול בדפדפן הזה.'); }
 }
 export class GuestConflict extends Error {
-  readonly draft: GuestDraft;
-  constructor(draft: GuestDraft) {
+  readonly draft: LoadedGuestDraft;
+  constructor(draft: LoadedGuestDraft) {
     super('The saved draft changed in another tab.');
     this.draft = draft;
   }
+}
+class GuestStorageUnavailable extends Error {}
+
+export function guestPersistence(): 'shared' | 'tab' | 'memory' {
+  return temporaryRecord?.persistence ?? 'shared';
+}
+
+function emptyRecord(): GuestRecord {
+  return { schemaVersion: journalSchemaVersion, version: crypto.randomUUID(), trips: [], attempts: [], importedTabs: [] };
+}
+
+function readTemporary(): LoadedGuestRecord | undefined {
+  if (temporaryRecord) return temporaryRecord;
+  let raw: string | null;
+  try { raw = sessionStorage.getItem(temporaryGuestKey); }
+  catch { temporaryStorageUnavailable = true; return; }
+  if (raw === null) return;
+  try {
+    const record = recordOf(JSON.parse(raw));
+    temporaryRecord = { ...record, persistence: 'tab' };
+    temporaryPersisted = true;
+    return temporaryRecord;
+  } catch (error) {
+    if (error instanceof SyntaxError || error instanceof UnreadableDraft) {
+      unreadableTarget = { temporary: raw };
+      throw new UnreadableDraft();
+    }
+    throw error;
+  }
+}
+
+function storeTemporary(record: LoadedGuestRecord) {
+  if (temporaryRecord?.persistence === 'memory' || temporaryStorageUnavailable) {
+    record.persistence = 'memory';
+    temporaryRecord = record;
+    return;
+  }
+  record.persistence = 'tab';
+  try {
+    const stored = { ...record };
+    delete stored.persistence;
+    if (record.trips.length) sessionStorage.setItem(temporaryGuestKey, JSON.stringify(stored));
+    else sessionStorage.removeItem(temporaryGuestKey);
+    temporaryPersisted = record.trips.length > 0;
+  } catch (error) {
+    // An existing copy must not reappear after a supposedly successful edit or deletion.
+    if (temporaryPersisted) throw error;
+    record.persistence = 'memory';
+  }
+  temporaryRecord = record;
+}
+
+function updateTemporary<T>(operation: (record: GuestRecord) => { result: T; write?: boolean }): T {
+  const record = structuredClone(temporaryRecord ?? emptyRecord());
+  const next = operation(record);
+  if (next.write || !temporaryRecord) storeTemporary(record);
+  return next.result;
 }
 
 function parseTrips(value: unknown): Trip[] {
@@ -48,15 +112,28 @@ function recordOf(value: unknown): GuestRecord {
 }
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
+    let settled = false;
+    const unavailable = () => {
+      settled = true;
+      reject(new GuestStorageUnavailable('Saved drafts could not be opened. A separate temporary trip is available in this tab.'));
+    };
     if (typeof indexedDB === 'undefined') {
-      reject(Error('Saved drafts are unavailable in this browser. Enable browser storage and try again, or sign in to use your account journal.'));
+      unavailable();
       return;
     }
-    const request = indexedDB.open('hayiti-guest', 1);
+    let request: IDBOpenDBRequest;
+    try { request = indexedDB.open('hayiti-guest', 1); }
+    catch { unavailable(); return; }
     request.onupgradeneeded = () => request.result.createObjectStore('journal');
-    request.onerror = () => reject(request.error ?? Error('Draft storage unavailable'));
-    request.onblocked = () => reject(Error('Draft storage is blocked by another tab. Reload the other tabs and try again.'));
-    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => {
+      if (request.error?.name === 'VersionError') { settled = true; reject(new JournalSchemaError()); }
+      else unavailable();
+    };
+    request.onblocked = unavailable;
+    request.onsuccess = () => {
+      if (settled) request.result.close();
+      else { settled = true; resolve(request.result); }
+    };
   });
 }
 
@@ -78,13 +155,15 @@ async function digest(value: string) {
 async function legacySource(kind: LegacySource['kind'], storage: Storage): Promise<LegacySource> {
   const raw = storage.getItem(guestKey), attemptsRaw = storage.getItem(attemptsKey);
   const source: LegacySource = { kind, storage, raw, attemptsRaw, snapshot: '', previousReceipt: '', trips: [], attempts: [] };
-  if (raw === null) return source;
+  if (raw === null || raw === legacyGuestMarker) return source;
   let value: unknown;
   let trips: Trip[];
   try {
     value = JSON.parse(raw);
+    requireJournalSchema(isRecord(value) ? value.schemaVersion : undefined, true);
     trips = parseTrips(value);
   } catch (error) {
+    if (error instanceof JournalSchemaError) throw error;
     unreadableTarget = kind === 'local' ? { local: raw } : { tab: raw };
     throw error instanceof UnreadableDraft ? error : new UnreadableDraft();
   }
@@ -115,7 +194,7 @@ function migrateSources(record: GuestRecord, sources: LegacySource[]) {
   const receipts = new Set(record.importedTabs);
   let changed = false;
   for (const source of sources) {
-    if (source.raw === null) continue;
+    if (source.raw === null || source.raw === legacyGuestMarker) continue;
     const snapshotImported = receipts.has(source.snapshot);
     const imported = snapshotImported || receipts.has(source.previousReceipt);
     for (const { trip, receipt } of source.trips) {
@@ -144,10 +223,12 @@ function migrateSources(record: GuestRecord, sources: LegacySource[]) {
   return changed;
 }
 function clearMigratedSource(source: LegacySource) {
-  if (source.raw === null) return;
+  if (source.raw === null || source.raw === legacyGuestMarker) return;
   try {
     if (source.storage.getItem(guestKey) === source.raw && source.storage.getItem(attemptsKey) === source.attemptsRaw) {
-      source.storage.removeItem(guestKey);
+      // Old open tabs reject this non-data marker and keep their visible trip instead of adopting an empty list.
+      if (source.kind === 'local') source.storage.setItem(guestKey, legacyGuestMarker);
+      else source.storage.removeItem(guestKey);
       source.storage.removeItem(attemptsKey);
     }
   } catch {}
@@ -163,6 +244,7 @@ function notifyChange(version: string) {
 
 // The version check and write share one IndexedDB transaction, even without Web Locks or storage events.
 export async function updateGuest<T>(operation: (record: GuestRecord) => { result: T; write?: boolean }): Promise<T> {
+  if (temporaryRecord) return updateTemporary(operation);
   const database = await openDatabase();
   try {
     for (let retry = 0; retry < 3; retry++) {
@@ -212,16 +294,37 @@ export async function updateGuest<T>(operation: (record: GuestRecord) => { resul
   }
 }
 
-export function readGuestRecord(): Promise<GuestRecord> {
-  return updateGuest(record => ({ result: record }));
+export async function readGuestRecord(): Promise<LoadedGuestRecord> {
+  const isolated = readTemporary();
+  if (isolated) return structuredClone(isolated);
+  try { return await updateGuest(record => ({ result: record })); }
+  catch (error) {
+    if (!(error instanceof GuestStorageUnavailable)) throw error;
+    // An unavailable store permits a separate draft; readable damaged or newer data still needs recovery.
+    for (const kind of ['local', 'tab'] as const) {
+      try { await legacySource(kind, kind === 'local' ? localStorage : sessionStorage); }
+      catch (legacyError) {
+        if (legacyError instanceof UnreadableDraft || legacyError instanceof JournalSchemaError) throw legacyError;
+      }
+    }
+    storeTemporary(emptyRecord());
+    return structuredClone(temporaryRecord!);
+  }
 }
-export async function readGuest(): Promise<GuestDraft> {
-  const { version, trips } = await readGuestRecord();
-  return { version, trips };
+export async function readGuest(): Promise<LoadedGuestDraft> {
+  const { version, trips, persistence } = await readGuestRecord();
+  return { version, trips, ...(persistence ? { persistence } : {}) };
 }
 export async function discardUnreadableGuest() {
   const target = unreadableTarget;
   if (!target) throw Error('The draft changed. Reload it before discarding.');
+  if (target.temporary !== undefined) {
+    if (sessionStorage.getItem(temporaryGuestKey) === target.temporary) sessionStorage.removeItem(temporaryGuestKey);
+    temporaryRecord = undefined;
+    temporaryPersisted = false;
+    unreadableTarget = undefined;
+    return;
+  }
   const database = await openDatabase();
   let version: string | undefined;
   try {

@@ -7,6 +7,12 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { strFromU8, unzipSync } from 'fflate';
 import { chromium, type Page } from 'playwright-core';
+import { readPortableRecord, waitForPortableTrip } from './portable-storage-helpers.ts';
+
+async function openSampleTrip(page: Page) {
+  await page.getByRole('button', { name: 'Try the sample trip' }).click();
+  await page.locator('#title').filter({ hasText: 'A Thursday in Tel Aviv' }).waitFor();
+}
 
 async function showDayDetails(page: Page) {
   await page.locator('#otherSummary').waitFor();
@@ -60,7 +66,7 @@ await test('a portable route package previews and saves a new stop order without
     const page = await browser.newPage();
     await page.route('https://**/*', route => route.abort());
     await page.goto(new URL('../../dist/web/Hayiti.html?lang=en', import.meta.url).href);
-    await page.getByRole('button', { name: 'Try the sample trip' }).click();
+    await openSampleTrip(page);
     const previous = ['cafe', 'gelato', 'pickup', 'dropoff', 'museum', 'brewery', 'show'];
     const next = ['gelato', 'cafe', 'pickup', 'dropoff', 'museum', 'brewery', 'show'];
     const upload = async (routes: Record<string, unknown>[] = []) => {
@@ -88,10 +94,10 @@ await test('a portable route package previews and saves a new stop order without
     await page.locator('#preview').getByText('Taxi rides to reclassify · 1').waitFor();
     await page.getByRole('button', { name: 'Save routes' }).click();
     await page.locator('#sources').waitFor({ state: 'hidden' });
-    const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('masluli-portable-v2')!).trips[0]);
+    const saved = (await readPortableRecord(page))!.trips[0];
     assert.deepEqual(saved.stops.filter((stop: { id: string }) => ['pickup', 'dropoff'].includes(stop.id))
       .map((stop: { kind: string }) => stop.kind), ['visit', 'visit']);
-    assert.equal(saved.edges.find((edge: { a: string, b: string }) => edge.a === 'pickup' && edge.b === 'dropoff').type, 'gap');
+    assert.equal(saved.edges.find((edge: { a: string, b: string }) => edge.a === 'pickup' && edge.b === 'dropoff')?.type, 'gap');
   } finally {
     await browser.close();
   }
@@ -179,7 +185,7 @@ await test('editing the default home preserves a separate overnight stop', async
     await page.locator('#tripForm [name=coords]').fill('53, 6');
     await page.locator('#tripForm .primary').click();
     await page.locator('#config').waitFor({ state: 'hidden' });
-    const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('masluli-portable-v2')!).trips[0]);
+    const saved = (await readPortableRecord(page))!.trips[0];
     assert.equal(saved.stops[0].name, 'New home');
     assert.deepEqual(saved.stops[0].xy, [53, 6]);
     assert.equal(saved.stops[1].name, 'Hotel B');
@@ -228,10 +234,13 @@ await test('retrying a failed import applies the selected records exactly once',
       name: 'stops.csv', mimeType: 'text/csv', buffer: Buffer.from('date,merchant\n2026-06-14,Ferry Terminal')
     });
     await page.evaluate(() => {
-      const write = Storage.prototype.setItem;
-      Storage.prototype.setItem = function () {
-        Storage.prototype.setItem = write;
-        throw new Error('Transient write failure');
+      const put = IDBObjectStore.prototype.put;
+      IDBObjectStore.prototype.put = function (value: unknown, key?: IDBValidKey) {
+        if (this.transaction.db.name === 'hayiti-portable' && key === 'current-v3') {
+          IDBObjectStore.prototype.put = put;
+          throw new DOMException('Transient write failure', 'QuotaExceededError');
+        }
+        return key === undefined ? put.call(this, value) : put.call(this, value, key);
       };
     });
     await page.locator('#preview button').click();
@@ -240,6 +249,7 @@ await test('retrying a failed import applies the selected records exactly once',
     await page.locator('#sources').waitFor({ state: 'hidden' });
     await page.reload();
     const ferry = page.locator('#unlocatedList').getByText('Ferry Terminal', { exact: true });
+    await ferry.first().waitFor({ state: 'attached' });
     assert.equal(await ferry.count(), 1);
     assert.equal(await page.locator('#stops .stopname').count(), 2);
   } finally {
@@ -266,7 +276,7 @@ await test('a photo-heavy portable journal survives localStorage quota and reloa
     });
     await page.locator('#preview button').click();
     await page.locator('#sources').waitFor({ state: 'hidden' });
-    assert.equal(await page.evaluate(() => localStorage.getItem('masluli-portable-v2')), 'hayiti:indexeddb:1');
+    assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem('masluli-portable-v2')!)), { hayitiUpgradeRequired: true });
     await page.reload();
     await showDayDetails(page);
     await page.locator('#unlocatedList').getByRole('button', { name: 'Add address · Visit 23', exact: true }).click();
@@ -312,7 +322,7 @@ await test('missing sources and the last removed photo show Not recorded', async
     assert.deepEqual(await selected.allTextContents(), ['Not recorded']);
     await page.locator('#editForm .primary').click();
     await page.locator('#edit').waitFor({ state: 'hidden' });
-    const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('masluli-portable-v2')!).trips[0]);
+    const saved = (await readPortableRecord(page))!.trips[0];
     assert.deepEqual(saved.stops.map((stop: { sources: string[] }) => stop.sources), [[], []]);
     await showDayDetails(page);
     await page.locator('#unlocatedList').getByRole('button', { name: 'Add address · Beach', exact: true }).click();
@@ -348,7 +358,7 @@ await test('correcting a stop\'s source replaces the old one and keeps corrobora
     await page.locator('#editForm [name=notes]').fill('Evening visit');
     await page.locator('#editForm .primary').click();
     await page.locator('#edit').waitFor({ state: 'hidden' });
-    const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('masluli-portable-v2')!).trips[0]);
+    const saved = (await readPortableRecord(page))!.trips[0];
     assert.deepEqual(saved.stops[0].sources, ['manual', 'email']);
     assert.deepEqual(saved.stops[1].sources, ['photo']);
     assert.equal(saved.stops[1].notes, 'Evening visit');
@@ -404,8 +414,7 @@ await test('an empty journal opens the sample trip in one step and links each st
     const page = await browser.newPage();
     await page.route('https://**/*', route => route.abort());
     await page.goto(new URL('../../dist/web/Hayiti.html', import.meta.url).href);
-    await page.getByRole('button', { name: 'Try the sample trip' }).click();
-    await page.locator('#title').filter({ hasText: 'A Thursday in Tel Aviv' }).waitFor();
+    await openSampleTrip(page);
     assert.equal(await page.locator('.leaflet-marker-icon').count(), 7);
     assert.equal(await page.locator('#welcome').isVisible(), false);
 
@@ -427,7 +436,7 @@ await test('reordering keeps keyboard focus, and Suggest walking order explains 
     page.on('dialog', dialog => { dialogs.push(dialog.message()); void dialog.dismiss(); });
     await page.route('https://**/*', route => route.abort());
     await page.goto(new URL('../../dist/web/Hayiti.html', import.meta.url).href);
-    await page.getByRole('button', { name: 'Try the sample trip' }).click();
+    await openSampleTrip(page);
     await page.getByRole('button', { name: 'Move later: Café Sonder' }).click();
     await page.locator('#stops .stop').nth(1).filter({ hasText: 'Café Sonder' }).waitFor();
     assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Move later: Café Sonder');
@@ -451,7 +460,7 @@ await test('Escape cancels choosing a point on the map and returns to the stop b
     const page = await browser.newPage();
     await page.route('https://**/*', route => route.abort());
     await page.goto(new URL('../../dist/web/Hayiti.html', import.meta.url).href);
-    await page.getByRole('button', { name: 'Try the sample trip' }).click();
+    await openSampleTrip(page);
     await page.locator('#add').click();
     await page.locator('#editForm [name=name]').fill('Half-written stop');
     await page.locator('#pick').click();
@@ -506,7 +515,7 @@ await test('a journal file makes an exact copy of the blank app and a route file
     await page.route('https://**/*', route => route.abort());
     const built = new URL('../../dist/web/Hayiti.html', import.meta.url);
     await page.goto(built.href);
-    await page.getByRole('button', { name: 'Try the sample trip' }).click();
+    await openSampleTrip(page);
     await page.locator('#share').click();
 
     const app = await offeredFile(page, '#downloadApp');
@@ -538,7 +547,7 @@ await test('without a connection the map says the streets could not load and sti
     const page = await browser.newPage();
     await page.route('https://**/*', route => route.abort());
     await page.goto(new URL('../../dist/web/Hayiti.html?lang=en', import.meta.url).href);
-    await page.getByRole('button', { name: 'Try the sample trip' }).click();
+    await openSampleTrip(page);
     await page.locator('#map[data-note]').waitFor();
     assert.equal(await page.locator('#map').getAttribute('data-note'), 'The street map could not load. Pins and routes still appear.');
     assert.equal(await page.locator('.leaflet-marker-icon').count(), 7);
@@ -568,7 +577,7 @@ await test('a browser that cannot draw the street map says so and still shows th
       } as typeof getContext;
     });
     await page.goto(new URL('../../dist/web/Hayiti.html?lang=en', import.meta.url).href);
-    await page.getByRole('button', { name: 'Try the sample trip' }).click();
+    await openSampleTrip(page);
     await page.locator('#map[data-note]').waitFor();
     assert.equal(await page.locator('#map').getAttribute('data-note'), 'This browser cannot draw the street map. Pins and routes still appear.');
     assert.equal(await page.locator('.leaflet-marker-icon').count(), 7);
@@ -585,7 +594,7 @@ async function samplePins(page: Page) {
     json: { version: 8, sources: {}, layers: [{ id: 'land', type: 'background', paint: { 'background-color': '#e8efe9' } }] }
   }));
   await page.goto(new URL('../../dist/web/Hayiti.html?lang=en', import.meta.url).href);
-  await page.getByRole('button', { name: 'Try the sample trip' }).click();
+  await openSampleTrip(page);
   await page.locator('#map[data-note]').waitFor();
   const places = () => page.evaluate(() => Array.from(document.querySelectorAll('.leaflet-marker-icon'), pin => {
     const box = pin.getBoundingClientRect();
@@ -677,7 +686,7 @@ await test('streets that fail to load after the style say so and load when the c
       return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } });
     });
     await page.goto(new URL('../../dist/web/Hayiti.html?lang=en', import.meta.url).href);
-    await page.getByRole('button', { name: 'Try the sample trip' }).click();
+    await openSampleTrip(page);
     await page.locator('#map canvas.maplibregl-canvas').waitFor();
     await page.locator('#map[data-note]').waitFor();
     assert.equal(await page.locator('#map').getAttribute('data-note'), 'The street map could not load. Pins and routes still appear.');
@@ -708,7 +717,7 @@ await test('the street map note goes away once every street tile in view has loa
         sources: { streets: { type: 'vector', url: 'https://tiles.openfreemap.org/planet' } },
         layers: [
           { id: 'land', type: 'background', paint: { 'background-color': '#e8efe9' } },
-          { id: 'roads', type: 'line', source: 'streets', 'source-layer': 'transportation' }
+          { id: 'roads', type: 'line', minzoom: 8, source: 'streets', 'source-layer': 'transportation' }
         ]
       }
     }));
@@ -725,7 +734,7 @@ await test('the street map note goes away once every street tile in view has loa
       ? route.abort()
       : route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*' } }));
     await page.goto(new URL('../../dist/web/Hayiti.html?lang=en', import.meta.url).href);
-    await page.getByRole('button', { name: 'Try the sample trip' }).click();
+    await openSampleTrip(page);
     await page.locator('#map[data-note]').waitFor();
 
     // The tiles that failed are still in view after a small move, so the note stays.
@@ -774,7 +783,7 @@ await test('a terrain image that failed on the overview does not keep the note a
     assert.ok(images > 0);
 
     // The sample trip is shown at street level, where the terrain images are not part of the map.
-    await page.getByRole('button', { name: 'Try the sample trip' }).click();
+    await openSampleTrip(page);
     await page.locator('#map:not([data-note]) canvas.maplibregl-canvas').waitFor();
     assert.equal(await page.locator('.leaflet-marker-icon').count(), 7);
   } finally {
@@ -853,7 +862,7 @@ await test('the traveler re-times and moves a photo pin, and a new home base dro
       edges: [{ a: 'base', b: 'pin', type: 'walk', m: 1500, line: [home, camera] }, ride]
     });
     await page.goto(new URL('../../dist/web/Hayiti.html?lang=en', import.meta.url).href);
-    const saved = () => page.evaluate(() => JSON.parse(localStorage.getItem('masluli-portable-v2')!).trips[0]);
+    const saved = async () => (await readPortableRecord(page))!.trips[0];
     const openPin = () => page.getByRole('button', { name: 'Camera pin', exact: true }).first().click();
     const save = async (dialog: string, form: string) => {
       await page.locator(form + ' .primary').click();
@@ -1008,7 +1017,7 @@ await test('changing a basemap loads its tiles without moving the daily route or
     await page.route(/https:\/\/(?:tiles\.maps\.eox\.at|[abc]\.tile\.opentopomap\.org)\//, route =>
       route.fulfill({ contentType: 'image/png', body: image, headers: { 'access-control-allow-origin': '*' } }));
     await page.goto(new URL('../../dist/web/Hayiti.html?lang=en', import.meta.url).href);
-    await page.getByRole('button', { name: 'Try the sample trip' }).click();
+    await openSampleTrip(page);
     await page.locator('.leaflet-marker-icon').first().waitFor();
     const shape = () => page.locator('#map svg path.leaflet-interactive').evaluateAll(paths => paths.map(path => path.getAttribute('d')));
     const places = () => page.locator('.leaflet-marker-icon').evaluateAll(pins => pins.map(pin => [pin.getAttribute('title'), pin.style.transform]));
@@ -1075,9 +1084,9 @@ await test('the map controls leave pins and an opened popup uncovered, and a Goo
 
     await popup.getByRole('button', { name: 'Remove from trip' }).click();
     await page.locator('#confirmYes').click();
-    await page.waitForFunction(() => JSON.parse(localStorage.getItem('masluli-portable-v2')!).trips[0].googlePins.length === 1);
-    const trip = await page.evaluate(() => JSON.parse(localStorage.getItem('masluli-portable-v2')!).trips[0]);
-    assert.deepEqual([trip.googlePins.map((pin: { id: string }) => pin.id), trip.stops.length], [['south'], 3]);
+    await waitForPortableTrip(page, { googlePinCount: 1 });
+    const trip = (await readPortableRecord(page))!.trips[0];
+    assert.deepEqual([trip.googlePins?.map((pin: { id: string }) => pin.id), trip.stops.length], [['south'], 3]);
     assert.equal(await page.locator('#map .google-pin').count(), 1);
   } finally {
     await browser.close();
@@ -1129,7 +1138,7 @@ await test('a photo-backed visit the traveler moves to another day is marked as 
     await page.locator('#editForm [name=date]').fill(second);
     await page.locator('#editForm .primary').click();
     await page.locator('#edit').waitFor({ state: 'hidden' });
-    const [stop] = await page.evaluate(() => JSON.parse(localStorage.getItem('masluli-portable-v2')!).trips[0].stops);
+    const [stop] = (await readPortableRecord(page))!.trips[0].stops;
     // A retry of the same photo finds the visit on its corrected day because of this mark.
     assert.deepEqual([stop.date, stop.edited], [second, true]);
   } finally {
@@ -1156,7 +1165,7 @@ await test('a removed Google Pin stays off the map after reload and reimport unt
     await page.getByRole('button', { name: 'Remove from trip' }).click();
     await page.locator('#confirmYes').click();
     await page.locator('.google-pin').waitFor({ state: 'detached' });
-    await page.waitForFunction(id => JSON.parse(localStorage.getItem('masluli-portable-v2')!).trips[0].removedGooglePinIds?.includes(id), pin.id);
+    await waitForPortableTrip(page, { removedPinId: pin.id });
     await page.reload();
     await page.locator('#title').filter({ hasText: trip.title }).waitFor();
     assert.equal(await page.locator('.google-pin').count(), 0);
@@ -1169,6 +1178,7 @@ await test('a removed Google Pin stays off the map after reload and reimport unt
     };
     await openPreview();
     await page.getByRole('button', { name: 'Save Google Pins' }).click();
+    await page.locator('#sources').waitFor({ state: 'hidden' });
     assert.deepEqual(await page.locator('.google-pin').evaluateAll(pins => pins.map(pin => pin.getAttribute('title'))), ['Gallery · Google Pin']);
     await openPreview();
     assert.equal(await page.getByRole('button', { name: 'Save Google Pins' }).count(), 0);
@@ -1432,11 +1442,11 @@ await test('a backup restores a missing middle visit in place with both saved wa
     await page.getByRole('button', { name: 'Load trip' }).click();
     await page.locator('#sources').waitFor({ state: 'hidden' });
     assert.deepEqual(await page.locator('#stops .stopname').allTextContents(), ['Cafe', 'Museum', 'Park']);
-    await page.waitForFunction(() => JSON.parse(localStorage.getItem('masluli-portable-v2')!).trips[0].edges.length === 2);
+    await waitForPortableTrip(page, { edgeCount: 2 });
     await page.reload();
     await page.locator('#title').filter({ hasText: trip.title }).waitFor();
     assert.deepEqual(await page.locator('#stops .stopname').allTextContents(), ['Cafe', 'Museum', 'Park']);
-    const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('masluli-portable-v2')!).trips[0]);
+    const saved = (await readPortableRecord(page))!.trips[0];
     assert.deepEqual(saved.edges, edges);
     assert.equal(await page.locator('#map svg path.leaflet-interactive').count(), 2);
   } finally {

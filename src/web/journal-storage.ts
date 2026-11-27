@@ -1,6 +1,6 @@
 import { cleanTrip, isRecord, type Journal, type Trip } from '../domain/core.ts';
 import { journalSchemaVersion, requireJournalSchema } from '../domain/journal-schema.ts';
-import { readPortable, writePortable } from './portable-storage.ts';
+import { PortableStorageUnavailable, readPortable, recoverPortable, writePortable, type LoadedPortableDraft } from './portable-storage.ts';
 import { readGuest, retireGuest, writeGuest } from './guest-draft.ts';
 
 function readTrips(value: unknown): Trip[] {
@@ -56,15 +56,15 @@ export const journalStorage = {
   writeGuest,
   retireGuest,
 
-  async readPortable(): Promise<Trip[] | null> {
-    let raw: string | null;
+  async readPortable(): Promise<LoadedPortableDraft | null> {
     try {
-      raw = await readPortable();
-    } catch {
-      return null; // Storage is unavailable. Keep the current in-memory journal.
+      return await readPortable();
+    } catch (error) {
+      if (error instanceof PortableStorageUnavailable) return null;
+      throw error;
     }
-    return raw ? readTrips(JSON.parse(raw)) : [];
   },
 
-  writePortable: (trips: Trip[]) => writePortable(JSON.stringify({ trips }))
+  recoverPortable,
+  writePortable
 };

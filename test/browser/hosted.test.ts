@@ -1284,6 +1284,13 @@ await test('the mobile trip toolbar keeps the overview beside the daily actions 
       await overview.waitFor();
       for (const width of [320, 375, 390, 430]) {
         await page.setViewportSize({ width, height: 852 });
+        const [left, right] = await page.locator('#settings, #newTrip').evaluateAll(buttons =>
+          buttons.map(button => {
+            const { left, right, top } = button.getBoundingClientRect();
+            return { left, right, top };
+          }).sort((a, b) => a.left - b.left));
+        assert.equal(left.top, right.top);
+        assert.equal(right.left - left.right, 4, `${lang} ${width}px: trip settings and new trip spacing`);
         for (const pressed of [false, true]) {
           assert.equal(await overview.getAttribute('aria-pressed'), String(pressed));
           const boxes = await toolbar.locator('button:visible').evaluateAll(buttons => buttons.map(button => {
@@ -1308,13 +1315,11 @@ await test('the mobile trip toolbar keeps the overview beside the daily actions 
           assert.ok(boxes.every(box => box.left >= bounds.x - 1 && box.right <= bounds.x + bounds.width + 1));
           const leadingSpace = lang === 'he' ? bounds.x + bounds.width - boxes[0].right : boxes[0].left - bounds.x;
           assert.ok(Math.abs(leadingSpace) < 1);
-          const gap = await toolbar.evaluate(row => parseFloat(getComputedStyle(row).columnGap));
-          assert.ok(gap > 0 && gap <= 8);
           for (let i = 1; i < boxes.length; i++) {
             const previous = boxes[i - 1];
             const next = boxes[i];
             const space = lang === 'he' ? previous.left - next.right : next.left - previous.right;
-            assert.ok(Math.abs(space - gap) < 1, `${lang} ${width}px: expected ${gap}px between actions, got ${space}px`);
+            assert.ok(Math.abs(space - 4) < 1, `${lang} ${width}px: expected 4px between actions, got ${space}px`);
           }
           assert.equal(await page.locator('.mapcard #mapStyle').isVisible(), true);
           await overview.click();
@@ -1589,24 +1594,41 @@ await test('a form left open in one guest tab does not undo a change saved in an
   }
 });
 
-await test('two tabs that each hold a draft from the earlier version both keep their trips', async () => {
+await test('two tabs that each hold a draft from the earlier version both keep their trips', async t => {
   const browser = await chromium.launch();
   try {
-    const context = await browser.newContext();
-    const first = await context.newPage(),
-      second = await context.newPage();
-    const legacy = (id: string, title: string) => JSON.stringify({ trips: [{ id, title, start: '2026-06-14', end: '2026-06-14', stops: [] }] });
-    for (const [page, id, title] of [[first, 'one', 'First tab trip'], [second, 'two', 'Second tab trip']] as const) {
-      await hostJournal(page, guestAPI);
-      await page.goto(origin + '/journal.html?lang=en');
-      await page.evaluate(({ key, draft }) => sessionStorage.setItem(key, draft), { key: draftKey, draft: legacy(id, title) });
+    const titles = ['First tab trip', 'Second tab trip'];
+    for (const order of ['first tab first', 'second tab first', 'together']) {
+      await t.test(order, async () => {
+        const context = await browser.newContext();
+        try {
+          const tabs = [await context.newPage(), await context.newPage()];
+          for (const [index, page] of tabs.entries()) {
+            await hostJournal(page, guestAPI);
+            await page.goto(origin + '/privacy.html');
+            const trip = { id: String(index), title: titles[index], start: '2026-06-14', end: '2026-06-14', stops: [] };
+            await page.evaluate(({ key, trip }) => sessionStorage.setItem(key, JSON.stringify({ trips: [trip] })), { key: draftKey, trip });
+          }
+          const open = (page: Page) => page.goto(origin + '/journal.html?lang=en');
+          if (order === 'together') {
+            await Promise.all(tabs.map(open));
+          } else {
+            const first = order === 'first tab first' ? 0 : 1;
+            await open(tabs[first]);
+            await tabs[first].locator('#title').filter({ hasText: titles[first] }).waitFor();
+            await open(tabs[1 - first]);
+          }
+          for (const page of tabs) {
+            await page.waitForFunction(() => document.querySelectorAll('#trips option').length === 2);
+            assert.deepEqual((await page.locator('#trips option').allTextContents()).sort(), titles);
+            assert.equal(await page.evaluate(key => sessionStorage.getItem(key), draftKey), null);
+          }
+          assert.deepEqual(await storedTitles(tabs[0]), titles);
+        } finally {
+          await context.close();
+        }
+      });
     }
-    await first.reload();
-    await first.locator('#title').filter({ hasText: 'First tab trip' }).waitFor();
-    await second.reload();
-    await second.locator('#trips option').filter({ hasText: 'Second tab trip' }).waitFor({ state: 'attached' });
-    assert.deepEqual(await storedTitles(second), ['First tab trip', 'Second tab trip']);
-    assert.equal(await second.evaluate(key => sessionStorage.getItem(key), draftKey), null);
   } finally {
     await browser.close();
   }

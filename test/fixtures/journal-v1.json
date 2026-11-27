@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "trips": [
+    {
+      "id": "v1-city",
+      "title": "A fictional weekend",
+      "start": "2026-06-14",
+      "end": "2026-06-15",
+      "home": "Hotel",
+      "homeXY": [51.92, 4.48],
+      "stops": [
+        {
+          "id": "v1-museum",
+          "name": "Museum",
+          "date": "2026-06-14",
+          "time": "09:30",
+          "captureTime": "09:30:12.500",
+          "photoAnchor": [51.9211, 4.4811],
+          "edited": true,
+          "address": "Museum square",
+          "xy": [51.921, 4.481],
+          "notes": "Keep the original evidence",
+          "reviewReason": "Visit time still to confirm",
+          "band": "Morning",
+          "sources": ["photo", "card"],
+          "refs": ["v1-photo-reference", "v1-card-reference"],
+          "kind": "uncertain",
+          "count": 1,
+          "rank": 1,
+          "slot": "morning",
+          "photos": ["data:image/jpeg;base64,/9j/AA=="],
+          "approx": false
+        },
+        {
+          "id": "v1-park",
+          "name": "Park",
+          "date": "2026-06-14",
+          "time": "11:00",
+          "address": "Park gate",
+          "xy": [51.922, 4.482],
+          "notes": "Confirmed visit",
+          "band": "",
+          "sources": ["calendar", "manual"],
+          "refs": ["v1-calendar-reference"],
+          "kind": "visit",
+          "count": 0,
+          "rank": 2,
+          "slot": "midday",
+          "photos": [],
+          "approx": true
+        }
+      ],
+      "googlePins": [
+        {
+          "id": "v1-bookmark",
+          "name": "Bookmarked gallery",
+          "xy": [51.93, 4.49],
+          "date": "2026-06-15",
+          "savedAt": "2026-06-14T18:00:00+02:00",
+          "dayEdited": true
+        }
+      ],
+      "removedGooglePinIds": ["v1-removed-bookmark"],
+      "edges": [
+        {
+          "a": "base",
+          "b": "v1-park",
+          "type": "walk",
+          "m": 310,
+          "line": [[51.92, 4.48], [51.921, 4.48], [51.922, 4.482]]
+        }
+      ],
+      "rules": "Keep the confirmed visit order",
+      "checks": {
+        "finances": {
+          "status": "checked",
+          "start": "2026-06-14",
+          "end": "2026-06-15",
+          "at": "2026-06-15T12:00:00.000Z"
+        }
+      },
+      "dayNotes": { "2026-06-14": "Historical note" }
+    }
+  ]
+}
