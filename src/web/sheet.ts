@@ -66,6 +66,19 @@ export function createSheet(panel: HTMLElement, handle: HTMLButtonElement, behin
     if (dragged) dragged = false;
     else settle(stop === 'half' ? 'full' : 'half');
   });
+  // Lowered, the sheet shows only the trip and its days. When the keyboard moves on to a stop or an action
+  // below them, the sheet rises so that focus is never somewhere out of sight.
+  panel.addEventListener('focusin', event => {
+    const target = event.target;
+    if (!narrow.matches || stop !== 'peek' || !(target instanceof HTMLElement) || target === handle) return;
+    // Measured from the top of the sheet, so the answer is the same while the sheet is still on its way down.
+    if (target.getBoundingClientRect().bottom - panel.getBoundingClientRect().top <= heights().peek) return;
+    settle('half');
+    // The list has room for the row once the sheet has finished rising.
+    setTimeout(() => {
+      if (document.activeElement === target) target.scrollIntoView({ block: 'nearest' });
+    }, 260);
+  });
   handle.addEventListener('keydown', event => {
     const step = event.key === 'ArrowUp' ? 1 : event.key === 'ArrowDown' ? -1 : 0;
     if (!step) return;

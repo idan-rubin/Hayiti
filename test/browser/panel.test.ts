@@ -157,3 +157,63 @@ await test('a day with only a Google Pin or a note is marked in the day strip an
     await browser.close();
   }
 });
+
+await test('a phone on its side keeps both ends of the route on screen above the sheet', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage({ viewport: { width: 667, height: 375 }, hasTouch: true });
+    const date = '2026-06-14';
+    await hostTrip(page, {
+      id: 'side', title: 'Sideways', start: date, end: date,
+      stops: [
+        { id: 'north', name: 'North park', date, time: '09:00', xy: [51.94, 4.48] },
+        { id: 'south', name: 'South pier', date, time: '13:00', xy: [51.92, 4.47] }
+      ]
+    });
+    await page.locator('.leaflet-marker-icon').nth(1).waitFor();
+    assert.equal(await page.locator('body').getAttribute('data-sheet'), 'half');
+    // The bar and the sheet leave the map a low strip. The whole route is drawn inside it.
+    await page.waitForFunction(() => {
+      const sheet = document.getElementById('panel')!.getBoundingClientRect();
+      const bar = document.querySelector('header nav')!.getBoundingClientRect();
+      return [...document.querySelectorAll('.leaflet-marker-icon')].every(pin => {
+        const box = pin.getBoundingClientRect();
+        return box.top >= bar.bottom && box.bottom <= sheet.top && box.left >= 0 && box.right <= innerWidth;
+      });
+    });
+    // With so little height the legend is put away, and the map style sits in the bar's row.
+    assert.equal(await page.locator('.legend').isVisible(), false);
+    const style = await page.locator('#mapStyle').boundingBox();
+    const menu = await page.locator('#menuButton').boundingBox();
+    assert.ok(style && menu && style.y < menu.y + menu.height && menu.y < style.y + style.height);
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('tabbing past the days of a lowered sheet raises it, so focus is never out of sight', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true });
+    const date = '2026-06-14';
+    await hostTrip(page, {
+      id: 'tab', title: 'Tabbing', start: date, end: date,
+      stops: [{ id: 'a', name: 'Market', date, xy: [51.92, 4.48] }, { id: 'b', name: 'Museum', date, xy: [51.925, 4.47] }]
+    });
+    await page.locator('.leaflet-marker-icon').nth(1).waitFor();
+    await page.locator('#sheetHandle').press('ArrowDown');
+    assert.equal(await page.locator('body').getAttribute('data-sheet'), 'peek');
+    // The days still show in the lowered sheet, and reaching them leaves it lowered.
+    await page.locator('#tripDate').focus();
+    assert.equal(await page.locator('body').getAttribute('data-sheet'), 'peek');
+    await page.keyboard.press('Tab');
+    await page.locator('body[data-sheet="half"]').waitFor();
+    await page.waitForFunction(() => {
+      const focused = document.activeElement!.getBoundingClientRect();
+      return document.activeElement !== document.body && focused.height > 0 && focused.top >= 0 && focused.bottom <= innerHeight;
+    });
+    assert.equal(await page.evaluate(() => document.getElementById('panel')!.contains(document.activeElement)), true);
+  } finally {
+    await browser.close();
+  }
+});

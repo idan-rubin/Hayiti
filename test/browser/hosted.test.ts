@@ -1328,6 +1328,9 @@ await test('the mobile sheet keeps the days on one row and the day actions on an
           assert.deepEqual(boxes.map(box => box.id), pressed ? ['import'] : ['add', 'import', 'organize']);
           for (const box of boxes) assert.ok(box.oneLine && box.fits, `${lang} ${width}px: ${box.id} label must fit on one line`);
           assert.equal(await toolbar.getByRole('button', { name: lang === 'he' ? 'מקורות וייבוא' : 'Sources and import', exact: true }).count(), 1);
+          // On the narrowest phone the button shows its short name, in the journal's language.
+          const shown = width < 360 ? ['מקורות', 'Sources'] : ['מקורות וייבוא', 'Sources and import'];
+          assert.equal(await toolbar.locator('#import').innerText(), shown[lang === 'he' ? 0 : 1]);
           if (!pressed) assert.equal(await toolbar.getByRole('button', { name: lang === 'he' ? 'הצע סדר הליכה' : 'Suggest walking order', exact: true }).count(), 1);
           assert.ok(boxes.every(box => box.top === boxes[0].top));
           const bounds = await toolbar.boundingBox();

@@ -8,6 +8,7 @@ import { enableSharing } from './share-ui.ts';
 import { routeStops, dayDetails, isMappedStop, indexEdges, suggest, walkingStats } from '../domain/daily-route.ts';
 import { createDayStrip } from './day-strip.ts';
 import { createSheet } from './sheet.ts';
+import { fitPadding } from './map-fit.ts';
 import { cleanTrip, cleanStop, mergeGooglePins, removeGooglePin, restoreGooglePin, mergeStops, combineEvidence, journalCharacterLimit, unidentifiedMerchant } from '../domain/core.ts';
 import { importEvidencePackage, prepareTripBackup, importCsv, importIcs, pastedStop } from '../domain/importers.ts';
 import { checkGuestBackup, discardGuest, onGuestChange, guestMergeRequested, requestGuestMerge, hasLegacyGuestTrips } from './guest-draft.ts';
@@ -189,9 +190,12 @@ function fitRoute() {
     } else {
       const clear = Math.min(width - covered.left - covered.right, height - covered.top - covered.bottom);
       const margin = Math.max(18, Math.min(36, Math.round(clear * .12)));
+      // On a phone turned on its side the bar and the sheet can cover more than the map has, so the padding gives way.
+      const [left, right] = fitPadding(width, covered.left, covered.right, margin);
+      const [top, bottom] = fitPadding(height, covered.top, covered.bottom, margin);
       map.fitBounds(routeBounds, {
-        paddingTopLeft: [margin + covered.left, margin + covered.top],
-        paddingBottomRight: [margin + covered.right, margin + covered.bottom],
+        paddingTopLeft: [left, top],
+        paddingBottomRight: [right, bottom],
         maxZoom: 16,
         animate: false
       });
