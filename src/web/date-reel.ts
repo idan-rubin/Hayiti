@@ -3,17 +3,19 @@ import { language } from './language.ts';
 export function createDateReel(reel: HTMLElement, menu: HTMLSelectElement, progress: HTMLElement, format: (day: string, style: 'full' | 'short') => string, onChange: (day: string) => void) {
   let dates: string[] = [],
     current = -1,
+    wholeTripLabel = '',
     step = 0,
     frame = 0;
   const progressLabel = (index: number) => language === 'he' ? 'יום ' + (index + 1) + ' מתוך ' + dates.length : 'Day ' + (index + 1) + ' of ' + dates.length;
   const clamp = (index: number) => Math.max(0, Math.min(dates.length - 1, index));
   function select(index: number, notify: boolean) {
     current = index;
-    menu.selectedIndex = index;
+    // In the overview every date, including the previously selected one, is a new choice.
+    menu.selectedIndex = wholeTripLabel ? -1 : index;
     reel.setAttribute('aria-valuenow', String(index + 1));
     const label = dates.length > 1 ? progressLabel(index) : '';
     progress.textContent = label;
-    reel.setAttribute('aria-valuetext', [menu.options[index].text, label].filter(Boolean).join(', '));
+    reel.setAttribute('aria-valuetext', wholeTripLabel || [menu.options[index].text, label].filter(Boolean).join(', '));
     if (notify) onChange(dates[index]);
   }
   function paint() {
@@ -27,11 +29,11 @@ export function createDateReel(reel: HTMLElement, menu: HTMLSelectElement, progr
     }
     if (nearest !== current) select(nearest, true);
   }
-  function jump(index: number) {
+  function jump(index: number, chooseFromOverview = false) {
     if (!dates.length) return;
     index = clamp(index);
     reel.scrollTop = index * step;
-    select(index, index !== current);
+    select(index, index !== current || chooseFromOverview);
     paint();
   }
   function measure() {
@@ -51,6 +53,11 @@ export function createDateReel(reel: HTMLElement, menu: HTMLSelectElement, progr
     passive: true
   });
   reel.addEventListener('keydown', event => {
+    if (wholeTripLabel && (event.key === 'Enter' || event.key === ' ')) {
+      event.preventDefault();
+      onChange(dates[current]);
+      return;
+    }
     const shortcuts: Record<string, number> = {
       ArrowUp: current - 1,
       ArrowDown: current + 1,
@@ -62,14 +69,14 @@ export function createDateReel(reel: HTMLElement, menu: HTMLSelectElement, progr
     const index = shortcuts[event.key];
     if (index === undefined) return;
     event.preventDefault();
-    jump(index);
+    jump(index, !!wholeTripLabel);
   });
   // Tapping the shown date returns from the whole trip to it.
   reel.addEventListener('click', () => {
     if (current >= 0) onChange(dates[current]);
   });
-  menu.addEventListener('change', () => jump(menu.selectedIndex));
-  return (days: string[], selected: string, notes: string[] = [], extras: string[] = []) => {
+  menu.addEventListener('change', () => jump(menu.selectedIndex, !!wholeTripLabel));
+  function setDates(days: string[], selected: string, notes: string[] = [], extras: string[] = []) {
     dates = days;
     const labels = days.map(day => format(day, 'full'));
     menu.replaceChildren(...labels.map((label, i) => new Option([label, notes[i], extras[i]].filter(Boolean).join(' · '), days[i])));
@@ -103,5 +110,11 @@ export function createDateReel(reel: HTMLElement, menu: HTMLSelectElement, progr
     select(clamp(days.indexOf(selected)), false);
     step = 0;
     measure();
-  };
+  }
+  function showWholeTrip(label: string) {
+    wholeTripLabel = label;
+    reel.parentElement!.dataset.whole = label;
+    if (current >= 0) select(current, false);
+  }
+  return { setDates, showWholeTrip };
 }

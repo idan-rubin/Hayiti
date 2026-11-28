@@ -413,7 +413,7 @@ function render() {
   draw();
 }
 const stopCount = (count: number) => count === 1 ? t('תחנה אחת') : count + t(' תחנות');
-const setDates = createDateReel($('dayReel'), $('tripDate'), $('dayProgress'), dateLabel, next => {
+const { setDates, showWholeTrip } = createDateReel($('dayReel'), $('tripDate'), $('dayProgress'), dateLabel, next => {
   if (next === session.day && !overviewTripId) return;
   overviewTripId = '';
   session.select(session.trip, next);
@@ -493,7 +493,7 @@ function appendStopRow(s: Stop, i: number, list: Stop[], number: string) {
   col.append(dom('div', hints.join(' · '), 'meta'));
   const evidence = [...(s.sources || []).map(k => t(label[k])), s.count ? quantity(s.count, ' חיובים', 'charge', 'charges') : '', s.photos?.length ? quantity(s.photos.length, ' תמונות', 'photo', 'photos') : ''].filter(Boolean).join(' · ');
   if (evidence) col.append(dom('span', evidence, 'src'));
-  if (s.notes) col.append(dom('div', s.notes, 'meta'));
+  if (s.notes) col.append(dom('div', s.notes, 'meta stop-note'));
   const actions = dom('div', undefined, 'tools');
   if (s.kind !== 'origin') {
     for (const [sign, delta] of [['↑', -1], ['↓', 1]] as const) {
@@ -630,7 +630,7 @@ function draw() {
   $('wholeTrip').hidden = !trip;
   $('wholeTrip').setAttribute('aria-pressed', String(overview));
   $('wholeTrip').textContent = overview ? ui('Back to the day', 'חזרה ליום') : ui('Whole trip', 'כל הטיול');
-  $('dayReel').parentElement!.dataset.whole = ui('Whole trip', 'כל הטיול');
+  showWholeTrip(overview ? ui('Whole trip', 'כל הטיול') : '');
   $('listTitle').textContent = overview ? ui('Trip days', 'ימי הטיול') : t('תחנות בדרך');
   if (overview) {
     $('dayStats').hidden = true;
@@ -859,8 +859,8 @@ async function loadHostedRoute() {
   session.showSnapshot(snapshot);
   loadedHosted = true;
   document.body.classList.add('route-ready');
-  renderSelection();
   msg('מסלול משותף · לצפייה בלבד', '', true);
+  renderSelection();
 }
 if (hostedView) {
   const check = () => {
@@ -903,8 +903,8 @@ async function load(afterConflict = false, quiet = false) {
   if (embeddedRoute) {
     session.showSnapshot(cleanTrip(JSON.parse(embeddedRoute.textContent ?? 'null')));
     document.body.classList.add('route-copy');
-    renderSelection();
     msg('עותק של המסלול לצפייה', '', true);
+    renderSelection();
     return;
   }
 

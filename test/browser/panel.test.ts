@@ -450,10 +450,16 @@ await test('the resting portrait journal shows the starting point and up to two 
   try {
     const page = await browser.newPage({ viewport: { width: 375, height: 553 }, hasTouch: true });
     const date = '2026-06-14', next = '2026-06-15';
+    const dayNote = 'We took the long way along the harbor to watch the ferries. '.repeat(8).trim();
+    const stopNote = 'The footpath on the river side leads back to the old boat landing. '.repeat(6).trim();
+    const address = 'Riverside promenade, beside the visitor center at the north entrance to the park';
     const trip = {
       id: 'guest', title: 'Harbor weekend', start: date, end: next, home: 'Harbor hotel', homeXY: [51.95, 4.49],
+      dayNotes: { [date]: dayNote },
       stops: [
-        ...dayOfStops(date, harbor.slice(0, 6)).map(stop => ({ ...stop, sources: ['card'], count: 1 })),
+        ...dayOfStops(date, harbor.slice(0, 6)).map((stop, index) => ({
+          ...stop, sources: ['card'], count: 1, ...(index === 0 ? { address, notes: stopNote } : {})
+        })),
         { id: 'remote', name: 'Train booking', date, kind: 'remote', sources: ['email'] },
         { id: 'ferry', name: 'Ferry dock', date: next, time: '10:30', xy: [51.93, 4.48],
           address: 'Upper harbor promenade, west entrance', sources: ['card'], count: 1 }
@@ -494,6 +500,31 @@ await test('the resting portrait journal shows the starting point and up to two 
           assert.equal(layout.panelScroll, 0, diagnostic);
           assert.deepEqual(visible.map(row => row.name), day.names.slice(0, 3), diagnostic);
           assert.equal(await page.locator('#reviewDay').isVisible(), false);
+        }
+        if (day.date === date) {
+          const note = page.locator('#dayNote');
+          const order = () => note.evaluate(element => {
+            const text = element.getBoundingClientRect(), stops = document.getElementById('stops')!.getBoundingClientRect();
+            return { before: text.bottom <= stops.top + 1, after: text.top >= stops.bottom - 1 };
+          });
+          assert.ok((await order()).after, 'the resting sheet places the day note after the route');
+          await restSheet(page, 'full');
+          await sheetSettled(page);
+          assert.ok((await order()).before, 'the raised sheet starts the list with the day note');
+          const firstVisit = visits.nth(1);
+          for (const [element, expected] of [
+            [note, dayNote], [firstVisit.locator('.meta').first(), '09:00 · ' + address], [firstVisit.locator('.stop-note'), stopNote]
+          ] as const) {
+            await element.scrollIntoViewIfNeeded();
+            assert.equal(await element.innerText(), expected);
+            const readable = await element.evaluate(el => {
+              const text = el.getBoundingClientRect(), list = el.closest('.listbody')!.getBoundingClientRect();
+              return text.height > 0 && text.top >= list.top - 1 && text.bottom <= list.bottom + 1 &&
+                el.scrollHeight <= el.clientHeight + 1 && el.scrollWidth <= el.clientWidth + 1;
+            });
+            assert.ok(readable, `${lang}: the raised sheet shows the complete text of "${expected.slice(0, 28)}…"`);
+          }
+          await restSheet(page, 'half');
         }
       }
       const notice = lang === 'en' ? '1 source disconnected' : 'מקור אחד מנותק';

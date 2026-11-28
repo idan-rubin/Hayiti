@@ -85,7 +85,7 @@ await test('a trip started before signing in is added to the journal after sign-
 await test('a shared route stays on screen through a temporary failure and clears when revoked', async () => {
   const browser = await chromium.launch();
   try {
-    const page = await browser.newPage();
+    const page = await browser.newPage({ viewport: { width: 390, height: 664 } });
     let status = 200;
     const snapshot = {
       id: 'shared', title: 'Shared day', start: '2026-06-14', end: '2026-06-15',
@@ -96,6 +96,9 @@ await test('a shared route stays on screen through a temporary failure and clear
       : route.fulfill({ status }));
     await page.goto(origin + '/journal.html?lang=en#route=fictional');
     await page.locator('body.route-ready').waitFor();
+    assert.equal(await page.locator('body').getAttribute('data-sheet'), 'half');
+    await page.getByRole('status').filter({ hasText: 'Shared route · View only' }).waitFor();
+    await page.setViewportSize({ width: 1280, height: 720 });
     const wholeTrip = page.locator('#wholeTrip');
     await openMenu(page);
     assert.deepEqual(await page.locator('#menu button:visible').allInnerTexts(), ['Whole trip']);
@@ -1424,6 +1427,38 @@ await test('the date reel turns through the days, and the day count follows it b
       await page.setViewportSize({ width: 1200, height: 852 });
       assert.equal(await progress.isVisible(), true);
       assert.deepEqual(await shown(), [await listed()]);
+    }
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('a one-day trip announces the whole-trip view and reopens the day from the reel or date list', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage({ viewport: { width: 375, height: 553 } });
+    const date = '2026-06-14';
+    const trip = { id: 'park', title: 'Harbor day', start: date, end: date,
+      stops: [{ id: 'visit', name: 'South park', date, xy: [51.92, 4.48] }] };
+    await hostJournal(page, route => route.fulfill({ json: { schemaVersion: journalSchemaVersion, trips: [trip], rev: 'r1' } }));
+    await page.goto(origin + '/journal.html?lang=en');
+    const reel = page.getByRole('spinbutton'), dates = page.locator('#tripDate');
+    await reel.waitFor();
+    for (const [lang, whole] of [['en', 'Whole trip'], ['he', 'כל הטיול']]) {
+      await page.locator('#languageSwitch').selectOption(lang);
+      const day = await reel.getAttribute('aria-valuetext');
+      assert.ok(day && day !== whole);
+      for (const control of ['Enter', 'Space', 'ArrowDown', 'Home', 'End', 'list']) {
+        await toggleWholeTrip(page);
+        assert.equal(await reel.getAttribute('aria-valuetext'), whole);
+        assert.equal(await dates.inputValue(), '');
+        if (control === 'list') await dates.selectOption(date);
+        else await reel.press(control);
+        assert.equal(await page.locator('#wholeTrip').getAttribute('aria-pressed'), 'false');
+        assert.equal(await reel.getAttribute('aria-valuetext'), day);
+        assert.equal(await dates.inputValue(), date);
+        assert.equal(await page.locator('#stops .stopname').innerText(), 'South park');
+      }
     }
   } finally {
     await browser.close();

@@ -22,8 +22,8 @@ export function createSheet(panel: HTMLElement, handle: HTMLButtonElement, behin
   // The full sheet leaves the bar above it uncovered. The lowest stop is as tall as the caller says the trip's heading is.
   const heights = () => {
     const full = Math.max(240, innerHeight - 64);
-    // Fit the first visits at rest when possible, leaving at least 30% of a portrait screen for the map.
-    const day = portrait.matches ? Math.min(preview(), innerHeight * .70) : 0;
+    // Fit the first visits at rest when possible, leaving at least a quarter of the portrait screen for the map.
+    const day = portrait.matches ? Math.min(preview(), innerHeight * .75) : 0;
     return { peek: Math.min(full, Math.max(96, peek())), half: Math.ceil(Math.max(innerHeight * .55, day)), full };
   };
   const setHeight = (pixels: number) => document.documentElement.style.setProperty('--sheet', pixels + 'px');

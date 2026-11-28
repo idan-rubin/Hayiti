@@ -528,12 +528,14 @@ await test('a journal file makes an exact copy of the blank app and a route file
     const route = await offeredFile(page, '#downloadTrip');
     const saved = join(folder, route.name);
     await writeFile(saved, route.html);
-    const viewer = await browser.newPage(),
+    const viewer = await browser.newPage({ viewport: { width: 390, height: 664 } }),
       errors: string[] = [];
     viewer.on('pageerror', error => errors.push(error.message));
     await viewer.route('https://**/*', request => request.abort());
     await viewer.goto(pathToFileURL(saved).href);
     await viewer.locator('#title').filter({ hasText: 'A Thursday in Tel Aviv' }).waitFor();
+    assert.equal(await viewer.locator('body').getAttribute('data-sheet'), 'half');
+    await viewer.getByRole('status').filter({ hasText: 'Route copy · View only' }).waitFor();
     assert.equal(await viewer.locator('.leaflet-marker-icon').count(), 7);
     assert.deepEqual(errors, []);
   } finally {
