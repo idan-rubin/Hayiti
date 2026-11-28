@@ -6,7 +6,6 @@ export async function openMenu(page: Page) {
   await page.locator('#menu').waitFor();
 }
 
-/** Whole trip is a row of the menu. While the whole trip shows, the same row leads back to the day. */
 export async function toggleWholeTrip(page: Page) {
   await openMenu(page);
   await page.locator('#wholeTrip').click();

@@ -91,8 +91,6 @@ let currentStatus = () => '',
   currentTone: Tone = '',
   currentStanding = false;
 let heldStatus: [() => string, Tone, boolean] | null = null;
-// A standing line says where the journal is kept and that nothing is waiting. It is the same after every save,
-// so a small screen sets it aside for the stops. News about what just happened is never set aside.
 function msg(message: string | (() => string), tone: Tone = '', standing = false) {
   heldStatus = null;
   currentStatus = typeof message === 'function' ? message : () => t(message);
@@ -136,15 +134,12 @@ let routeBounds = L.latLngBounds([]),
   fitFrame = 0;
 // Lowered all the way, the sheet still shows the trip and its days.
 const sheet = createSheet($('panel'), $('sheetHandle'), map.getContainer().parentElement!, () => {
-  // Lowered, the sheet shows the trip's name and the date reel under it.
   const dates = $('dayReel').parentElement!;
   const last = dates.hidden ? $('range') : dates.parentElement!;
   return last.offsetTop + last.offsetHeight;
 }, () => fitRoute());
 const mapSection = map.getContainer().parentElement!,
   mapControls = document.querySelector<HTMLElement>('.map-controls')!;
-// Over a sheet the map is a short band, and a control of its own would take a strip of it. There the map style
-// is a row of the menu. Beside a panel it stays on the map, where one tap changes it.
 const sheetWidth = matchMedia(sheetLayout);
 function placeMapStyle() {
   if (sheetWidth.matches) $('menu').insertBefore(mapControls, $('export'));
@@ -162,16 +157,14 @@ function coveredEdges() {
     const rect = element?.getBoundingClientRect();
     return rect?.height ? rect.bottom - box.top + 6 : 0;
   };
-  // Inside the menu the map style covers nothing of the map, open or closed.
   const top = Math.max(bottomOf(document.querySelector('header nav')), mapControls.parentElement === mapSection ? bottomOf(mapControls) : 0);
-  // The legend and the map credit lie over the foot of the map. Over a sheet they ride on top of it,
-  // so there they count for as far as they rise above it.
+  // The legend and the map credit lie over the foot of the map. On a narrow screen they ride above the sheet.
   const above = (element: Element | null) => {
     const rect = element?.getBoundingClientRect();
     return rect?.height ? box.bottom - rect.top + 6 : 0;
   };
-  const foot = Math.max(0, Math.max(above(document.querySelector('.legend')), above(map.getContainer().querySelector('.leaflet-control-attribution'))) - sheet.height);
-  if (sheet.narrow) return { top, left: 0, right: 0, bottom: sheet.cover + foot };
+  const foot = Math.max(above(document.querySelector('.legend')), above(map.getContainer().querySelector('.leaflet-control-attribution')));
+  if (sheet.narrow) return { top, left: 0, right: 0, bottom: Math.max(sheet.cover, foot) };
   const panel = $('panel').getBoundingClientRect();
   if (!panel.width) return { top, left: 0, right: 0, bottom: foot };
   // The panel follows the reading direction, so it covers the left edge in English and the right edge in Hebrew.
@@ -266,7 +259,6 @@ const basemap = addStreetMap(map, () => language, problem => {
 $('mapStyle').onchange = () => {
   const value = $('mapStyle').value;
   if (isBasemap(value)) basemap.select(value);
-  // Chosen from the menu, the new map shows as soon as the menu is out of its way.
   if ($('menu').matches(':popover-open')) $('menu').hidePopover();
 };
 const sourceNames = {
@@ -404,7 +396,7 @@ const setDates = createDateReel($('dayReel'), $('tripDate'), $('dayProgress'), d
   selected = '';
   endHint();
   draw();
-  // The new day's list starts at its top. The panel around it stays put, because the reel being turned is part of it.
+  // Not startList(): scrolling the panel would move the reel under the finger.
   document.querySelector<HTMLElement>('.listbody')!.scrollTop = 0;
 });
 function distanceLabel(meters: number) {
@@ -433,11 +425,9 @@ function showDailyStats(stats: ReturnType<typeof walkingStats>) {
   const leg = stats.longest;
   $('longestWalk').textContent = stats.walkingLegs > 1 && leg ? t('מקטע ההליכה הארוך במסלול המשוער הוא מ') + displayStopName(leg.from) + t(' ל') + displayStopName(leg.to) + t(', כ־') + distanceLabel(leg.meters) + '.' : '';
 }
-// A day that was just opened, and the whole trip, are read from the top of their list.
 function startList() {
   const list = document.querySelector<HTMLElement>('.listbody')!;
   if (getComputedStyle(list).overflowY !== 'visible') list.scrollTop = 0;
-  // On a screen with little height the whole panel scrolls. There the dates come to its top, above the list they name.
   else $('panel').scrollTop = Math.max(0, $('dayReel').closest<HTMLElement>('.daybar')!.offsetTop - $('sheetHandle').offsetHeight);
 }
 function openMapDay(date: string) {
@@ -615,9 +605,7 @@ function draw() {
   document.body.classList.toggle('trip-overview', overview);
   $('wholeTrip').hidden = !trip;
   $('wholeTrip').setAttribute('aria-pressed', String(overview));
-  // The menu names where its row leads: into the whole trip, or back to the day the reel shows.
   $('wholeTrip').textContent = overview ? ui('Back to the day', 'חזרה ליום') : ui('Whole trip', 'כל הטיול');
-  // In that view the opening of the date reel names it, in place of a date.
   $('dayReel').parentElement!.dataset.whole = ui('Whole trip', 'כל הטיול');
   $('listTitle').textContent = overview ? ui('Trip days', 'ימי הטיול') : t('תחנות בדרך');
   if (overview) {
@@ -772,7 +760,6 @@ function reveal(id: string, target: 'row' | 'pin') {
     const foot = document.querySelector<HTMLElement>('.toolbar');
     const shown = scroller.getBoundingClientRect(),
       box = row.getBoundingClientRect();
-    // A short sheet keeps its handle over whatever has scrolled to its head.
     const top = ownScroll ? shown.top : shown.top + $('sheetHandle').offsetHeight;
     const bottom = ownScroll || !foot?.offsetHeight ? shown.bottom : foot.getBoundingClientRect().top;
     if (box.top < top) scroller.scrollTop -= top - box.top;

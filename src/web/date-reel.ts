@@ -1,11 +1,5 @@
 import { language } from './language.ts';
 
-/**
- * The trip's dates as a reel behind a one-line opening, turned like the wheel of a slot machine:
- * a swipe or the mouse wheel rolls it, and it settles on one date. The menu beside it lists every date.
- * The reel is one control to the keyboard: the arrow keys step a day, Page Up and Page Down step a week,
- * and Home and End reach the trip's first and last day.
- */
 export function createDateReel(reel: HTMLElement, menu: HTMLSelectElement, progress: HTMLElement, format: (day: string, style: 'full' | 'short') => string, onChange: (day: string) => void) {
   let dates: string[] = [],
     current = -1,
@@ -17,7 +11,6 @@ export function createDateReel(reel: HTMLElement, menu: HTMLSelectElement, progr
     current = index;
     menu.selectedIndex = index;
     reel.setAttribute('aria-valuenow', String(index + 1));
-    // A trip of one day has nothing to count.
     const label = dates.length > 1 ? progressLabel(index) : '';
     progress.textContent = label;
     reel.setAttribute('aria-valuetext', [menu.options[index].text, label].filter(Boolean).join(', '));
@@ -71,12 +64,11 @@ export function createDateReel(reel: HTMLElement, menu: HTMLSelectElement, progr
     event.preventDefault();
     jump(index);
   });
-  // A tap on the date that already shows asks for that day again. The whole-trip view answers by returning to it.
+  // Tapping the shown date returns from the whole trip to it.
   reel.addEventListener('click', () => {
     if (current >= 0) onChange(dates[current]);
   });
   menu.addEventListener('change', () => jump(menu.selectedIndex));
-  /** `notes` name each day's stops and entries. `extras` name what else is recorded for it, outside its route. */
   return (days: string[], selected: string, notes: string[] = [], extras: string[] = []) => {
     dates = days;
     const labels = days.map(day => format(day, 'full'));
@@ -85,10 +77,8 @@ export function createDateReel(reel: HTMLElement, menu: HTMLSelectElement, progr
       const row = document.createElement('div'),
         face = document.createElement('span');
       row.setAttribute('aria-hidden', 'true');
-      // A day with something recorded stands out as the reel turns past it.
       if (notes[index] || extras[index]) row.dataset.recorded = '';
       if (language === 'en') {
-        // A narrow opening shows the date in its short form.
         const full = document.createElement('b'),
           short = document.createElement('b');
         full.className = 'date-full';

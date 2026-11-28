@@ -1305,7 +1305,6 @@ await test('one daily details panel keeps unlocated visits, unconfirmed attendan
     await edit.locator('button.primary').click();
     await page.locator('#stops .stopname').filter({ hasText: 'Grocer' }).waitFor();
     assert.deepEqual(await page.locator('#stops .num').allTextContents(), ['1', '2']);
-    // The phone's sheet counts the stops beside the walking summary.
     assert.equal(await page.locator('#statStops').isVisible(), true);
     assert.equal(await page.locator('#statStops').textContent(), '2 stops');
     await toggleWholeTrip(page);

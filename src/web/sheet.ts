@@ -4,10 +4,7 @@ export type SheetStop = 'peek' | 'half' | 'full';
 
 const order: SheetStop[] = ['peek', 'half', 'full'];
 
-/**
- * When the panel is a sheet: a phone held upright, or any narrow window with height to spare.
- * The stylesheet lays the panel out under this same condition, in the same words.
- */
+/** Must match the sheet's media query in journal.css. */
 export const sheetLayout = '(max-width: 559px), (max-width: 820px) and (min-height: 541px)';
 
 /**
@@ -26,11 +23,7 @@ export function createSheet(panel: HTMLElement, handle: HTMLButtonElement, behin
     const full = Math.max(240, innerHeight - 64);
     return { peek: Math.min(full, Math.max(96, peek())), half: Math.round(innerHeight * .55), full };
   };
-  let shown = 0;
-  const setHeight = (pixels: number) => {
-    shown = pixels;
-    document.documentElement.style.setProperty('--sheet', pixels + 'px');
-  };
+  const setHeight = (pixels: number) => document.documentElement.style.setProperty('--sheet', pixels + 'px');
   function rest(next: SheetStop) {
     stop = next;
     document.body.dataset.sheet = next;
@@ -111,10 +104,6 @@ export function createSheet(panel: HTMLElement, handle: HTMLButtonElement, behin
      */
     get cover() {
       return narrow.matches ? heights()[stop === 'full' ? 'half' : stop] : 0;
-    },
-    /** The height the stylesheet lays the sheet out at now. The legend and the map credit ride on top of it. */
-    get height() {
-      return narrow.matches ? shown : 0;
     },
     rest,
     relabel: () => rest(stop)
