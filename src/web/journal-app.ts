@@ -143,11 +143,12 @@ const sheet = createSheet($('panel'), $('sheetHandle'), map.getContainer().paren
   const last = dates.hidden ? $('range') : dates.parentElement!;
   return last.offsetTop + last.offsetHeight;
 }, () => {
-  const third = $('stops').querySelector<HTMLElement>(':scope > .stop:nth-child(3)');
-  if (!third) return 0;
-  const list = third.closest<HTMLElement>('.listbody')!;
+  const firstRows = $('stops').querySelectorAll<HTMLElement>(':scope > .stop:nth-child(-n+3)');
+  const last = firstRows[firstRows.length - 1];
+  if (!last) return 0;
+  const list = last.closest<HTMLElement>('.listbody')!;
   const toolbar = $('panel').querySelector<HTMLElement>('.toolbar')!;
-  return third.getBoundingClientRect().bottom + list.scrollTop - $('panel').getBoundingClientRect().top + toolbar.offsetHeight + 2;
+  return last.getBoundingClientRect().bottom + list.scrollTop - $('panel').getBoundingClientRect().top + toolbar.offsetHeight + 2;
 }, () => fitRoute());
 const mapSection = map.getContainer().parentElement!,
   mapControls = document.querySelector<HTMLElement>('.map-controls')!;

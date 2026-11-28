@@ -592,11 +592,13 @@ label input, label textarea, label select { width: 100%; font-size: var(--body) 
   /* A full sheet covers the map, so nothing of it is left showing behind the bar. */
   body[data-sheet="full"] .mapcard::after { content: ''; position: absolute; inset: 0; z-index: 600; background: var(--wash) }
 }
-@media (max-width: 820px) and (min-height: 541px) {
+@media (orientation: portrait) and (max-width: 820px) and (min-height: 541px) {
   /* With visits on the route, the same day details are reachable immediately after the stops. */
   body[data-sheet="half"] .listcard:has(.stop .tools button) #reviewDay { display: none }
   body[data-sheet="half"] .stop { padding-block: 4px }
   body[data-sheet="half"] .stop:not(:last-child)::after { inset-block: calc(4px + 1.75rem + 3px) -1px }
+}
+@media (max-width: 820px) and (min-height: 541px) {
   body:not([data-sheet="full"], .no-trip) #range,
   body:not([data-sheet="full"]) #status[data-standing][data-tone=""] { display: none }
 }

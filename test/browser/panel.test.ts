@@ -445,42 +445,56 @@ await test('at the sizes a phone browser leaves, the half-raised sheet shows the
   }
 });
 
-await test('the resting portrait journal shows the starting point and two numbered visits with a disconnected source', async () => {
+await test('the resting portrait journal shows the starting point and up to two numbered visits with a disconnected source', async () => {
   const browser = await chromium.launch();
   try {
     const page = await browser.newPage({ viewport: { width: 375, height: 553 }, hasTouch: true });
-    const date = '2026-06-14';
+    const date = '2026-06-14', next = '2026-06-15';
     const trip = {
-      id: 'guest', title: 'Harbor weekend', start: date, end: date, home: 'Harbor hotel', homeXY: [51.95, 4.49],
+      id: 'guest', title: 'Harbor weekend', start: date, end: next, home: 'Harbor hotel', homeXY: [51.95, 4.49],
       stops: [
         ...dayOfStops(date, harbor.slice(0, 6)).map(stop => ({ ...stop, sources: ['card'], count: 1 })),
-        { id: 'remote', name: 'Train booking', date, kind: 'remote', sources: ['email'] }
+        { id: 'remote', name: 'Train booking', date, kind: 'remote', sources: ['email'] },
+        { id: 'ferry', name: 'Ferry dock', date: next, time: '10:30', xy: [51.93, 4.48],
+          address: 'Upper harbor promenade, west entrance', sources: ['card'], count: 1 }
       ],
-      checks: { gmail: { status: 'disconnected', start: date, end: date, at: date + 'T12:00:00Z' } }
+      checks: { gmail: { status: 'disconnected', start: date, end: next, at: date + 'T12:00:00Z' } }
     };
     await seedLegacyGuestOnce(page, { local: JSON.stringify({ trips: [trip] }) });
     await hostTrip(page, null);
     const visits = page.locator('#stops .stop');
-    await visits.nth(2).waitFor();
-    assert.deepEqual((await visits.locator('.stopname').allTextContents()).slice(0, 3), ['Harbor hotel', 'North park', 'Old mill']);
-    assert.deepEqual((await visits.locator('.num').allTextContents()).slice(0, 3), ['⌂', '1', '2']);
+    await visits.first().waitFor();
+    const days = [
+      { date, names: ['Harbor hotel', ...harbor.slice(0, 6)] },
+      { date: next, names: ['Harbor hotel', 'Ferry dock'] }
+    ];
     for (const lang of ['en', 'he']) {
       await page.locator('#languageSwitch').selectOption(lang);
-      for (const [width, height] of [[375, 553], [390, 664]]) {
-        await page.setViewportSize({ width, height });
-        await sheetSettled(page);
-        assert.equal(await page.locator('body').getAttribute('data-sheet'), 'half');
-        const visible = await page.evaluate(() => {
-          const list = document.querySelector('.listbody')!, panel = document.getElementById('panel')!;
-          const top = list.getBoundingClientRect().top;
-          const bottom = Math.min(list.getBoundingClientRect().bottom, document.querySelector('.toolbar')!.getBoundingClientRect().top);
-          return list.scrollTop === 0 && panel.scrollTop === 0 && [...document.querySelectorAll('#stops .stop')].slice(0, 3).every(row => {
-            const box = row.getBoundingClientRect();
-            return box.height > 0 && box.top >= top - 1 && box.bottom <= bottom + 1;
+      for (const day of days) {
+        await page.locator('#tripDate').selectOption(day.date);
+        assert.deepEqual(await visits.locator('.stopname').allTextContents(), day.names);
+        assert.deepEqual(await visits.locator('.num').allTextContents(), day.names.map((_, index) => index ? String(index) : '⌂'));
+        for (const [width, height] of [[375, 553], [390, 664]]) {
+          await page.setViewportSize({ width, height });
+          await sheetSettled(page);
+          assert.equal(await page.locator('body').getAttribute('data-sheet'), 'half');
+          const layout = await page.evaluate(() => {
+            const list = document.querySelector('.listbody')!, panel = document.getElementById('panel')!;
+            const bounds = list.getBoundingClientRect();
+            const bottom = Math.min(bounds.bottom, document.querySelector('.toolbar')!.getBoundingClientRect().top);
+            const rows = [...document.querySelectorAll('#stops .stop')].slice(0, 3).map(row => {
+              const { top, bottom } = row.getBoundingClientRect();
+              return { name: row.querySelector('.stopname')!.textContent, top, bottom };
+            });
+            return { top: bounds.top, bottom, listScroll: list.scrollTop, panelScroll: panel.scrollTop, rows };
           });
-        });
-        assert.ok(visible, `${lang} ${width}×${height}: the origin and first two visits must be fully visible before scrolling`);
-        assert.equal(await page.locator('#reviewDay').isVisible(), false);
+          const visible = layout.rows.filter(row => row.bottom > row.top && row.top >= layout.top - 1 && row.bottom <= layout.bottom + 1);
+          const diagnostic = `${lang} ${width}×${height} ${day.date}: ${JSON.stringify(layout)}`;
+          assert.equal(layout.listScroll, 0, diagnostic);
+          assert.equal(layout.panelScroll, 0, diagnostic);
+          assert.deepEqual(visible.map(row => row.name), day.names.slice(0, 3), diagnostic);
+          assert.equal(await page.locator('#reviewDay').isVisible(), false);
+        }
       }
       const notice = lang === 'en' ? '1 source disconnected' : 'מקור אחד מנותק';
       const label = lang === 'en' ? 'Sources and import' : 'מקורות וייבוא';
