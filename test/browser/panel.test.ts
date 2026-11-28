@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import { chromium, type Page } from 'playwright-core';
 import { journalSchemaVersion } from '../../src/domain/journal-schema.ts';
+import { seedLegacyGuestOnce } from './guest-storage-helpers.ts';
 import { openMenu, restSheet, toggleWholeTrip } from './journal-controls.ts';
 
 // An https origin keeps the page a secure context, as the hosted journal is.
@@ -38,6 +39,29 @@ const dayOfStops = (date: string, names: string[]) => names.map((name, index) =>
   id: 'stop' + index, name, date, time: `${String(9 + index).padStart(2, '0')}:00`, xy: [51.94 - index * .004, 4.48 - index * .002]
 }));
 const harbor = ['North park', 'Old mill', 'Bridge', 'Market hall', 'Museum', 'South pier', 'Lighthouse', 'Ferry dock'];
+
+await test('choosing a pin shows the name of a stop whose note is taller than the landscape panel', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage({ viewport: { width: 667, height: 375 }, hasTouch: true });
+    const date = '2026-06-14';
+    const stops = dayOfStops(date, harbor).map(stop =>
+      stop.name === 'Ferry dock' ? { ...stop, notes: 'Walked along the waterfront. '.repeat(40) } : stop);
+    await hostTrip(page, { id: 'trip', title: 'Harbor', start: date, end: date, stops });
+    await page.locator('.leaflet-marker-icon[title^="Ferry dock"]').click();
+    const chosen = page.locator('#stops .activeStop');
+    const name = chosen.locator('.stopname');
+    assert.equal(await name.innerText(), 'Ferry dock');
+    const panel = (await page.locator('#panel').boundingBox())!;
+    const foot = (await page.locator('.toolbar').boundingBox())!;
+    const row = (await chosen.boundingBox())!;
+    const title = (await name.boundingBox())!;
+    assert.ok(row.height > foot.y - panel.y, 'the note makes the row taller than the available space');
+    assert.ok(title.y >= panel.y && title.y + title.height <= foot.y, 'the selected stop can be read and edited');
+  } finally {
+    await browser.close();
+  }
+});
 
 await test('a long day note scrolls with the stops and leaves them within reach on a short screen', async () => {
   const browser = await chromium.launch();
@@ -89,6 +113,71 @@ await test('a popup bound before the window turned sideways opens clear of the p
       const popup = document.querySelector('.leaflet-popup-content-wrapper')!.getBoundingClientRect();
       return popup.left >= document.getElementById('panel')!.getBoundingClientRect().right;
     });
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('long stop popups fit beside the landscape panel in both languages', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage({ viewport: { width: 600, height: 375 }, hasTouch: true });
+    const date = '2026-06-14';
+    const name = 'The west entrance to the old harbor market and the adjoining covered gardens';
+    await hostTrip(page, {
+      id: 'market', title: 'Harbor market', start: date, end: date,
+      stops: [{ id: 'market', name, date, xy: [51.92, 4.48], address: 'Longstreet'.repeat(18) }]
+    });
+    for (const language of ['en', 'he']) {
+      await page.locator('#languageSwitch').selectOption(language);
+      await page.locator('.leaflet-marker-icon[title^="The west entrance"]').click();
+      await page.waitForFunction(() => {
+        const popup = document.querySelector('.leaflet-popup-content-wrapper')?.getBoundingClientRect();
+        if (!popup) return false;
+        const panel = document.getElementById('panel')!.getBoundingClientRect();
+        return document.documentElement.dir === 'rtl' ? popup.left >= 0 && popup.right <= panel.left
+          : popup.left >= panel.right && popup.right <= innerWidth;
+      });
+      // A real click also checks the panel does not cover the close button.
+      await page.locator('.leaflet-popup-close-button').click();
+      await page.locator('.leaflet-popup').waitFor({ state: 'hidden' });
+    }
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('an open Google Pin stays readable after the sheet rises and after rotation', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true });
+    const date = '2026-06-14';
+    await hostTrip(page, {
+      id: 'saved', title: 'North to south', start: date, end: date,
+      stops: [{ id: 'south', name: 'South pier', date, xy: [51.90, 4.48] }],
+      googlePins: [{ id: 'north', name: 'Northern gardens of the old harbor district', date, xy: [51.96, 4.48] }]
+    });
+    const handle = page.locator('#sheetHandle');
+    await handle.press('ArrowDown');
+    await sheetSettled(page);
+    await page.locator('.google-pin').click();
+    const selector = page.locator('.google-pin-popup select');
+    await selector.waitFor();
+    await handle.press('ArrowUp');
+    await sheetSettled(page);
+    await page.waitForFunction(() => {
+      const popup = document.querySelector('.leaflet-popup-content-wrapper')?.getBoundingClientRect();
+      return popup && popup.top >= document.querySelector('header nav')!.getBoundingClientRect().bottom
+        && popup.bottom <= document.getElementById('panel')!.getBoundingClientRect().top;
+    });
+    await selector.focus();
+    await page.setViewportSize({ width: 600, height: 375 });
+    await page.waitForFunction(() => {
+      const popup = document.querySelector('.leaflet-popup-content-wrapper')?.getBoundingClientRect();
+      return popup && popup.left >= document.getElementById('panel')!.getBoundingClientRect().right
+        && popup.right <= innerWidth && document.activeElement?.matches('.google-pin-popup select');
+    });
+    await page.locator('.leaflet-popup-close-button').click();
   } finally {
     await browser.close();
   }
@@ -351,6 +440,59 @@ await test('at the sizes a phone browser leaves, the half-raised sheet shows the
     await page.locator('#organize').click();
     await page.locator('#status').filter({ hasText: 'Add at least two stops' }).waitFor();
     assert.equal(await page.locator('body').getAttribute('data-sheet'), 'half');
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('the resting portrait journal shows the starting point and two numbered visits with a disconnected source', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage({ viewport: { width: 375, height: 553 }, hasTouch: true });
+    const date = '2026-06-14';
+    const trip = {
+      id: 'guest', title: 'Harbor weekend', start: date, end: date, home: 'Harbor hotel', homeXY: [51.95, 4.49],
+      stops: [
+        ...dayOfStops(date, harbor.slice(0, 6)).map(stop => ({ ...stop, sources: ['card'], count: 1 })),
+        { id: 'remote', name: 'Train booking', date, kind: 'remote', sources: ['email'] }
+      ],
+      checks: { gmail: { status: 'disconnected', start: date, end: date, at: date + 'T12:00:00Z' } }
+    };
+    await seedLegacyGuestOnce(page, { local: JSON.stringify({ trips: [trip] }) });
+    await hostTrip(page, null);
+    const visits = page.locator('#stops .stop');
+    await visits.nth(2).waitFor();
+    assert.deepEqual((await visits.locator('.stopname').allTextContents()).slice(0, 3), ['Harbor hotel', 'North park', 'Old mill']);
+    assert.deepEqual((await visits.locator('.num').allTextContents()).slice(0, 3), ['⌂', '1', '2']);
+    for (const lang of ['en', 'he']) {
+      await page.locator('#languageSwitch').selectOption(lang);
+      for (const [width, height] of [[375, 553], [390, 664]]) {
+        await page.setViewportSize({ width, height });
+        await sheetSettled(page);
+        assert.equal(await page.locator('body').getAttribute('data-sheet'), 'half');
+        const visible = await page.evaluate(() => {
+          const list = document.querySelector('.listbody')!, panel = document.getElementById('panel')!;
+          const top = list.getBoundingClientRect().top;
+          const bottom = Math.min(list.getBoundingClientRect().bottom, document.querySelector('.toolbar')!.getBoundingClientRect().top);
+          return list.scrollTop === 0 && panel.scrollTop === 0 && [...document.querySelectorAll('#stops .stop')].slice(0, 3).every(row => {
+            const box = row.getBoundingClientRect();
+            return box.height > 0 && box.top >= top - 1 && box.bottom <= bottom + 1;
+          });
+        });
+        assert.ok(visible, `${lang} ${width}×${height}: the origin and first two visits must be fully visible before scrolling`);
+        assert.equal(await page.locator('#reviewDay').isVisible(), false);
+      }
+      const notice = lang === 'en' ? '1 source disconnected' : 'מקור אחד מנותק';
+      const label = lang === 'en' ? 'Sources and import' : 'מקורות וייבוא';
+      const sources = page.locator('.toolbar').getByRole('button', { name: label + ' · ' + notice, exact: true });
+      await sources.getByText(notice, { exact: true }).waitFor();
+      await sources.click();
+      assert.equal(await page.locator('#connected').isVisible(), true);
+      await page.locator('#sources [data-close]').click();
+      await restSheet(page, 'full');
+      assert.equal(await page.locator('#status').innerText(), lang === 'en' ? 'Saved on this device' : 'נשמר במכשיר הזה');
+      await restSheet(page, 'half');
+    }
   } finally {
     await browser.close();
   }

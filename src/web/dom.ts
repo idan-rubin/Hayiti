@@ -19,7 +19,7 @@ const tags = {
   'checkRows': 'div',
   'config': 'dialog',
   'connected': 'div',
-  'connections': 'button',
+  'connections': 'span',
   'copyHosted': 'button',
   'copyPrompt': 'button',
   'count': 'span',

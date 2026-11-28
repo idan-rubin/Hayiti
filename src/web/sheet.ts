@@ -13,15 +13,18 @@ export const sheetLayout = '(max-width: 559px), (max-width: 820px) and (min-heig
  * On a wide screen the panel sits beside the route and this height is unused.
  * `behind` is what a full sheet covers. `onSettle` runs after the traveler moves the sheet.
  */
-export function createSheet(panel: HTMLElement, handle: HTMLButtonElement, behind: HTMLElement, peek: () => number, onSettle: () => void) {
+export function createSheet(panel: HTMLElement, handle: HTMLButtonElement, behind: HTMLElement, peek: () => number, preview: () => number, onSettle: () => void) {
   const narrow = matchMedia(sheetLayout);
+  const portrait = matchMedia('(orientation: portrait) and (min-height: 541px) and (max-width: 820px)');
   let stop: SheetStop = 'half',
     drag: { y: number, height: number, moved: boolean } | null = null,
     dragged = false;
   // The full sheet leaves the bar above it uncovered. The lowest stop is as tall as the caller says the trip's heading is.
   const heights = () => {
     const full = Math.max(240, innerHeight - 64);
-    return { peek: Math.min(full, Math.max(96, peek())), half: Math.round(innerHeight * .55), full };
+    // Fit the first visits at rest when possible, leaving at least 30% of a portrait screen for the map.
+    const day = portrait.matches ? Math.min(preview(), innerHeight * .70) : 0;
+    return { peek: Math.min(full, Math.max(96, peek())), half: Math.ceil(Math.max(innerHeight * .55, day)), full };
   };
   const setHeight = (pixels: number) => document.documentElement.style.setProperty('--sheet', pixels + 'px');
   function rest(next: SheetStop) {

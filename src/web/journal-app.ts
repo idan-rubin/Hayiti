@@ -129,6 +129,11 @@ const overlay = L.layerGroup().addTo(map);
 const rows = new Map<string, HTMLElement>(),
   marks = new Map<string, MapMarker>();
 let popupFor = '';
+let openPopup: MapPopup | undefined;
+map.on('popupopen', event => { openPopup = event.popup; });
+map.on('popupclose', event => {
+  if (openPopup === event.popup) openPopup = undefined;
+});
 let overviewTripId = '';
 let routeBounds = L.latLngBounds([]),
   fitFrame = 0;
@@ -137,6 +142,12 @@ const sheet = createSheet($('panel'), $('sheetHandle'), map.getContainer().paren
   const dates = $('dayReel').parentElement!;
   const last = dates.hidden ? $('range') : dates.parentElement!;
   return last.offsetTop + last.offsetHeight;
+}, () => {
+  const third = $('stops').querySelector<HTMLElement>(':scope > .stop:nth-child(3)');
+  if (!third) return 0;
+  const list = third.closest<HTMLElement>('.listbody')!;
+  const toolbar = $('panel').querySelector<HTMLElement>('.toolbar')!;
+  return third.getBoundingClientRect().bottom + list.scrollTop - $('panel').getBoundingClientRect().top + toolbar.offsetHeight + 2;
 }, () => fitRoute());
 const mapSection = map.getContainer().parentElement!,
   mapControls = document.querySelector<HTMLElement>('.map-controls')!;
@@ -187,6 +198,9 @@ function fitRoute() {
     const covered = coveredEdges();
     popupOptions.autoPanPaddingTopLeft.splice(0, 2, covered.left + 8, covered.top + 8);
     popupOptions.autoPanPaddingBottomRight.splice(0, 2, covered.right + 8, covered.bottom + 8);
+    const mapStyle = map.getContainer().style;
+    mapStyle.setProperty('--popup-room-width', (width - covered.left - covered.right - 16) + 'px');
+    mapStyle.setProperty('--popup-room-height', (height - covered.top - covered.bottom - 16) + 'px');
     map.stop();
     map.invalidateSize({
       pan: false,
@@ -219,9 +233,17 @@ function fitRoute() {
     }
     // Opening after the fit lets the map pan just enough to show the whole popup.
     const mark = marks.get(popupFor);
+    popupFor = '';
     if (mark) {
       map.closePopup();
       mark.openPopup();
+    } else if (openPopup) {
+      // Leaflet rebuilds the popup content when it measures and pans it. Keep focus on the same control.
+      const element = openPopup.getElement();
+      const controls = 'a, button, select';
+      const focused = Array.from(element.querySelectorAll(controls)).indexOf(document.activeElement!);
+      openPopup.update();
+      if (focused >= 0) element.querySelectorAll<HTMLElement>(controls)[focused]?.focus({ preventScroll: true });
     }
   });
 }
@@ -349,8 +371,11 @@ function showConnections() {
     chip.textContent = ui('Connections', 'חיבורים');
     delete chip.dataset.notice;
   }
-  // Without a notice the chip only repeats Sources and import.
   chip.hidden = !!sharedRoute || !chip.dataset.notice;
+  const label = t('מקורות וייבוא');
+  const sourceButton = $('import');
+  sourceButton.setAttribute('aria-label', chip.hidden ? label : label + ' · ' + chip.textContent);
+  sourceButton.title = chip.hidden ? '' : chip.textContent;
 }
 function render() {
   const { trip, day } = session;
@@ -384,8 +409,6 @@ function render() {
   }));
   document.body.classList.toggle('no-trip', !trip);
   $('welcome').hidden = !!trip || !!sharedRoute || !journalReady || session.mode === 'portable-recovery';
-  // The heading above the list may have grown or shrunk, and the lowered sheet is as tall as that heading.
-  sheet.relabel();
   draw();
 }
 const stopCount = (count: number) => count === 1 ? t('תחנה אחת') : count + t(' תחנות');
@@ -661,6 +684,8 @@ function draw() {
   $('dayNote').textContent = overview ? '' : trip?.dayNotes?.[day] || '';
   $('dayNote').hidden = !$('dayNote').textContent;
   renderDayDetails(details);
+  // Measure the new heading, stops and actions together before the scheduled map fit.
+  sheet.relabel();
 }
 
 function reviewExplanation(stop: Stop) {
@@ -762,7 +787,8 @@ function reveal(id: string, target: 'row' | 'pin') {
       box = row.getBoundingClientRect();
     const top = ownScroll ? shown.top : shown.top + $('sheetHandle').offsetHeight;
     const bottom = ownScroll || !foot?.offsetHeight ? shown.bottom : foot.getBoundingClientRect().top;
-    if (box.top < top) scroller.scrollTop -= top - box.top;
+    // If a long note cannot fit, show the stop's name and controls at the top of its row.
+    if (box.top < top || box.height > bottom - top) scroller.scrollTop += box.top - top;
     else if (box.bottom > bottom) scroller.scrollTop += box.bottom - bottom;
     return;
   }
@@ -770,9 +796,6 @@ function reveal(id: string, target: 'row' | 'pin') {
   popupFor = id;
   map.closePopup();
   viewList(false);
-  setTimeout(() => {
-    if (popupFor === id) popupFor = '';
-  }, 600);
 }
 // Temporary memory edits need a backup before leaving this document.
 const tabOnly = () => session.mode === 'memory' || (session.mode === 'guest' && session.guestPersistence === 'memory');
@@ -800,7 +823,7 @@ function noTimeCopy() {
     return notice + ' ' + ui('Allow site storage and open Hayiti in a new tab to check for saved trips.',
       'אפשרו לאתר לשמור נתונים ופתחו את Hayiti בלשונית חדשה כדי לראות אילו טיולים שמורים.') + ' ' + temporary;
   }
-  return t(portable ? session.mode === 'portable' ? 'נשמר בדפדפן הזה.' : 'השינויים בזיכרון הלשונית. לשמירה יש להוריד גיבוי.' : session.mode === 'account' ? 'השינויים נשמרו ביומן האישי.' : 'השינויים נשמרו בדפדפן הזה. כדי לשמור אותם בין מכשירים נכנסים עם ChatGPT.');
+  return t(portable ? session.mode === 'portable' ? 'נשמר בדפדפן הזה.' : 'השינויים בזיכרון הלשונית. לשמירה יש להוריד גיבוי.' : session.mode === 'account' ? 'השינויים נשמרו ביומן האישי.' : 'נשמר במכשיר הזה');
 }
 let viewRequest = 0,
   loadedHosted = false;
@@ -1605,10 +1628,6 @@ $('export').onclick = () => {
   a.click();
   unbacked.delete(trip.id);
   setTimeout(() => URL.revokeObjectURL(u), 1000);
-};
-$('connections').onclick = () => {
-  $('sources').showModal();
-  tab('connected');
 };
 $('import').onclick = () => {
   $('sources').showModal();

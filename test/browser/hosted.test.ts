@@ -984,7 +984,7 @@ await test('a trip made without signing in is still there in a new tab, and both
     await hostJournal(first, guestAPI);
     await first.goto(origin + '/journal.html?lang=en');
     await createTrip(first, 'Guest trip');
-    await first.locator('#status').filter({ hasText: 'saved in this browser' }).waitFor();
+    await first.locator('#status').filter({ hasText: 'Saved on this device' }).waitFor();
     // The trip is kept, so leaving needs no warning.
     assert.equal(await first.evaluate(() => {
       const leaving = new Event('beforeunload', { cancelable: true });

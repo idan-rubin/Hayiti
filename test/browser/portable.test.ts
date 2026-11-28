@@ -157,7 +157,7 @@ await test('an empty search, a missing payment account and a disconnected source
         buffer: Buffer.from(JSON.stringify({ format: 'hayiti/1', trip }))
       });
       await page.locator('#preview button').click();
-      await page.getByRole('button', { name: summary, exact: true }).click();
+      await page.getByRole('button', { name: 'Sources and import · ' + summary, exact: true }).click();
       await page.getByText(detail, { exact: false }).waitFor();
       await page.locator('#sources [data-close]').click();
     }
@@ -1264,6 +1264,7 @@ await test('one daily details panel keeps unlocated visits, unconfirmed attendan
       if (!localStorage.getItem(key)) localStorage.setItem(key, JSON.stringify({ trips: [seed] }));
     }, trip);
     await page.goto(new URL('../../dist/web/Hayiti.html?lang=he', import.meta.url).href);
+    await restSheet(page, 'full');
     await page.locator('#reviewDay').click();
     assert.equal(await page.locator('#otherSummary').innerText(), 'מידע נוסף לאותו יום (5)');
     assert.equal(await page.locator('#otherSummary').evaluate(el => document.activeElement === el), true);
