@@ -129,11 +129,11 @@ let overviewTripId = '';
 let routeBounds = L.latLngBounds([]),
   fitFrame = 0;
 // Lowered all the way, the sheet still shows the trip and its days.
-const sheet = createSheet($('panel'), $('sheetHandle'), () => {
+const sheet = createSheet($('panel'), $('sheetHandle'), map.getContainer().parentElement!, () => {
   const days = $('dayStrip').parentElement!;
   const last = days.hidden ? $('status').textContent ? $('status') : $('range') : days;
   return last.offsetTop + last.offsetHeight;
-});
+}, () => fitRoute());
 const mapControls = document.querySelector<HTMLElement>('.map-controls');
 // The map fills the window behind the bar, the map controls and the panel. A route is fitted to what they leave clear.
 function coveredEdges() {
@@ -154,7 +154,8 @@ function coveredEdges() {
   const beside = (onRight ? box.right - panel.left : panel.right - box.left) + 6;
   return { top, left: onRight ? 0 : beside, right: onRight ? beside : 0, bottom: foot };
 }
-// Leaflet reads these shared pairs when a popup opens, including markers created while the map was covered.
+// Leaflet keeps the pairs a popup was bound with and reads them when it opens. Every popup shares these two,
+// and a fit updates them in place, so a popup bound before a resize or a rotation keeps clear of the panel after it.
 const popupOptions: PopupOptions = { autoPanPaddingTopLeft: [8, 8], autoPanPaddingBottomRight: [8, 8] };
 function fitRoute() {
   if (fitFrame) return;
@@ -166,8 +167,8 @@ function fitRoute() {
     } = map.getContainer();
     if (!width || !height) return;
     const covered = coveredEdges();
-    popupOptions.autoPanPaddingTopLeft = [covered.left + 8, covered.top + 8];
-    popupOptions.autoPanPaddingBottomRight = [covered.right + 8, covered.bottom + 8];
+    popupOptions.autoPanPaddingTopLeft.splice(0, 2, covered.left + 8, covered.top + 8);
+    popupOptions.autoPanPaddingBottomRight.splice(0, 2, covered.right + 8, covered.bottom + 8);
     map.stop();
     map.invalidateSize({
       pan: false,
@@ -354,6 +355,10 @@ function render() {
     const count = trip?.stops.filter(stop => stop.date === date && stop.kind !== 'origin' && isMappedStop(stop)).length ?? 0;
     const details = dayDetails(trip, date).length;
     return [count ? stopCount(count) : '', details ? quantity(details, details === 1 ? ' רשומה' : ' רשומות', 'entry', 'entries') : ''].filter(Boolean).join(' · ');
+  }), days.map(date => {
+    // A saved place or a note is something recorded for the day, though neither is a stop on its route.
+    const pins = trip?.googlePins?.filter(pin => pin.date === date).length ?? 0;
+    return [pins ? quantity(pins, ' סיכות Google', 'Google Pin', 'Google Pins') : '', trip?.dayNotes?.[date] ? ui('Note', 'הערה') : ''].filter(Boolean).join(' · ');
   }));
   document.body.classList.toggle('no-trip', !trip);
   $('welcome').hidden = !!trip || !!sharedRoute || !journalReady || session.mode === 'portable-recovery';
@@ -1540,11 +1545,13 @@ for (const dialog of document.querySelectorAll('dialog')) {
 }
 enableSharing(() => session.trip, portable, () => session.day, () => session.mode === 'account');
 $('logout').onclick = async () => {
+  // The question closes the menu that holds Sign out. Moving to the button that opens the menu first
+  // gives the question a place to return the keyboard to when it is answered.
+  $('menu').hidePopover();
+  $('menuButton').focus();
   const confirmed = ask(ui('Sign out of hayiti?', 'לצאת מהחשבון?'), t('יציאה מהחשבון'));
   $('confirmNo').focus();
   if (await confirmed) window.open('/signout-with-chatgpt?return_to=%2Fjournal.html', '_top');
-  // The question closed the menu that held Sign out, so the keyboard returns to the button that opens it.
-  else $('menuButton').focus();
 };
 $('export').onclick = () => {
   const { trip } = session;

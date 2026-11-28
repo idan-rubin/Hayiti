@@ -52,7 +52,8 @@ export function createDayStrip(strip: HTMLElement, menu: HTMLSelectElement, prog
   });
   menu.addEventListener('change', () => select(menu.selectedIndex, true));
   return {
-    set(list: string[], selected: string, notes: string[] = []) {
+    /** `notes` name the stops and entries of each day. `extras` name what else is recorded for it, outside its route. */
+    set(list: string[], selected: string, notes: string[] = [], extras: string[] = []) {
       dates = list;
       const weekday = new Intl.DateTimeFormat(locale(), { weekday: language === 'he' ? 'narrow' : 'short', timeZone: 'UTC' });
       const month = new Intl.DateTimeFormat(locale(), { month: 'short', timeZone: 'UTC' });
@@ -65,9 +66,9 @@ export function createDayStrip(strip: HTMLElement, menu: HTMLSelectElement, prog
           number = document.createElement('b');
         button.type = 'button';
         button.dataset.day = day;
-        button.setAttribute('aria-label', [labels[index], notes[index], progressLabel(index)].filter(Boolean).join(' · '));
+        button.setAttribute('aria-label', [labels[index], notes[index], extras[index], progressLabel(index)].filter(Boolean).join(' · '));
         // A dot marks a day that has something recorded.
-        if (notes[index]) button.dataset.recorded = '';
+        if (notes[index] || extras[index]) button.dataset.recorded = '';
         name.textContent = weekday.format(date);
         number.textContent = String(date.getUTCDate());
         button.append(name, number);

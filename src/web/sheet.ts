@@ -2,12 +2,15 @@ import { language } from './language.ts';
 
 export type SheetStop = 'peek' | 'half' | 'full';
 
+const order: SheetStop[] = ['peek', 'half', 'full'];
+
 /**
- * On a narrow screen the panel is a sheet over the map. It rests at one of three heights,
- * chosen with the handle: a tap steps between them and a drag settles on the nearest.
+ * On a narrow screen the panel is a sheet over the map. It rests at one of three heights, chosen with the handle:
+ * a tap raises or lowers it, a drag settles on the nearest height, and the up and down arrow keys step through all three.
  * On a wide screen the panel sits beside the route and this height is unused.
+ * `behind` is what a full sheet covers. `onSettle` runs after the traveler moves the sheet.
  */
-export function createSheet(panel: HTMLElement, handle: HTMLButtonElement, peek: () => number) {
+export function createSheet(panel: HTMLElement, handle: HTMLButtonElement, behind: HTMLElement, peek: () => number, onSettle: () => void) {
   const narrow = matchMedia('(max-width: 820px)');
   let stop: SheetStop = 'half',
     drag: { y: number, height: number, moved: boolean } | null = null,
@@ -22,10 +25,16 @@ export function createSheet(panel: HTMLElement, handle: HTMLButtonElement, peek:
     stop = next;
     document.body.dataset.sheet = next;
     setHeight(heights()[next]);
+    // A full sheet covers the map, so the keyboard skips the controls and pins behind it.
+    behind.inert = narrow.matches && next === 'full';
     handle.setAttribute('aria-expanded', String(next === 'full'));
     handle.setAttribute('aria-label', next === 'full'
       ? language === 'he' ? 'הקטנת הרשימה כדי לראות את המפה' : 'Lower the list to see the map'
       : language === 'he' ? 'הגדלת הרשימה' : 'Raise the list');
+  }
+  function settle(next: SheetStop) {
+    rest(next);
+    onSettle();
   }
   handle.addEventListener('pointerdown', event => {
     drag = { y: event.clientY, height: panel.getBoundingClientRect().height, moved: false };
@@ -48,14 +57,21 @@ export function createSheet(panel: HTMLElement, handle: HTMLButtonElement, peek:
     if (!dragged) return;
     const height = panel.getBoundingClientRect().height;
     const nearest = Object.entries(heights()).sort((a, b) => Math.abs(a[1] - height) - Math.abs(b[1] - height))[0][0];
-    rest(nearest as SheetStop);
+    settle(nearest as SheetStop);
   }
   handle.addEventListener('pointerup', release);
   handle.addEventListener('pointercancel', release);
   handle.addEventListener('click', () => {
     // The click that ends a drag has already been answered.
     if (dragged) dragged = false;
-    else rest(stop === 'half' ? 'full' : 'half');
+    else settle(stop === 'half' ? 'full' : 'half');
+  });
+  handle.addEventListener('keydown', event => {
+    const step = event.key === 'ArrowUp' ? 1 : event.key === 'ArrowDown' ? -1 : 0;
+    if (!step) return;
+    event.preventDefault();
+    const next = order[Math.max(0, Math.min(order.length - 1, order.indexOf(stop) + step))];
+    if (next !== stop) settle(next);
   });
   addEventListener('resize', () => rest(stop));
   rest(stop);

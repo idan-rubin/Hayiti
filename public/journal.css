@@ -426,7 +426,11 @@ button.stopname:hover { background: none }
 [data-portable] .chat-first, html:not([data-portable]) .file-first { display: none }
 
 /* The day's actions, at the foot of the panel */
-.toolbar { flex: none; padding: 10px 12px; border-top: 1px solid var(--line); background: var(--paper) }
+.toolbar { flex: none; flex-wrap: nowrap; padding: 10px 12px; border-top: 1px solid var(--line); background: var(--paper) }
+/* The three actions share one row. Where a wide typeface leaves too little room, the middle one gives way. */
+.toolbar button { flex: none; white-space: nowrap }
+#import { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis }
+.action-short { display: none }
 #organize { margin-inline-start: auto; border-color: transparent; background: transparent; color: var(--muted) }
 #organize:hover:not(:disabled) { background: var(--wash); color: var(--pine) }
 /* What the sources need, said once at the head of the list. It opens Sources and import. */
@@ -560,10 +564,14 @@ label input, label textarea, label select { width: 100%; font-size: var(--body) 
 @media (max-width: 820px) and (pointer: coarse) {
   .leaflet-control-zoom { display: none }
 }
-/* On the narrowest phones the day's three actions still share one row. */
-@media (max-width: 359px) {
+/* A small phone tightens the day's actions, and on the narrowest Sources and import takes its short name. */
+@media (max-width: 379px) {
   .toolbar { gap: 6px; padding-inline: 10px }
   .toolbar button:not(.icon) { padding-inline: .55rem }
+}
+@media (max-width: 359px) {
+  .toolbar .action-full { display: none }
+  .toolbar .action-short { display: inline }
 }
 @media (pointer: coarse) {
   :root { --bar: 2.75rem }
