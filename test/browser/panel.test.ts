@@ -690,7 +690,6 @@ await test('a trip name a little too long for the panel is set smaller on one li
     const fitted = await title();
     assert.deepEqual({ lines: fitted.lines, fits: fitted.fits }, { lines: 1, fits: true });
     assert.ok(fitted.size < short.size && fitted.size >= short.size * .75, `set smaller, within a quarter: ${fitted.size} of ${short.size}`);
-    // Upright the panel is wider, and the name returns to its full size.
     await page.setViewportSize({ width: 412, height: 780 });
     await page.waitForFunction(size => parseFloat(getComputedStyle(document.getElementById('title')!).fontSize) === size, short.size);
     assert.equal((await title()).lines, 1);

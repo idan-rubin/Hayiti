@@ -378,7 +378,6 @@ function showConnections() {
   sourceButton.setAttribute('aria-label', chip.hidden ? label : label + ' · ' + chip.textContent);
   sourceButton.title = chip.hidden ? '' : chip.textContent;
 }
-// A name a little too long for its line is set smaller. One that would need to shrink by over a quarter wraps at full size.
 function fitTitle() {
   const title = $('title'),
     row = title.parentElement!,
