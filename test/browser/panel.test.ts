@@ -685,7 +685,21 @@ await test('a trip name a little too long for the panel is set smaller on one li
     const short = await title();
     assert.equal(short.lines, 1);
 
-    await hostTrip(page, trip('A Thursday in Tel Aviv'));
+    const sentence = 'Two unhurried weeks along the old harbor and the northern gardens';
+    const slightlyLong = await page.locator('#title').evaluate((el, text) => {
+      const shown = el.textContent, room = el.parentElement!.getBoundingClientRect().width;
+      el.style.whiteSpace = 'nowrap';
+      const lengths = Array.from(text, (_, index) => index + 1).filter(length => {
+        el.textContent = text.slice(0, length);
+        const over = el.getBoundingClientRect().width / room;
+        return text[length - 1] !== ' ' && over > 1.05 && over < 1.2;
+      });
+      el.style.whiteSpace = '';
+      el.textContent = shown;
+      return text.slice(0, lengths[0]);
+    }, sentence);
+    assert.ok(slightlyLong, 'some part of the sentence is 5 to 20 percent wider than the line');
+    await hostTrip(page, trip(slightlyLong));
     await page.locator('#stops .stop').first().waitFor();
     const fitted = await title();
     assert.deepEqual({ lines: fitted.lines, fits: fitted.fits }, { lines: 1, fits: true });
@@ -695,7 +709,7 @@ await test('a trip name a little too long for the panel is set smaller on one li
     assert.equal((await title()).lines, 1);
 
     await page.setViewportSize({ width: 667, height: 375 });
-    await hostTrip(page, trip('Two unhurried weeks along the old harbor and the northern gardens'));
+    await hostTrip(page, trip(sentence));
     await page.locator('#stops .stop').first().waitFor();
     const long = await title();
     assert.equal(long.size, short.size);
