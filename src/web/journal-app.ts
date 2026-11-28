@@ -378,6 +378,27 @@ function showConnections() {
   sourceButton.setAttribute('aria-label', chip.hidden ? label : label + ' · ' + chip.textContent);
   sourceButton.title = chip.hidden ? '' : chip.textContent;
 }
+// A name a little too long for its line is set smaller. One that would need to shrink by over a quarter wraps at full size.
+function fitTitle() {
+  const title = $('title'),
+    row = title.parentElement!,
+    arrow = row.lastElementChild as HTMLElement,
+    before = title.style.fontSize;
+  title.style.fontSize = '';
+  title.style.whiteSpace = 'nowrap';
+  const room = row.getBoundingClientRect().width - (arrow.offsetWidth ? arrow.offsetWidth + parseFloat(getComputedStyle(row).columnGap) : 0);
+  const full = parseFloat(getComputedStyle(title).fontSize);
+  const tooWide = () => title.getBoundingClientRect().width > room;
+  // The system font spaces its letters differently at each size, so the width is measured at every step.
+  for (let size = full - .5; tooWide() && size >= full * .75; size -= .5) title.style.fontSize = size + 'px';
+  if (tooWide()) title.style.fontSize = '';
+  title.style.whiteSpace = '';
+  return title.style.fontSize !== before;
+}
+new ResizeObserver(() => {
+  if (fitTitle()) sheet.relabel();
+}).observe($('title').parentElement!);
+let shownTripId = '';
 function render() {
   const { trip, day } = session;
   if (trip?.id !== overviewTripId) overviewTripId = '';
@@ -397,6 +418,7 @@ function render() {
   if (trip) $('trips').value = trip.id;
   $('title').textContent = $('trips').selectedOptions[0]?.text ?? t('הטיולים שלי');
   $('trips').hidden = session.trips.length < 2;
+  fitTitle();
   for (const id of ['add', 'export', 'settings', 'organize'] as const) $(id).disabled = !trip;
   const days = trip ? dateRange(trip) : [];
   setDates(days, day, days.map(date => {
@@ -411,6 +433,11 @@ function render() {
   document.body.classList.toggle('no-trip', !trip);
   $('welcome').hidden = !!trip || !!sharedRoute || !journalReady || session.mode === 'portable-recovery';
   draw();
+  if ((trip?.id ?? '') !== shownTripId) {
+    shownTripId = trip?.id ?? '';
+    document.querySelector<HTMLElement>('.listbody')!.scrollTop = 0;
+    $('panel').scrollTop = 0;
+  }
 }
 const stopCount = (count: number) => count === 1 ? t('תחנה אחת') : count + t(' תחנות');
 const { setDates, showWholeTrip } = createDateReel($('dayReel'), $('tripDate'), $('dayProgress'), dateLabel, next => {

@@ -290,7 +290,7 @@ await test('a phone held sideways shows the panel beside the map, with the route
         };
       });
       assert.deepEqual(opening, { firstStop: true, heading: false, count: true, closing: true }, `${lang}: the panel opens on the day`);
-      assert.equal(await page.locator('#dayProgress').innerText(), '');
+      assert.equal(await page.locator('#dayProgress').innerText(), lang === 'he' ? 'יום 1 מתוך 1' : 'Day 1 of 1');
       assert.ok(panel.width <= 667 / 2 && panel.height > 375 / 2, `${lang}: the panel is a column`);
       assert.ok(lang === 'he' ? panel.x + panel.width > 667 - 16 : panel.x < 16, `${lang}: the panel sits where reading starts`);
       // The whole route is drawn on the part of the map beside it, under the bar.
@@ -663,6 +663,63 @@ await test('the keyboard never lands under the day\'s actions in a short panel, 
       assert.deepEqual(fields.filter(name => ['notes', 'photo', 'pick'].includes(name)), ['pick', 'notes', 'photo'], `${width}x${height}: the fields under the fold were reached`);
       await page.keyboard.press('Escape');
       await form.waitFor({ state: 'hidden' });
+    }
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('a trip name a little too long for the panel is set smaller on one line, and a much longer one wraps at full size', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage({ viewport: { width: 667, height: 375 }, hasTouch: true });
+    const date = '2026-06-14';
+    const trip = (title: string) => ({ id: 'trip', title, start: date, end: date, stops: dayOfStops(date, harbor.slice(0, 2)) });
+    const title = () => page.locator('#title').evaluate(el => {
+      const style = getComputedStyle(el);
+      const lines = Math.round((el.getBoundingClientRect().height - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom)) / parseFloat(style.lineHeight));
+      return { size: parseFloat(style.fontSize), lines, fits: el.scrollWidth <= el.clientWidth };
+    });
+    await hostTrip(page, trip('Harbor'));
+    await page.locator('#stops .stop').first().waitFor();
+    const short = await title();
+    assert.equal(short.lines, 1);
+
+    await hostTrip(page, trip('A Thursday in Tel Aviv'));
+    await page.locator('#stops .stop').first().waitFor();
+    const fitted = await title();
+    assert.deepEqual({ lines: fitted.lines, fits: fitted.fits }, { lines: 1, fits: true });
+    assert.ok(fitted.size < short.size && fitted.size >= short.size * .75, `set smaller, within a quarter: ${fitted.size} of ${short.size}`);
+    // Upright the panel is wider, and the name returns to its full size.
+    await page.setViewportSize({ width: 412, height: 780 });
+    await page.waitForFunction(size => parseFloat(getComputedStyle(document.getElementById('title')!).fontSize) === size, short.size);
+    assert.equal((await title()).lines, 1);
+
+    await page.setViewportSize({ width: 667, height: 375 });
+    await hostTrip(page, trip('Two unhurried weeks along the old harbor and the northern gardens'));
+    await page.locator('#stops .stop').first().waitFor();
+    const long = await title();
+    assert.equal(long.size, short.size);
+    assert.ok(long.lines > 1, 'the whole name shows, on more than one line');
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('the sample trip opens on its name and first stop, however far the welcome was scrolled', async () => {
+  const browser = await chromium.launch();
+  try {
+    for (const [width, height] of [[375, 553], [667, 375]]) {
+      const page = await browser.newPage({ viewport: { width, height }, hasTouch: true });
+      await hostTrip(page, null);
+      const sample = page.locator('#trySample');
+      await sample.scrollIntoViewIfNeeded();
+      const scrolled = () => page.evaluate(() => document.querySelector('.listbody')!.scrollTop + document.getElementById('panel')!.scrollTop);
+      assert.ok(await scrolled() > 0, `${width}×${height}: the welcome is scrolled to reach the button`);
+      await sample.click();
+      await page.locator('#stops .stop').first().waitFor();
+      assert.equal(await scrolled(), 0, `${width}×${height}: the trip starts at the top`);
+      await page.close();
     }
   } finally {
     await browser.close();

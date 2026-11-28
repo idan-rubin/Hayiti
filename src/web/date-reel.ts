@@ -13,9 +13,9 @@ export function createDateReel(reel: HTMLElement, menu: HTMLSelectElement, progr
     // In the overview every date, including the previously selected one, is a new choice.
     menu.selectedIndex = wholeTripLabel ? -1 : index;
     reel.setAttribute('aria-valuenow', String(index + 1));
-    const label = dates.length > 1 ? progressLabel(index) : '';
+    const label = progressLabel(index);
     progress.textContent = label;
-    reel.setAttribute('aria-valuetext', wholeTripLabel || [menu.options[index].text, label].filter(Boolean).join(', '));
+    reel.setAttribute('aria-valuetext', wholeTripLabel || menu.options[index].text + ', ' + label);
     if (notify) onChange(dates[index]);
   }
   function paint() {
