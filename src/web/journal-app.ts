@@ -6,8 +6,8 @@ import { language, locale, bindLanguageControl } from './language.ts';
 import { displayTripTitle, messages, t, quantity } from './journal-messages.ts';
 import { enableSharing } from './share-ui.ts';
 import { routeStops, dayDetails, isMappedStop, indexEdges, suggest, walkingStats } from '../domain/daily-route.ts';
-import { createDayStrip } from './day-strip.ts';
-import { createSheet } from './sheet.ts';
+import { createDateReel } from './date-reel.ts';
+import { createSheet, sheetLayout } from './sheet.ts';
 import { fitPadding } from './map-fit.ts';
 import { cleanTrip, cleanStop, mergeGooglePins, removeGooglePin, restoreGooglePin, mergeStops, combineEvidence, journalCharacterLimit, unidentifiedMerchant } from '../domain/core.ts';
 import { importEvidencePackage, prepareTripBackup, importCsv, importIcs, pastedStop } from '../domain/importers.ts';
@@ -88,18 +88,23 @@ let selected = '',
   creating = false;
 type Tone = '' | 'warning' | 'error';
 let currentStatus = () => '',
-  currentTone: Tone = '';
-let heldStatus: [() => string, Tone] | null = null;
-function msg(message: string | (() => string), tone: Tone = '') {
+  currentTone: Tone = '',
+  currentStanding = false;
+let heldStatus: [() => string, Tone, boolean] | null = null;
+// A standing line says where the journal is kept and that nothing is waiting. It is the same after every save,
+// so a small screen sets it aside for the stops. News about what just happened is never set aside.
+function msg(message: string | (() => string), tone: Tone = '', standing = false) {
   heldStatus = null;
   currentStatus = typeof message === 'function' ? message : () => t(message);
   currentTone = tone;
+  currentStanding = standing;
   $('status').textContent = currentStatus();
   $('status').dataset.tone = tone;
+  $('status').toggleAttribute('data-standing', standing);
 }
 // A hint answers the last action. The status it covered returns when the traveler moves on.
 function hint(message: () => string, tone: Tone = '') {
-  const held = heldStatus ?? [currentStatus, currentTone];
+  const held = heldStatus ?? [currentStatus, currentTone, currentStanding];
   msg(message, tone);
   heldStatus = held;
 }
@@ -131,11 +136,25 @@ let routeBounds = L.latLngBounds([]),
   fitFrame = 0;
 // Lowered all the way, the sheet still shows the trip and its days.
 const sheet = createSheet($('panel'), $('sheetHandle'), map.getContainer().parentElement!, () => {
-  const days = $('dayStrip').parentElement!;
-  const last = days.hidden ? $('status').textContent ? $('status') : $('range') : days;
+  // Lowered, the sheet shows the trip's name and the date reel under it.
+  const dates = $('dayReel').parentElement!;
+  const last = dates.hidden ? $('range') : dates.parentElement!;
   return last.offsetTop + last.offsetHeight;
 }, () => fitRoute());
-const mapControls = document.querySelector<HTMLElement>('.map-controls');
+const mapSection = map.getContainer().parentElement!,
+  mapControls = document.querySelector<HTMLElement>('.map-controls')!;
+// Over a sheet the map is a short band, and a control of its own would take a strip of it. There the map style
+// is a row of the menu. Beside a panel it stays on the map, where one tap changes it.
+const sheetWidth = matchMedia(sheetLayout);
+function placeMapStyle() {
+  if (sheetWidth.matches) $('menu').insertBefore(mapControls, $('export'));
+  else mapSection.insertBefore(mapControls, mapSection.querySelector('.legend'));
+}
+placeMapStyle();
+sheetWidth.addEventListener('change', () => {
+  placeMapStyle();
+  fitRoute();
+});
 // The map fills the window behind the bar, the map controls and the panel. A route is fitted to what they leave clear.
 function coveredEdges() {
   const box = map.getContainer().getBoundingClientRect();
@@ -143,11 +162,16 @@ function coveredEdges() {
     const rect = element?.getBoundingClientRect();
     return rect?.height ? rect.bottom - box.top + 6 : 0;
   };
-  const top = Math.max(bottomOf(document.querySelector('header nav')), bottomOf(mapControls));
-  // The legend lies over the foot of the map. On a narrow screen it rides above the sheet.
-  const legend = document.querySelector('.legend')?.getBoundingClientRect();
-  const foot = legend?.height ? box.bottom - legend.top + 6 : 0;
-  if (sheet.narrow) return { top, left: 0, right: 0, bottom: Math.max(sheet.cover, foot) };
+  // Inside the menu the map style covers nothing of the map, open or closed.
+  const top = Math.max(bottomOf(document.querySelector('header nav')), mapControls.parentElement === mapSection ? bottomOf(mapControls) : 0);
+  // The legend and the map credit lie over the foot of the map. Over a sheet they ride on top of it,
+  // so there they count for as far as they rise above it.
+  const above = (element: Element | null) => {
+    const rect = element?.getBoundingClientRect();
+    return rect?.height ? box.bottom - rect.top + 6 : 0;
+  };
+  const foot = Math.max(0, Math.max(above(document.querySelector('.legend')), above(map.getContainer().querySelector('.leaflet-control-attribution'))) - sheet.height);
+  if (sheet.narrow) return { top, left: 0, right: 0, bottom: sheet.cover + foot };
   const panel = $('panel').getBoundingClientRect();
   if (!panel.width) return { top, left: 0, right: 0, bottom: foot };
   // The panel follows the reading direction, so it covers the left edge in English and the right edge in Hebrew.
@@ -242,6 +266,8 @@ const basemap = addStreetMap(map, () => language, problem => {
 $('mapStyle').onchange = () => {
   const value = $('mapStyle').value;
   if (isBasemap(value)) basemap.select(value);
+  // Chosen from the menu, the new map shows as soon as the menu is out of its way.
+  if ($('menu').matches(':popover-open')) $('menu').hidePopover();
 };
 const sourceNames = {
   finances: 'Finances',
@@ -355,7 +381,7 @@ function render() {
   $('trips').hidden = session.trips.length < 2;
   for (const id of ['add', 'export', 'settings', 'organize'] as const) $(id).disabled = !trip;
   const days = trip ? dateRange(trip) : [];
-  dayStrip.set(days, day, days.map(date => {
+  setDates(days, day, days.map(date => {
     const count = trip?.stops.filter(stop => stop.date === date && stop.kind !== 'origin' && isMappedStop(stop)).length ?? 0;
     const details = dayDetails(trip, date).length;
     return [count ? stopCount(count) : '', details ? quantity(details, details === 1 ? ' רשומה' : ' רשומות', 'entry', 'entries') : ''].filter(Boolean).join(' · ');
@@ -371,13 +397,15 @@ function render() {
   draw();
 }
 const stopCount = (count: number) => count === 1 ? t('תחנה אחת') : count + t(' תחנות');
-const dayStrip = createDayStrip($('dayStrip'), $('tripDate'), $('dayProgress'), dateLabel, next => {
+const setDates = createDateReel($('dayReel'), $('tripDate'), $('dayProgress'), dateLabel, next => {
   if (next === session.day && !overviewTripId) return;
   overviewTripId = '';
   session.select(session.trip, next);
   selected = '';
   endHint();
   draw();
+  // The new day's list starts at its top. The panel around it stays put, because the reel being turned is part of it.
+  document.querySelector<HTMLElement>('.listbody')!.scrollTop = 0;
 });
 function distanceLabel(meters: number) {
   return meters < 1000 ? Math.max(1, Math.round(meters / 10) * 10) + t(' מ׳') : dateFormats[language].distance.format(meters / 1000) + t(' ק״מ');
@@ -405,10 +433,18 @@ function showDailyStats(stats: ReturnType<typeof walkingStats>) {
   const leg = stats.longest;
   $('longestWalk').textContent = stats.walkingLegs > 1 && leg ? t('מקטע ההליכה הארוך במסלול המשוער הוא מ') + displayStopName(leg.from) + t(' ל') + displayStopName(leg.to) + t(', כ־') + distanceLabel(leg.meters) + '.' : '';
 }
+// A day that was just opened, and the whole trip, are read from the top of their list.
+function startList() {
+  const list = document.querySelector<HTMLElement>('.listbody')!;
+  if (getComputedStyle(list).overflowY !== 'visible') list.scrollTop = 0;
+  // On a screen with little height the whole panel scrolls. There the dates come to its top, above the list they name.
+  else $('panel').scrollTop = Math.max(0, $('dayReel').closest<HTMLElement>('.daybar')!.offsetTop - $('sheetHandle').offsetHeight);
+}
 function openMapDay(date: string) {
   overviewTripId = '';
   session.select(session.trip, date);
   renderSelection();
+  startList();
   viewList(false);
 }
 
@@ -417,6 +453,7 @@ $('wholeTrip').onclick = () => {
   overviewTripId = overviewTripId ? '' : session.trip.id;
   endHint();
   renderSelection();
+  startList();
 };
 const displayStopName = (name: string) => name === unidentifiedMerchant ? ui('Purchase', 'קנייה') : name;
 function appendStopRow(s: Stop, i: number, list: Stop[], number: string) {
@@ -578,10 +615,11 @@ function draw() {
   document.body.classList.toggle('trip-overview', overview);
   $('wholeTrip').hidden = !trip;
   $('wholeTrip').setAttribute('aria-pressed', String(overview));
-  $('wholeTrip').textContent = ui('Whole trip', 'כל הטיול');
-  dayStrip.showAll(overview);
-  // The strip shows only a weekday and a number, so the list is headed by the full date.
-  $('listTitle').textContent = overview ? ui('Trip days', 'ימי הטיול') : trip ? dateLabel(day) : t('תחנות בדרך');
+  // The menu names where its row leads: into the whole trip, or back to the day the reel shows.
+  $('wholeTrip').textContent = overview ? ui('Back to the day', 'חזרה ליום') : ui('Whole trip', 'כל הטיול');
+  // In that view the opening of the date reel names it, in place of a date.
+  $('dayReel').parentElement!.dataset.whole = ui('Whole trip', 'כל הטיול');
+  $('listTitle').textContent = overview ? ui('Trip days', 'ימי הטיול') : t('תחנות בדרך');
   if (overview) {
     $('dayStats').hidden = true;
     $('count').textContent = '';
@@ -734,8 +772,10 @@ function reveal(id: string, target: 'row' | 'pin') {
     const foot = document.querySelector<HTMLElement>('.toolbar');
     const shown = scroller.getBoundingClientRect(),
       box = row.getBoundingClientRect();
+    // A short sheet keeps its handle over whatever has scrolled to its head.
+    const top = ownScroll ? shown.top : shown.top + $('sheetHandle').offsetHeight;
     const bottom = ownScroll || !foot?.offsetHeight ? shown.bottom : foot.getBoundingClientRect().top;
-    if (box.top < shown.top) scroller.scrollTop -= shown.top - box.top;
+    if (box.top < top) scroller.scrollTop -= top - box.top;
     else if (box.bottom > bottom) scroller.scrollTop += box.bottom - bottom;
     return;
   }
@@ -809,7 +849,7 @@ async function loadHostedRoute() {
   loadedHosted = true;
   document.body.classList.add('route-ready');
   renderSelection();
-  msg('מסלול משותף · לצפייה בלבד');
+  msg('מסלול משותף · לצפייה בלבד', '', true);
 }
 if (hostedView) {
   const check = () => {
@@ -853,7 +893,7 @@ async function load(afterConflict = false, quiet = false) {
     session.showSnapshot(cleanTrip(JSON.parse(embeddedRoute.textContent ?? 'null')));
     document.body.classList.add('route-copy');
     renderSelection();
-    msg('עותק של המסלול לצפייה');
+    msg('עותק של המסלול לצפייה', '', true);
     return;
   }
 
@@ -900,17 +940,17 @@ async function load(afterConflict = false, quiet = false) {
           'היומן השמור בדפדפן חסר. אפשר לייבא גיבוי דרך ״מקורות״ או לבחור ב״טיול חדש״ כדי להתחיל מחדש.'), 'warning');
       break;
     case 'portable':
-      msg(session.mode === 'portable' ? 'עותק אישי בדפדפן הזה' : 'אפשר ליצור טיול. לשמירה בדפדפן זה יש להוריד גיבוי.', saveTone());
+      msg(session.mode === 'portable' ? 'עותק אישי בדפדפן הזה' : 'אפשר ליצור טיול. לשמירה בדפדפן זה יש להוריד גיבוי.', saveTone(), true);
       break;
     case 'signed-out':
-      if (isolatedGuest()) msg(noTimeCopy, saveTone());
+      if (isolatedGuest()) msg(noTimeCopy, saveTone(), true);
       else msg(() => ui('You are signed out. Sign in with ChatGPT to open your journal.', 'יצאת מהחשבון. כדי לפתוח את היומן נכנסים שוב עם ChatGPT.'));
       break;
     case 'guest':
-      msg(session.trips.length || session.guestPersistence !== 'shared' ? noTimeCopy : 'אפשר להתנסות כאן. לשמירה בין מכשירים נכנסים עם ChatGPT.', saveTone());
+      msg(session.trips.length || session.guestPersistence !== 'shared' ? noTimeCopy : 'אפשר להתנסות כאן. לשמירה בין מכשירים נכנסים עם ChatGPT.', saveTone(), true);
       break;
     case 'account':
-      msg('היומן האישי מעודכן.');
+      msg('היומן האישי מעודכן.', '', true);
       break;
     case 'draft-left-out':
       msg(() => ui('The trips made in this browser before signing in were left out of your journal. Reload the page to be asked again.',
@@ -1001,7 +1041,7 @@ async function change(edit: () => void, fromFile = false) {
     }
     if (tabOnly() && !fromFile && session.trip) unbacked.add(session.trip.id);
     for (const id of unbacked) if (!session.trips.some(trip => trip.id === id)) unbacked.delete(id);
-    msg(noTimeCopy, saveTone());
+    msg(noTimeCopy, saveTone(), true);
     return true;
   } catch (error) {
     renderSelection();

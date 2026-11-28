@@ -5,14 +5,19 @@ export type SheetStop = 'peek' | 'half' | 'full';
 const order: SheetStop[] = ['peek', 'half', 'full'];
 
 /**
+ * When the panel is a sheet: a phone held upright, or any narrow window with height to spare.
+ * The stylesheet lays the panel out under this same condition, in the same words.
+ */
+export const sheetLayout = '(max-width: 559px), (max-width: 820px) and (min-height: 541px)';
+
+/**
  * On a narrow screen with height to spare the panel is a sheet over the map. It rests at one of three heights, chosen with the handle:
  * a tap raises or lowers it, a drag settles on the nearest height, and the up and down arrow keys step through all three.
  * On a wide screen the panel sits beside the route and this height is unused.
  * `behind` is what a full sheet covers. `onSettle` runs after the traveler moves the sheet.
  */
 export function createSheet(panel: HTMLElement, handle: HTMLButtonElement, behind: HTMLElement, peek: () => number, onSettle: () => void) {
-  // The stylesheet lays the panel out as a sheet under this same condition. A phone on its side keeps the panel beside the map.
-  const narrow = matchMedia('(max-width: 559px), (max-width: 820px) and (min-height: 541px)');
+  const narrow = matchMedia(sheetLayout);
   let stop: SheetStop = 'half',
     drag: { y: number, height: number, moved: boolean } | null = null,
     dragged = false;
@@ -21,7 +26,11 @@ export function createSheet(panel: HTMLElement, handle: HTMLButtonElement, behin
     const full = Math.max(240, innerHeight - 64);
     return { peek: Math.min(full, Math.max(96, peek())), half: Math.round(innerHeight * .55), full };
   };
-  const setHeight = (pixels: number) => document.documentElement.style.setProperty('--sheet', pixels + 'px');
+  let shown = 0;
+  const setHeight = (pixels: number) => {
+    shown = pixels;
+    document.documentElement.style.setProperty('--sheet', pixels + 'px');
+  };
   function rest(next: SheetStop) {
     stop = next;
     document.body.dataset.sheet = next;
@@ -102,6 +111,10 @@ export function createSheet(panel: HTMLElement, handle: HTMLButtonElement, behin
      */
     get cover() {
       return narrow.matches ? heights()[stop === 'full' ? 'half' : stop] : 0;
+    },
+    /** The height the stylesheet lays the sheet out at now. The legend and the map credit ride on top of it. */
+    get height() {
+      return narrow.matches ? shown : 0;
     },
     rest,
     relabel: () => rest(stop)

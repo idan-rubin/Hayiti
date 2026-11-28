@@ -8,7 +8,7 @@ import { pathToFileURL } from 'node:url';
 import { strFromU8, unzipSync } from 'fflate';
 import { chromium, type Page } from 'playwright-core';
 import { readPortableRecord, waitForPortableTrip } from './portable-storage-helpers.ts';
-import { backUpTrip, restSheet } from './journal-controls.ts';
+import { backUpTrip, restSheet, toggleWholeTrip } from './journal-controls.ts';
 
 async function openSampleTrip(page: Page) {
   await page.getByRole('button', { name: 'Try the sample trip' }).click();
@@ -975,7 +975,8 @@ await test('Google Pins belong to the selected day or the whole trip without joi
     assert.equal(await page.locator('#statStops').textContent(), '2 stops');
     assert.equal(await routePaths.count(), 1);
 
-    await scope.click();
+    await toggleWholeTrip(page);
+    assert.equal(await scope.getAttribute('aria-pressed'), 'true');
     assert.deepEqual(await names(), ['Bell tower · Google Pin', 'Hidden cove · Google Pin', 'Old quay · Google Pin']);
     assert.equal(await routePaths.count(), 2, 'two daily walks stay separate across the overnight gap');
     await page.locator('.google-pin[title="Hidden cove · Google Pin"]').click();
@@ -992,7 +993,7 @@ await test('Google Pins belong to the selected day or the whole trip without joi
     assert.equal(await routePaths.count(), 1);
 
     await page.reload();
-    await scope.waitFor();
+    await page.locator('#dayReel').waitFor();
     await page.locator('#tripDate').selectOption(firstDay);
     assert.deepEqual(await names(), ['Old quay · Google Pin']);
     assert.equal(await page.locator('#walkSummary').innerText(), firstWalk);
@@ -1073,7 +1074,7 @@ await test('the map controls leave pins and an opened popup uncovered, and a Goo
     }, selector);
 
     for (const view of ['day', 'whole trip']) {
-      if (view === 'whole trip') await page.locator('#wholeTrip').click();
+      if (view === 'whole trip') await toggleWholeTrip(page);
       await page.locator('.google-pin').first().waitFor();
       await page.waitForFunction(() => !document.querySelector('.leaflet-zoom-anim'));
       assert.equal(await covered('#map .pin, #map .google-pin'), 0, view + ' pins clear the controls');
@@ -1304,8 +1305,10 @@ await test('one daily details panel keeps unlocated visits, unconfirmed attendan
     await edit.locator('button.primary').click();
     await page.locator('#stops .stopname').filter({ hasText: 'Grocer' }).waitFor();
     assert.deepEqual(await page.locator('#stops .num').allTextContents(), ['1', '2']);
-    assert.equal(await page.locator('#count').innerText(), '2 stops');
-    await page.locator('#wholeTrip').click();
+    // The phone's sheet counts the stops beside the walking summary.
+    assert.equal(await page.locator('#statStops').isVisible(), true);
+    assert.equal(await page.locator('#statStops').textContent(), '2 stops');
+    await toggleWholeTrip(page);
     assert.equal(await page.locator('#other').isVisible(), false);
     assert.equal(await page.locator('#reviewDay').isVisible(), false);
   } finally {

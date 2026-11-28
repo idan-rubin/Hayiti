@@ -26,7 +26,7 @@ const tags = {
   'createdLink': 'div',
   'dayNote': 'p',
   'dayProgress': 'span',
-  'dayStrip': 'div',
+  'dayReel': 'div',
   'dayStats': 'details',
   'deleteTrip': 'button',
   'downloadApp': 'a',
