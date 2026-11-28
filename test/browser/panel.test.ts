@@ -166,6 +166,9 @@ await test('a day with only a Google Pin or a note says so in the list of dates 
     assert.match(note, / · Note$/);
     assert.doesNotMatch(note, /stop/);
     assert.doesNotMatch(empty, /·/);
+    // On the reel, the three days that hold something stand out from the empty one.
+    assert.deepEqual(await page.locator('#dayReel > div').evaluateAll(faces => faces.map(face => (face as HTMLElement).dataset.recorded !== undefined)),
+      [true, true, true, false]);
     // The reel reads out the same words for the day it shows.
     await page.locator('#tripDate').selectOption('2026-06-15');
     assert.match(await page.locator('#dayReel').getAttribute('aria-valuetext') ?? '', /1 Google Pin, Day 2 of 4$/);

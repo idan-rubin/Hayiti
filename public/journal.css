@@ -314,6 +314,8 @@ h1 { padding-block: .2rem; font-size: var(--title); line-height: 1.2; letter-spa
 /* Each face leans back as it rolls out of the opening. */
 #dayReel span { padding-inline: .5rem; line-height: 1.2; transform: perspective(8rem) rotateX(var(--tilt, 0deg)) }
 #dayReel b { font-weight: inherit }
+/* A day with nothing recorded is set back, so the days that hold something stand out as the reel turns. */
+#dayReel > div:not([data-recorded]) { color: var(--muted); font-weight: 500 }
 #dayReel .date-short { display: none }
 #dayReel:focus-visible { outline: 3px solid var(--focus); outline-offset: -3px }
 .date-menu { width: 2.5rem; border-inline-start: 1px solid var(--line); border-radius: 0 }

@@ -85,6 +85,8 @@ export function createDateReel(reel: HTMLElement, menu: HTMLSelectElement, progr
       const row = document.createElement('div'),
         face = document.createElement('span');
       row.setAttribute('aria-hidden', 'true');
+      // A day with something recorded stands out as the reel turns past it.
+      if (notes[index] || extras[index]) row.dataset.recorded = '';
       if (language === 'en') {
         // A narrow opening shows the date in its short form.
         const full = document.createElement('b'),
