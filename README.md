@@ -78,7 +78,7 @@ The orange dashed line shows the taxi ride. Taxi pins show approximate locations
 - **Whole trip** shows every day on one map, each day's pins and route in its own color. Choose streets, satellite imagery or terrain.
 - **Edit anything.** Move a stop up or down, fix a time or an address, or mark a location as approximate.
 
-On a phone, the day's visits sit in a sheet over the map. Tap its handle to raise the list, and again to lower it.
+On a phone, the day's visits sit in a sheet over the map. Tap its handle to raise the list, and again to lower it. Held sideways, the phone shows them in a panel beside the map.
 
 <img src="docs/screenshots/sample-stops.png" width="320" alt="Mobile stop list for the sample day, showing card purchases, two ends of a taxi ride and an evening concert.">
 

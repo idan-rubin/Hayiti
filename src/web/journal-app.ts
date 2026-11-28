@@ -724,14 +724,19 @@ function reveal(id: string, target: 'row' | 'pin') {
   selected = id;
   for (const [key, row] of rows) row.classList.toggle('activeStop', key === id);
   if (target === 'row') {
-    // Only the list scrolls. The panel around it stays where it is.
+    // Only the list scrolls, and the panel around it stays where it is. On a screen with little height
+    // the whole panel scrolls instead, and the day's actions at its foot lie over the last of it.
     const row = rows.get(id),
-      list = row?.closest('.listbody');
+      list = row?.closest<HTMLElement>('.listbody');
     if (!row || !list) return;
-    const shown = list.getBoundingClientRect(),
+    const ownScroll = getComputedStyle(list).overflowY !== 'visible';
+    const scroller = ownScroll ? list : $('panel');
+    const foot = document.querySelector<HTMLElement>('.toolbar');
+    const shown = scroller.getBoundingClientRect(),
       box = row.getBoundingClientRect();
-    if (box.top < shown.top) list.scrollTop -= shown.top - box.top;
-    else if (box.bottom > shown.bottom) list.scrollTop += box.bottom - shown.bottom;
+    const bottom = ownScroll || !foot?.offsetHeight ? shown.bottom : foot.getBoundingClientRect().top;
+    if (box.top < shown.top) scroller.scrollTop -= shown.top - box.top;
+    else if (box.bottom > bottom) scroller.scrollTop += box.bottom - bottom;
     return;
   }
   // On a phone a full sheet covers the map, which is fitted again as the sheet lowers.

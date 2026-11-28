@@ -11,12 +11,14 @@ const types: Record<string, string> = {
   html: 'text/html', js: 'text/javascript', css: 'text/css', png: 'image/png', ico: 'image/x-icon', json: 'application/json'
 };
 
-// Serves the built hosted journal with one signed-in trip.
-async function hostTrip(page: Page, trip: object) {
+// Serves the built hosted journal with one signed-in trip, or to a guest when there is none.
+async function hostTrip(page: Page, trip: object | null) {
   await page.route('https://**/*', route => route.abort());
   await page.route(origin + '/**', async route => {
     const { pathname } = new URL(route.request().url());
-    if (pathname.startsWith('/api/')) return route.fulfill({ json: { schemaVersion: journalSchemaVersion, trips: [trip], rev: 'r1' } });
+    if (pathname.startsWith('/api/')) {
+      return trip ? route.fulfill({ json: { schemaVersion: journalSchemaVersion, trips: [trip], rev: 'r1' } }) : route.fulfill({ status: 401 });
+    }
     try {
       const body = await readFile(new URL('../../dist/web' + pathname, import.meta.url));
       await route.fulfill({ body, contentType: types[pathname.split('.').at(-1) ?? ''] ?? 'application/octet-stream' });
@@ -158,34 +160,94 @@ await test('a day with only a Google Pin or a note is marked in the day strip an
   }
 });
 
-await test('a phone on its side keeps both ends of the route on screen above the sheet', async () => {
+await test('a phone held sideways shows the panel beside the map, with the route clear of it and every stop within reach', async () => {
   const browser = await chromium.launch();
   try {
     const page = await browser.newPage({ viewport: { width: 667, height: 375 }, hasTouch: true });
     const date = '2026-06-14';
+    const names = ['North park', 'Old mill', 'Bridge', 'Market hall', 'Museum', 'South pier'];
     await hostTrip(page, {
       id: 'side', title: 'Sideways', start: date, end: date,
-      stops: [
-        { id: 'north', name: 'North park', date, time: '09:00', xy: [51.94, 4.48] },
-        { id: 'south', name: 'South pier', date, time: '13:00', xy: [51.92, 4.47] }
-      ]
+      stops: names.map((name, index) => ({ id: 'stop' + index, name, date, time: `${String(9 + index).padStart(2, '0')}:00`, xy: [51.94 - index * .004, 4.48 - index * .002] }))
     });
-    await page.locator('.leaflet-marker-icon').nth(1).waitFor();
-    assert.equal(await page.locator('body').getAttribute('data-sheet'), 'half');
-    // The bar and the sheet leave the map a low strip. The whole route is drawn inside it.
-    await page.waitForFunction(() => {
-      const sheet = document.getElementById('panel')!.getBoundingClientRect();
-      const bar = document.querySelector('header nav')!.getBoundingClientRect();
-      return [...document.querySelectorAll('.leaflet-marker-icon')].every(pin => {
-        const box = pin.getBoundingClientRect();
-        return box.top >= bar.bottom && box.bottom <= sheet.top && box.left >= 0 && box.right <= innerWidth;
+    await page.locator('.leaflet-marker-icon').nth(5).waitFor();
+    for (const lang of ['en', 'he']) {
+      await page.locator('#languageSwitch').selectOption(lang);
+      // No sheet: the panel is a column on the side where reading starts, narrower than half the window.
+      assert.equal(await page.locator('#sheetHandle').isVisible(), false);
+      const panel = (await page.locator('#panel').boundingBox())!;
+      assert.ok(panel.width <= 667 / 2 && panel.height > 375 / 2, `${lang}: the panel is a column`);
+      assert.ok(lang === 'he' ? panel.x + panel.width > 667 - 16 : panel.x < 16, `${lang}: the panel sits where reading starts`);
+      // The whole route is drawn on the part of the map beside it, under the bar.
+      await page.waitForFunction(() => {
+        const column = document.getElementById('panel')!.getBoundingClientRect();
+        const bar = document.querySelector('header nav')!.getBoundingClientRect();
+        return [...document.querySelectorAll('.leaflet-marker-icon')].every(pin => {
+          const box = pin.getBoundingClientRect();
+          const beside = document.documentElement.dir === 'rtl' ? box.right <= column.left && box.left >= 0 : box.left >= column.right && box.right <= innerWidth;
+          return beside && box.top >= bar.bottom && box.bottom <= innerHeight;
+        });
       });
-    });
-    // With so little height the legend is put away, and the map style sits in the bar's row.
-    assert.equal(await page.locator('.legend').isVisible(), false);
-    const style = await page.locator('#mapStyle').boundingBox();
-    const menu = await page.locator('#menuButton').boundingBox();
-    assert.ok(style && menu && style.y < menu.y + menu.height && menu.y < style.y + style.height);
+      // With so little height the legend is put away, and the map style shares the bar's row without touching it.
+      assert.equal(await page.locator('.legend').isVisible(), false);
+      const style = (await page.locator('#mapStyle').boundingBox())!;
+      const bar = await page.locator('.brand, header nav > *').evaluateAll(parts => parts.filter(part => part.checkVisibility()).map(part => {
+        const { left, right, top, bottom } = part.getBoundingClientRect();
+        return { left, right, top, bottom };
+      }));
+      assert.ok(bar.length >= 4);
+      for (const part of bar) {
+        assert.ok(style.y < part.bottom && part.top < style.y + style.height, `${lang}: the map style is in the bar's row`);
+        assert.ok(style.x >= part.right || style.x + style.width <= part.left, `${lang}: the map style is clear of the bar`);
+      }
+      // The panel scrolls as a whole: the last stop comes into view above the day's actions, which stay at its foot.
+      const last = page.locator('#stops .stopname').last();
+      await last.scrollIntoViewIfNeeded();
+      const row = (await last.boundingBox())!;
+      const actions = (await page.locator('.toolbar').boundingBox())!;
+      assert.ok(Math.abs(actions.y + actions.height - (panel.y + panel.height)) <= 2, `${lang}: the actions stay at the foot of the panel`);
+      assert.ok(row.y >= panel.y && row.y + row.height <= actions.y + 1, `${lang}: the last stop shows above the actions`);
+      // Choosing a pin brings its row into that same clear part of the panel.
+      await page.locator('#panel').evaluate(element => { element.scrollTop = 0; });
+      await page.locator(`.leaflet-marker-icon[title^="South pier"]`).click();
+      await page.waitForFunction(() => {
+        const chosen = document.querySelector('.activeStop')?.getBoundingClientRect();
+        const column = document.getElementById('panel')!.getBoundingClientRect();
+        const foot = document.querySelector('.toolbar')!.getBoundingClientRect();
+        return !!chosen && chosen.top >= column.top - 1 && chosen.bottom <= foot.top + 1;
+      });
+    }
+  } finally {
+    await browser.close();
+  }
+});
+
+await test('the buttons of the bar never cover the map style, at any width or in either language', async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+    // A guest's bar is the widest: it adds the sign-in button.
+    await hostTrip(page, null);
+    await page.locator('#login').waitFor();
+    for (const lang of ['en', 'he']) {
+      await page.locator('#languageSwitch').selectOption(lang);
+      assert.equal(await page.locator('header nav > *').evaluateAll(parts => parts.filter(part => part.checkVisibility()).length), 4);
+      for (const height of [800, 390]) {
+        for (const width of [560, 667, 821, 844, 900, 932, 1000, 1001, 1100, 1280]) {
+          await page.setViewportSize({ width, height });
+          const style = (await page.locator('#mapStyle').boundingBox())!;
+          const parts = await page.locator('.brand, header nav > *').evaluateAll(elements => elements.filter(element => element.checkVisibility()).map(element => {
+            const { left, right, top, bottom } = element.getBoundingClientRect();
+            return { id: element.id || element.className, left, right, top, bottom };
+          }));
+          for (const part of parts) {
+            const apart = style.x >= part.right || style.x + style.width <= part.left || style.y >= part.bottom || style.y + style.height <= part.top;
+            assert.ok(apart, `${lang} ${width}x${height}: the map style is clear of ${part.id}`);
+          }
+          assert.ok(style.x >= 0 && style.x + style.width <= width, `${lang} ${width}x${height}: the map style is on screen`);
+        }
+      }
+    }
   } finally {
     await browser.close();
   }

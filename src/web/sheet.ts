@@ -5,13 +5,14 @@ export type SheetStop = 'peek' | 'half' | 'full';
 const order: SheetStop[] = ['peek', 'half', 'full'];
 
 /**
- * On a narrow screen the panel is a sheet over the map. It rests at one of three heights, chosen with the handle:
+ * On a narrow screen with height to spare the panel is a sheet over the map. It rests at one of three heights, chosen with the handle:
  * a tap raises or lowers it, a drag settles on the nearest height, and the up and down arrow keys step through all three.
  * On a wide screen the panel sits beside the route and this height is unused.
  * `behind` is what a full sheet covers. `onSettle` runs after the traveler moves the sheet.
  */
 export function createSheet(panel: HTMLElement, handle: HTMLButtonElement, behind: HTMLElement, peek: () => number, onSettle: () => void) {
-  const narrow = matchMedia('(max-width: 820px)');
+  // The stylesheet lays the panel out as a sheet under this same condition. A phone on its side keeps the panel beside the map.
+  const narrow = matchMedia('(max-width: 559px), (max-width: 820px) and (min-height: 541px)');
   let stop: SheetStop = 'half',
     drag: { y: number, height: number, moved: boolean } | null = null,
     dragged = false;
