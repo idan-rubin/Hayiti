@@ -6,8 +6,8 @@ import { language, locale, bindLanguageControl } from './language.ts';
 import { displayTripTitle, messages, t, quantity } from './journal-messages.ts';
 import { enableSharing } from './share-ui.ts';
 import { routeStops, dayDetails, isMappedStop, indexEdges, suggest, walkingStats } from '../domain/daily-route.ts';
-import { createDayStrip } from './day-strip.ts';
-import { createSheet } from './sheet.ts';
+import { createDateReel } from './date-reel.ts';
+import { createSheet, sheetLayout } from './sheet.ts';
 import { fitPadding } from './map-fit.ts';
 import { cleanTrip, cleanStop, mergeGooglePins, removeGooglePin, restoreGooglePin, mergeStops, combineEvidence, journalCharacterLimit, unidentifiedMerchant } from '../domain/core.ts';
 import { importEvidencePackage, prepareTripBackup, importCsv, importIcs, pastedStop } from '../domain/importers.ts';
@@ -88,18 +88,21 @@ let selected = '',
   creating = false;
 type Tone = '' | 'warning' | 'error';
 let currentStatus = () => '',
-  currentTone: Tone = '';
-let heldStatus: [() => string, Tone] | null = null;
-function msg(message: string | (() => string), tone: Tone = '') {
+  currentTone: Tone = '',
+  currentStanding = false;
+let heldStatus: [() => string, Tone, boolean] | null = null;
+function msg(message: string | (() => string), tone: Tone = '', standing = false) {
   heldStatus = null;
   currentStatus = typeof message === 'function' ? message : () => t(message);
   currentTone = tone;
+  currentStanding = standing;
   $('status').textContent = currentStatus();
   $('status').dataset.tone = tone;
+  $('status').toggleAttribute('data-standing', standing);
 }
 // A hint answers the last action. The status it covered returns when the traveler moves on.
 function hint(message: () => string, tone: Tone = '') {
-  const held = heldStatus ?? [currentStatus, currentTone];
+  const held = heldStatus ?? [currentStatus, currentTone, currentStanding];
   msg(message, tone);
   heldStatus = held;
 }
@@ -126,16 +129,39 @@ const overlay = L.layerGroup().addTo(map);
 const rows = new Map<string, HTMLElement>(),
   marks = new Map<string, MapMarker>();
 let popupFor = '';
+let openPopup: MapPopup | undefined;
+map.on('popupopen', event => { openPopup = event.popup; });
+map.on('popupclose', event => {
+  if (openPopup === event.popup) openPopup = undefined;
+});
 let overviewTripId = '';
 let routeBounds = L.latLngBounds([]),
   fitFrame = 0;
 // Lowered all the way, the sheet still shows the trip and its days.
 const sheet = createSheet($('panel'), $('sheetHandle'), map.getContainer().parentElement!, () => {
-  const days = $('dayStrip').parentElement!;
-  const last = days.hidden ? $('status').textContent ? $('status') : $('range') : days;
+  const dates = $('dayReel').parentElement!;
+  const last = dates.hidden ? $('range') : dates.parentElement!;
   return last.offsetTop + last.offsetHeight;
+}, () => {
+  const firstRows = $('stops').querySelectorAll<HTMLElement>(':scope > .stop:nth-child(-n+3)');
+  const last = firstRows[firstRows.length - 1];
+  if (!last) return 0;
+  const list = last.closest<HTMLElement>('.listbody')!;
+  const toolbar = $('panel').querySelector<HTMLElement>('.toolbar')!;
+  return last.getBoundingClientRect().bottom + list.scrollTop - $('panel').getBoundingClientRect().top + toolbar.offsetHeight + 2;
 }, () => fitRoute());
-const mapControls = document.querySelector<HTMLElement>('.map-controls');
+const mapSection = map.getContainer().parentElement!,
+  mapControls = document.querySelector<HTMLElement>('.map-controls')!;
+const sheetWidth = matchMedia(sheetLayout);
+function placeMapStyle() {
+  if (sheetWidth.matches) $('menu').insertBefore(mapControls, $('export'));
+  else mapSection.insertBefore(mapControls, mapSection.querySelector('.legend'));
+}
+placeMapStyle();
+sheetWidth.addEventListener('change', () => {
+  placeMapStyle();
+  fitRoute();
+});
 // The map fills the window behind the bar, the map controls and the panel. A route is fitted to what they leave clear.
 function coveredEdges() {
   const box = map.getContainer().getBoundingClientRect();
@@ -143,10 +169,13 @@ function coveredEdges() {
     const rect = element?.getBoundingClientRect();
     return rect?.height ? rect.bottom - box.top + 6 : 0;
   };
-  const top = Math.max(bottomOf(document.querySelector('header nav')), bottomOf(mapControls));
-  // The legend lies over the foot of the map. On a narrow screen it rides above the sheet.
-  const legend = document.querySelector('.legend')?.getBoundingClientRect();
-  const foot = legend?.height ? box.bottom - legend.top + 6 : 0;
+  const top = Math.max(bottomOf(document.querySelector('header nav')), mapControls.parentElement === mapSection ? bottomOf(mapControls) : 0);
+  // The legend and the map credit lie over the foot of the map. On a narrow screen they ride above the sheet.
+  const above = (element: Element | null) => {
+    const rect = element?.getBoundingClientRect();
+    return rect?.height ? box.bottom - rect.top + 6 : 0;
+  };
+  const foot = Math.max(above(document.querySelector('.legend')), above(map.getContainer().querySelector('.leaflet-control-attribution')));
   if (sheet.narrow) return { top, left: 0, right: 0, bottom: Math.max(sheet.cover, foot) };
   const panel = $('panel').getBoundingClientRect();
   if (!panel.width) return { top, left: 0, right: 0, bottom: foot };
@@ -170,6 +199,9 @@ function fitRoute() {
     const covered = coveredEdges();
     popupOptions.autoPanPaddingTopLeft.splice(0, 2, covered.left + 8, covered.top + 8);
     popupOptions.autoPanPaddingBottomRight.splice(0, 2, covered.right + 8, covered.bottom + 8);
+    const mapStyle = map.getContainer().style;
+    mapStyle.setProperty('--popup-room-width', (width - covered.left - covered.right - 16) + 'px');
+    mapStyle.setProperty('--popup-room-height', (height - covered.top - covered.bottom - 16) + 'px');
     map.stop();
     map.invalidateSize({
       pan: false,
@@ -202,9 +234,17 @@ function fitRoute() {
     }
     // Opening after the fit lets the map pan just enough to show the whole popup.
     const mark = marks.get(popupFor);
+    popupFor = '';
     if (mark) {
       map.closePopup();
       mark.openPopup();
+    } else if (openPopup) {
+      // Leaflet rebuilds the popup content when it measures and pans it. Keep focus on the same control.
+      const element = openPopup.getElement();
+      const controls = 'a, button, select';
+      const focused = Array.from(element.querySelectorAll(controls)).indexOf(document.activeElement!);
+      openPopup.update();
+      if (focused >= 0) element.querySelectorAll<HTMLElement>(controls)[focused]?.focus({ preventScroll: true });
     }
   });
 }
@@ -242,6 +282,7 @@ const basemap = addStreetMap(map, () => language, problem => {
 $('mapStyle').onchange = () => {
   const value = $('mapStyle').value;
   if (isBasemap(value)) basemap.select(value);
+  if ($('menu').matches(':popover-open')) $('menu').hidePopover();
 };
 const sourceNames = {
   finances: 'Finances',
@@ -331,9 +372,32 @@ function showConnections() {
     chip.textContent = ui('Connections', 'חיבורים');
     delete chip.dataset.notice;
   }
-  // Without a notice the chip only repeats Sources and import.
   chip.hidden = !!sharedRoute || !chip.dataset.notice;
+  const label = t('מקורות וייבוא');
+  const sourceButton = $('import');
+  sourceButton.setAttribute('aria-label', chip.hidden ? label : label + ' · ' + chip.textContent);
+  sourceButton.title = chip.hidden ? '' : chip.textContent;
 }
+function fitTitle() {
+  const title = $('title'),
+    row = title.parentElement!,
+    arrow = row.lastElementChild as HTMLElement,
+    before = title.style.fontSize;
+  title.style.fontSize = '';
+  title.style.whiteSpace = 'nowrap';
+  const room = row.getBoundingClientRect().width - (arrow.offsetWidth ? arrow.offsetWidth + parseFloat(getComputedStyle(row).columnGap) : 0);
+  const full = parseFloat(getComputedStyle(title).fontSize);
+  const tooWide = () => title.getBoundingClientRect().width > room;
+  // The system font spaces its letters differently at each size, so the width is measured at every step.
+  for (let size = full - .5; tooWide() && size >= full * .75; size -= .5) title.style.fontSize = size + 'px';
+  if (tooWide()) title.style.fontSize = '';
+  title.style.whiteSpace = '';
+  return title.style.fontSize !== before;
+}
+new ResizeObserver(() => {
+  if (fitTitle()) sheet.relabel();
+}).observe($('title').parentElement!);
+let shownTripId = '';
 function render() {
   const { trip, day } = session;
   if (trip?.id !== overviewTripId) overviewTripId = '';
@@ -353,9 +417,10 @@ function render() {
   if (trip) $('trips').value = trip.id;
   $('title').textContent = $('trips').selectedOptions[0]?.text ?? t('הטיולים שלי');
   $('trips').hidden = session.trips.length < 2;
+  fitTitle();
   for (const id of ['add', 'export', 'settings', 'organize'] as const) $(id).disabled = !trip;
   const days = trip ? dateRange(trip) : [];
-  dayStrip.set(days, day, days.map(date => {
+  setDates(days, day, days.map(date => {
     const count = trip?.stops.filter(stop => stop.date === date && stop.kind !== 'origin' && isMappedStop(stop)).length ?? 0;
     const details = dayDetails(trip, date).length;
     return [count ? stopCount(count) : '', details ? quantity(details, details === 1 ? ' רשומה' : ' רשומות', 'entry', 'entries') : ''].filter(Boolean).join(' · ');
@@ -366,18 +431,23 @@ function render() {
   }));
   document.body.classList.toggle('no-trip', !trip);
   $('welcome').hidden = !!trip || !!sharedRoute || !journalReady || session.mode === 'portable-recovery';
-  // The heading above the list may have grown or shrunk, and the lowered sheet is as tall as that heading.
-  sheet.relabel();
   draw();
+  if ((trip?.id ?? '') !== shownTripId) {
+    shownTripId = trip?.id ?? '';
+    document.querySelector<HTMLElement>('.listbody')!.scrollTop = 0;
+    $('panel').scrollTop = 0;
+  }
 }
 const stopCount = (count: number) => count === 1 ? t('תחנה אחת') : count + t(' תחנות');
-const dayStrip = createDayStrip($('dayStrip'), $('tripDate'), $('dayProgress'), dateLabel, next => {
+const { setDates, showWholeTrip } = createDateReel($('dayReel'), $('tripDate'), $('dayProgress'), dateLabel, next => {
   if (next === session.day && !overviewTripId) return;
   overviewTripId = '';
   session.select(session.trip, next);
   selected = '';
   endHint();
   draw();
+  // Not startList(): scrolling the panel would move the reel under the finger.
+  document.querySelector<HTMLElement>('.listbody')!.scrollTop = 0;
 });
 function distanceLabel(meters: number) {
   return meters < 1000 ? Math.max(1, Math.round(meters / 10) * 10) + t(' מ׳') : dateFormats[language].distance.format(meters / 1000) + t(' ק״מ');
@@ -405,10 +475,16 @@ function showDailyStats(stats: ReturnType<typeof walkingStats>) {
   const leg = stats.longest;
   $('longestWalk').textContent = stats.walkingLegs > 1 && leg ? t('מקטע ההליכה הארוך במסלול המשוער הוא מ') + displayStopName(leg.from) + t(' ל') + displayStopName(leg.to) + t(', כ־') + distanceLabel(leg.meters) + '.' : '';
 }
+function startList() {
+  const list = document.querySelector<HTMLElement>('.listbody')!;
+  if (getComputedStyle(list).overflowY !== 'visible') list.scrollTop = 0;
+  else $('panel').scrollTop = Math.max(0, $('dayReel').closest<HTMLElement>('.daybar')!.offsetTop - $('sheetHandle').offsetHeight);
+}
 function openMapDay(date: string) {
   overviewTripId = '';
   session.select(session.trip, date);
   renderSelection();
+  startList();
   viewList(false);
 }
 
@@ -417,6 +493,7 @@ $('wholeTrip').onclick = () => {
   overviewTripId = overviewTripId ? '' : session.trip.id;
   endHint();
   renderSelection();
+  startList();
 };
 const displayStopName = (name: string) => name === unidentifiedMerchant ? ui('Purchase', 'קנייה') : name;
 function appendStopRow(s: Stop, i: number, list: Stop[], number: string) {
@@ -442,7 +519,7 @@ function appendStopRow(s: Stop, i: number, list: Stop[], number: string) {
   col.append(dom('div', hints.join(' · '), 'meta'));
   const evidence = [...(s.sources || []).map(k => t(label[k])), s.count ? quantity(s.count, ' חיובים', 'charge', 'charges') : '', s.photos?.length ? quantity(s.photos.length, ' תמונות', 'photo', 'photos') : ''].filter(Boolean).join(' · ');
   if (evidence) col.append(dom('span', evidence, 'src'));
-  if (s.notes) col.append(dom('div', s.notes, 'meta'));
+  if (s.notes) col.append(dom('div', s.notes, 'meta stop-note'));
   const actions = dom('div', undefined, 'tools');
   if (s.kind !== 'origin') {
     for (const [sign, delta] of [['↑', -1], ['↓', 1]] as const) {
@@ -578,10 +655,9 @@ function draw() {
   document.body.classList.toggle('trip-overview', overview);
   $('wholeTrip').hidden = !trip;
   $('wholeTrip').setAttribute('aria-pressed', String(overview));
-  $('wholeTrip').textContent = ui('Whole trip', 'כל הטיול');
-  dayStrip.showAll(overview);
-  // The strip shows only a weekday and a number, so the list is headed by the full date.
-  $('listTitle').textContent = overview ? ui('Trip days', 'ימי הטיול') : trip ? dateLabel(day) : t('תחנות בדרך');
+  $('wholeTrip').textContent = overview ? ui('Back to the day', 'חזרה ליום') : ui('Whole trip', 'כל הטיול');
+  showWholeTrip(overview ? ui('Whole trip', 'כל הטיול') : '');
+  $('listTitle').textContent = overview ? ui('Trip days', 'ימי הטיול') : t('תחנות בדרך');
   if (overview) {
     $('dayStats').hidden = true;
     $('count').textContent = '';
@@ -635,6 +711,8 @@ function draw() {
   $('dayNote').textContent = overview ? '' : trip?.dayNotes?.[day] || '';
   $('dayNote').hidden = !$('dayNote').textContent;
   renderDayDetails(details);
+  // Measure the new heading, stops and actions together before the scheduled map fit.
+  sheet.relabel();
 }
 
 function reviewExplanation(stop: Stop) {
@@ -734,8 +812,10 @@ function reveal(id: string, target: 'row' | 'pin') {
     const foot = document.querySelector<HTMLElement>('.toolbar');
     const shown = scroller.getBoundingClientRect(),
       box = row.getBoundingClientRect();
+    const top = ownScroll ? shown.top : shown.top + $('sheetHandle').offsetHeight;
     const bottom = ownScroll || !foot?.offsetHeight ? shown.bottom : foot.getBoundingClientRect().top;
-    if (box.top < shown.top) scroller.scrollTop -= shown.top - box.top;
+    // If a long note cannot fit, show the stop's name and controls at the top of its row.
+    if (box.top < top || box.height > bottom - top) scroller.scrollTop += box.top - top;
     else if (box.bottom > bottom) scroller.scrollTop += box.bottom - bottom;
     return;
   }
@@ -743,9 +823,6 @@ function reveal(id: string, target: 'row' | 'pin') {
   popupFor = id;
   map.closePopup();
   viewList(false);
-  setTimeout(() => {
-    if (popupFor === id) popupFor = '';
-  }, 600);
 }
 // Temporary memory edits need a backup before leaving this document.
 const tabOnly = () => session.mode === 'memory' || (session.mode === 'guest' && session.guestPersistence === 'memory');
@@ -773,7 +850,7 @@ function noTimeCopy() {
     return notice + ' ' + ui('Allow site storage and open Hayiti in a new tab to check for saved trips.',
       'אפשרו לאתר לשמור נתונים ופתחו את Hayiti בלשונית חדשה כדי לראות אילו טיולים שמורים.') + ' ' + temporary;
   }
-  return t(portable ? session.mode === 'portable' ? 'נשמר בדפדפן הזה.' : 'השינויים בזיכרון הלשונית. לשמירה יש להוריד גיבוי.' : session.mode === 'account' ? 'השינויים נשמרו ביומן האישי.' : 'השינויים נשמרו בדפדפן הזה. כדי לשמור אותם בין מכשירים נכנסים עם ChatGPT.');
+  return t(portable ? session.mode === 'portable' ? 'נשמר בדפדפן הזה.' : 'השינויים בזיכרון הלשונית. לשמירה יש להוריד גיבוי.' : session.mode === 'account' ? 'השינויים נשמרו ביומן האישי.' : 'נשמר במכשיר הזה');
 }
 let viewRequest = 0,
   loadedHosted = false;
@@ -808,8 +885,8 @@ async function loadHostedRoute() {
   session.showSnapshot(snapshot);
   loadedHosted = true;
   document.body.classList.add('route-ready');
+  msg('מסלול משותף · לצפייה בלבד', '', true);
   renderSelection();
-  msg('מסלול משותף · לצפייה בלבד');
 }
 if (hostedView) {
   const check = () => {
@@ -852,8 +929,8 @@ async function load(afterConflict = false, quiet = false) {
   if (embeddedRoute) {
     session.showSnapshot(cleanTrip(JSON.parse(embeddedRoute.textContent ?? 'null')));
     document.body.classList.add('route-copy');
+    msg('עותק של המסלול לצפייה', '', true);
     renderSelection();
-    msg('עותק של המסלול לצפייה');
     return;
   }
 
@@ -900,17 +977,17 @@ async function load(afterConflict = false, quiet = false) {
           'היומן השמור בדפדפן חסר. אפשר לייבא גיבוי דרך ״מקורות״ או לבחור ב״טיול חדש״ כדי להתחיל מחדש.'), 'warning');
       break;
     case 'portable':
-      msg(session.mode === 'portable' ? 'עותק אישי בדפדפן הזה' : 'אפשר ליצור טיול. לשמירה בדפדפן זה יש להוריד גיבוי.', saveTone());
+      msg(session.mode === 'portable' ? 'עותק אישי בדפדפן הזה' : 'אפשר ליצור טיול. לשמירה בדפדפן זה יש להוריד גיבוי.', saveTone(), true);
       break;
     case 'signed-out':
-      if (isolatedGuest()) msg(noTimeCopy, saveTone());
+      if (isolatedGuest()) msg(noTimeCopy, saveTone(), true);
       else msg(() => ui('You are signed out. Sign in with ChatGPT to open your journal.', 'יצאת מהחשבון. כדי לפתוח את היומן נכנסים שוב עם ChatGPT.'));
       break;
     case 'guest':
-      msg(session.trips.length || session.guestPersistence !== 'shared' ? noTimeCopy : 'אפשר להתנסות כאן. לשמירה בין מכשירים נכנסים עם ChatGPT.', saveTone());
+      msg(session.trips.length || session.guestPersistence !== 'shared' ? noTimeCopy : 'אפשר להתנסות כאן. לשמירה בין מכשירים נכנסים עם ChatGPT.', saveTone(), true);
       break;
     case 'account':
-      msg('היומן האישי מעודכן.');
+      msg('היומן האישי מעודכן.', '', true);
       break;
     case 'draft-left-out':
       msg(() => ui('The trips made in this browser before signing in were left out of your journal. Reload the page to be asked again.',
@@ -1001,7 +1078,7 @@ async function change(edit: () => void, fromFile = false) {
     }
     if (tabOnly() && !fromFile && session.trip) unbacked.add(session.trip.id);
     for (const id of unbacked) if (!session.trips.some(trip => trip.id === id)) unbacked.delete(id);
-    msg(noTimeCopy, saveTone());
+    msg(noTimeCopy, saveTone(), true);
     return true;
   } catch (error) {
     renderSelection();
@@ -1578,10 +1655,6 @@ $('export').onclick = () => {
   a.click();
   unbacked.delete(trip.id);
   setTimeout(() => URL.revokeObjectURL(u), 1000);
-};
-$('connections').onclick = () => {
-  $('sources').showModal();
-  tab('connected');
 };
 $('import').onclick = () => {
   $('sources').showModal();
